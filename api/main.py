@@ -19,6 +19,7 @@ from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
 import admin
+import analysts
 import assistant
 import audit
 import audit_api
@@ -74,6 +75,7 @@ async def audit_request_context(request, call_next):
 
 app.include_router(auth.router)
 app.include_router(admin.router)
+app.include_router(analysts.router)
 # bulk_import's /entities/import and /entities/import-template must be
 # registered before entities.router — FastAPI/Starlette matches routes in
 # registration order with no specificity-based reordering, and entities.py

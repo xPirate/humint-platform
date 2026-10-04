@@ -631,11 +631,10 @@ async function openSummaryCard(entityId, x, y) {
   const rels = entity.relationships || [];
   const facts = summaryFacts(entity);
   const alignment = entity.details && entity.details.alignment;
-  // Up to four connections, the confirmed ones first: a card is a glance, not
-  // the relationships list on the record's own page.
-  const order = { confirmed: 0, probable: 1, possible: 2 };
+  // Up to four connections, live before expired and best-graded first: a
+  // card is a glance, not the relationships list on the record's own page.
   const shown = rels.slice().sort((a, b) =>
-    (order[a.confidence] ?? 3) - (order[b.confidence] ?? 3)).slice(0, 4);
+    (a.expired - b.expired) || (Number(a.confidence) - Number(b.confidence))).slice(0, 4);
 
   card.innerHTML = `
     <div class="summary-head">
@@ -658,7 +657,7 @@ async function openSummaryCard(entityId, x, y) {
       <li><span class="summary-rel-type">${escapeHtml((r.reads_as || r.relationship_type).replace(/_/g, " "))}</span>
         <button type="button" class="btn-link" data-summary-open="${escapeHtml(r.other_entity_id)}"
         >${nameHtml(r.other_entity_name, r.other_entity_alignment)}</button>
-        <span class="summary-conf">${escapeHtml(r.confidence || "")}</span></li>`).join("")}
+        ${confidenceBadgeHtml(r.confidence)}${r.expired ? ' <span class="rel-expired-tag">Expired</span>' : ""}</li>`).join("")}
       ${rels.length > shown.length ? `<li class="card-meta">+ ${rels.length - shown.length} more</li>` : ""}
     </ul>` : ""}
     <div class="summary-actions">
@@ -785,6 +784,7 @@ function wireGlobalSearch() {
     input.value = "";
     input.blur();
     if (item.dataset.kind === "entity") openEntityDetail(item.dataset.id);
+    else if (item.dataset.kind === "analyst") openAnalystPage(item.dataset.id);
     else openReportDetail(item.dataset.id);
   }
 
@@ -793,13 +793,15 @@ function wireGlobalSearch() {
     if (!q) { closeResults(); return; }
     const params = new URLSearchParams({ q, limit: "8" });
     try {
-      const [entitiesData, reportsData] = await Promise.all([
+      const [entitiesData, reportsData, analystData] = await Promise.all([
         api("/api/entities?" + params.toString()),
         api("/api/reports?" + params.toString()),
+        api("/api/analysts?" + new URLSearchParams({ q }).toString()).catch(() => ({ items: [] })),
       ]);
       const entityItems = entitiesData.items;
       const reportItems = reportsData.items;
-      if (!entityItems.length && !reportItems.length) {
+      const analystItems = analystData.items.slice(0, 4);
+      if (!entityItems.length && !reportItems.length && !analystItems.length) {
         results.innerHTML = '<div class="global-search-empty">No matches.</div>';
         results.hidden = false;
         return;
@@ -814,9 +816,15 @@ function wireGlobalSearch() {
           <span class="status-pill status-${r.status}">${escapeHtml(r.status)}</span>
           <span>${escapeHtml(r.title)}</span>
         </div>`;
+      const analystRow = (u) => `
+        <div class="global-search-item" data-kind="analyst" data-id="${escapeHtml(u.username)}">
+          <span class="status-pill">analyst</span>
+          <span>Everything entered by <strong>${escapeHtml(u.username)}</strong></span>
+        </div>`;
       results.innerHTML = `
         ${entityItems.length ? `<div class="global-search-section">Entities</div>${entityItems.map(entityRow).join("")}` : ""}
         ${reportItems.length ? `<div class="global-search-section">Reports</div>${reportItems.map(reportRow).join("")}` : ""}
+        ${analystItems.length ? `<div class="global-search-section">Analysts</div>${analystItems.map(analystRow).join("")}` : ""}
       `;
       results.hidden = false;
       // `mousedown`, not `click`: it fires before the input's `blur`, so
@@ -1023,7 +1031,10 @@ function showApp() {
   // Decides whether the "From the field" queue tab exists at all.
   revealFieldSubtabIfEnrolled();
 
-  switchView("dashboard");
+  // A results page opened in a new tab arrives with its address in the hash.
+  const hashAnalyst = analystFromHash();
+  if (hashAnalyst) openAnalystPage(hashAnalyst);
+  else switchView("dashboard");
   refreshQueueBadges();
   startClock();
   syncTopbarHeight(); // only measurable now that #app is no longer hidden
@@ -1486,6 +1497,9 @@ function switchView(view) {
 }
 
 function switchViewRaw(view) {
+  // Leaving the analyst page drops its address, so the back button and a
+  // later "Entered by" click both behave.
+  if (view !== "analyst") clearAnalystHash();
   document.querySelectorAll(".view").forEach((v) => v.classList.remove("active"));
   document.getElementById("view-" + view).classList.add("active");
 }
@@ -2707,7 +2721,8 @@ function createNetwork(options) {
       return obj;
     });
     st.edges = edges
-      .map((e) => ({ a: byId.get(e.from), b: byId.get(e.to) }))
+      .map((e) => ({ a: byId.get(e.from), b: byId.get(e.to),
+                     grade: Number(e.confidence) || 3, expired: !!e.expired }))
       .filter((e) => e.a && e.b && e.a !== e.b);
     st.maxDegree = maxDegree || st.nodes.reduce((m, x) => Math.max(m, x.degree || 0), 0);
     for (const node of st.nodes) node.r = graphRadius(node.degree || 0, st.maxDegree);
@@ -2915,16 +2930,23 @@ function createNetwork(options) {
       }
     }
 
-    ctx.lineWidth = 1;
     for (const e of st.edges) {
       const lit = focus && (e.a === focus || e.b === focus);
       ctx.strokeStyle = lit ? themeColor("--accent", "#39ff88") : themeColor("--border", "#173a24");
-      ctx.globalAlpha = focus ? (lit ? 0.9 : 0.15) : 0.55;
+      // The grade is in the line: a confirmed link is heavier than a
+      // possible one, and anything doubtful or worse is dashed. An expired
+      // link (only drawn when asked for) is faint and finely dashed.
+      ctx.lineWidth = e.grade === 1 ? 2.2 : e.grade === 2 ? 1.6 : 1;
+      ctx.setLineDash(e.expired ? [2, 4] : e.grade >= 4 ? [5, 4] : []);
+      const base = e.expired ? 0.25 : 0.55;
+      ctx.globalAlpha = focus ? (lit ? (e.expired ? 0.45 : 0.9) : 0.12) : base;
       ctx.beginPath();
       ctx.moveTo(e.a.x * t.scale + t.dx, e.a.y * t.scale + t.dy);
       ctx.lineTo(e.b.x * t.scale + t.dx, e.b.y * t.scale + t.dy);
       ctx.stroke();
     }
+    ctx.setLineDash([]);
+    ctx.lineWidth = 1;
     ctx.globalAlpha = 1;
 
     for (const node of st.nodes) {
@@ -3243,6 +3265,8 @@ async function loadEntityGraph() {
   if (entityType) params.set("entity_type", entityType);
   params.set("active_only", showArchived ? "false" : "true");
   if (hideExpired) params.set("hide_expired", "true");
+  const showExpiredLinks = document.getElementById("graph-show-expired-links");
+  if (showExpiredLinks && showExpiredLinks.checked) params.set("include_expired_links", "true");
   try {
     const data = await api("/api/entities/graph?" + params.toString());
     entityDegrees = new Map(data.nodes.map((n) => [n.id, n.degree]));
@@ -3302,6 +3326,8 @@ function highlightGraphNode(id) {
 (function wireEntityGraphControls() {
   const hideIsolated = document.getElementById("graph-hide-isolated");
   if (hideIsolated) hideIsolated.addEventListener("change", () => loadEntityGraph());
+  const showExpiredLinks = document.getElementById("graph-show-expired-links");
+  if (showExpiredLinks) showExpiredLinks.addEventListener("change", () => loadEntityGraph());
   const refit = document.getElementById("graph-refit");
   if (refit) refit.addEventListener("click", () => entityNetwork.refit());
 
@@ -3747,6 +3773,165 @@ function openEntityForm(entity, prefill, opts) {
   });
 }
 
+/* ============================================================================
+ * Analyst results — everything one person entered (api/analysts.py)
+ *
+ * A page of its own, with its own address (#analyst/<username>), so it can
+ * be opened in a new tab beside the record you were reading, bookmarked, or
+ * sent to a colleague.
+ * ========================================================================== */
+
+let analystDirectory = null;           // [{id, username, role, is_active}]
+async function loadAnalystDirectory() {
+  if (!analystDirectory) {
+    try { analystDirectory = (await api("/api/analysts")).items; }
+    catch (e) { analystDirectory = []; }
+  }
+  return analystDirectory;
+}
+
+function analystFromHash() {
+  const m = /^#analyst\/(.+)$/.exec(location.hash);
+  return m ? decodeURIComponent(m[1]) : null;
+}
+function clearAnalystHash() {
+  if (location.hash.startsWith("#analyst/")) history.replaceState(null, "", location.pathname + location.search);
+}
+window.addEventListener("hashchange", () => {
+  const who = analystFromHash();
+  if (who && state.user) openAnalystPage(who);
+});
+
+/* "Entered by dana" under a record's title, linking to dana's page. Ctrl- or
+ * middle-click opens it in a new tab because it is a real link. */
+async function fillBylines(root) {
+  const slots = root.querySelectorAll("[data-byline-user]");
+  if (!slots.length) return;
+  const dir = await loadAnalystDirectory();
+  slots.forEach((slot) => {
+    const u = dir.find((x) => String(x.id) === slot.dataset.bylineUser);
+    if (!u) return;
+    slot.innerHTML = `Entered by <a href="#analyst/${encodeURIComponent(u.username)}"
+      title="Everything ${escapeHtml(u.username)} has entered">${escapeHtml(u.username)}</a>`;
+  });
+}
+
+const ANALYST_KINDS = [
+  ["", "Everything"], ["entity", "Entities"], ["report", "Reports"],
+  ["relationship", "Links"], ["document", "Documents"], ["field", "Field reports"],
+];
+const analystPage = { who: null, kind: "", offset: 0, items: [] };
+
+async function openAnalystPage(who) {
+  setActiveTab(null);
+  switchViewRaw("analyst");
+  const target = `#analyst/${encodeURIComponent(who)}`;
+  if (location.hash !== target) history.replaceState(null, "", target);
+  const dir = await loadAnalystDirectory();
+  const select = document.getElementById("analyst-select");
+  select.innerHTML = dir.map((u) =>
+    `<option value="${escapeHtml(u.username)}">${escapeHtml(u.username)}${u.is_active ? "" : " (deactivated)"}</option>`).join("");
+  const match = dir.find((u) => u.username.toLowerCase() === String(who).toLowerCase() || String(u.id) === String(who));
+  if (match) select.value = match.username;
+  analystPage.who = match ? match.username : who;
+  analystPage.kind = "";
+  loadAnalystResults(true);
+}
+
+async function loadAnalystResults(reset) {
+  if (reset) { analystPage.offset = 0; analystPage.items = []; }
+  const params = new URLSearchParams({ limit: "100", offset: String(analystPage.offset) });
+  if (analystPage.kind) params.set("kind", analystPage.kind);
+  const q = document.getElementById("analyst-q").value.trim();
+  const since = document.getElementById("analyst-since").value;
+  const until = document.getElementById("analyst-until").value;
+  if (q) params.set("q", q);
+  if (since) params.set("since", since);
+  if (until) params.set("until", until);
+  const list = document.getElementById("analyst-results");
+  if (reset) list.innerHTML = '<p class="empty-state">Loading…</p>';
+  let data;
+  try {
+    data = await api(`/api/analysts/${encodeURIComponent(analystPage.who)}/activity?` + params.toString());
+  } catch (err) {
+    list.innerHTML = `<p class="empty-state">${escapeHtml(err.message)}</p>`;
+    return;
+  }
+  const a = data.analyst;
+  document.getElementById("analyst-role").textContent =
+    `${a.role === "admin" ? "Administrator" : "Analyst"}${a.is_active ? "" : " · deactivated"} · account created ${new Date(a.created_at).toLocaleDateString()}`;
+  const allTotal = Object.values(data.counts).reduce((x, y) => x + y, 0);
+  document.getElementById("analyst-kinds").innerHTML = ANALYST_KINDS.map(([k, label]) => {
+    const n = k ? data.counts[k] : allTotal;
+    return `<button type="button" role="tab" class="analyst-kind${k === analystPage.kind ? " active" : ""}"
+      aria-selected="${k === analystPage.kind}" data-analyst-kind="${k}">${label} <span class="analyst-count">${n.toLocaleString()}</span></button>`;
+  }).join("");
+  document.querySelectorAll("[data-analyst-kind]").forEach((b) => b.addEventListener("click", () => {
+    analystPage.kind = b.dataset.analystKind;
+    loadAnalystResults(true);
+  }));
+
+  analystPage.items = analystPage.items.concat(data.items);
+  analystPage.offset += data.items.length;
+  if (!analystPage.items.length) {
+    list.innerHTML = `<p class="empty-state">Nothing ${analystPage.kind ? "of this kind " : ""}entered by ${escapeHtml(a.username)}${q || since || until ? " matches these filters" : " yet"}.</p>`;
+  } else {
+    list.innerHTML = analystResultsHtml(analystPage.items);
+    list.querySelectorAll("[data-analyst-open]").forEach((row) =>
+      row.addEventListener("click", () => openAnalystItem(row.dataset)));
+  }
+  document.getElementById("analyst-more").hidden = analystPage.offset >= data.total;
+}
+
+const ANALYST_KIND_LABEL = { entity: "Entity", report: "Report", relationship: "Link", document: "Document", field: "Field report" };
+
+function analystResultsHtml(items) {
+  // Grouped by day: "what did they do on Tuesday" is the usual question.
+  let lastDay = "";
+  return items.map((it) => {
+    const day = new Date(it.created_at).toLocaleDateString(undefined, { weekday: "short", year: "numeric", month: "short", day: "numeric" });
+    const head = day !== lastDay ? `<h3 class="analyst-day">${escapeHtml(day)}</h3>` : "";
+    lastDay = day;
+    let sub = "";
+    if (it.kind === "entity") sub = `<span class="type-pill type-${escapeHtml(it.subtype)}">${escapeHtml(it.subtype)}</span>${it.archived ? ' <span class="card-meta">archived</span>' : ""}`;
+    else if (it.kind === "report") sub = `<span class="status-pill status-${escapeHtml(it.subtype)}">${escapeHtml(it.subtype)}</span>${it.criticality ? " " + criticalityBadgeHtml(it) : ""}`;
+    else if (it.kind === "relationship") sub = `${confidenceBadgeHtml(it.subtype)}${it.expired ? ' <span class="rel-expired-tag">Expired</span>' : ""}`;
+    else if (it.kind === "document") sub = `<span class="card-meta">${escapeHtml(it.subtype || "")}${it.filed_on ? ` · filed on ${it.filed_on.kind}` : " · unfiled"}</span>`;
+    else if (it.kind === "field") sub = `<span class="status-pill">${escapeHtml(it.subtype)}</span>${it.device_label ? ` <span class="card-meta">from ${escapeHtml(it.device_label)}</span>` : ""}`;
+    return `${head}
+      <button type="button" class="analyst-row" data-analyst-open="${escapeHtml(it.kind)}" data-id="${escapeHtml(it.id)}"
+        data-from="${escapeHtml(it.from_entity_id || "")}" data-report="${escapeHtml(it.report_id || "")}">
+        <span class="analyst-row-kind kind-${escapeHtml(it.kind)}">${ANALYST_KIND_LABEL[it.kind]}</span>
+        <span class="analyst-row-title">${escapeHtml(it.title)}</span>
+        <span class="analyst-row-sub">${sub}</span>
+        <span class="analyst-row-time">${new Date(it.created_at).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })}</span>
+      </button>`;
+  }).join("");
+}
+
+function openAnalystItem(d) {
+  if (d.analystOpen === "entity") openEntityDetail(d.id);
+  else if (d.analystOpen === "report") openReportDetail(d.id);
+  else if (d.analystOpen === "relationship") openEntityDetail(d.from);
+  else if (d.analystOpen === "document") openDocument(Number(d.id));
+  else if (d.analystOpen === "field") {
+    if (d.report) openReportDetail(d.report);
+    else { switchView("review"); const t = document.getElementById("field-subtab"); if (t) t.click(); }
+  }
+}
+
+(function wireAnalystPage() {
+  const sel = document.getElementById("analyst-select");
+  if (!sel) return;
+  sel.addEventListener("change", () => openAnalystPage(sel.value));
+  document.getElementById("analyst-q").addEventListener("input", debounce(() => loadAnalystResults(true), 250));
+  ["analyst-since", "analyst-until"].forEach((id) =>
+    document.getElementById(id).addEventListener("change", () => loadAnalystResults(true)));
+  document.getElementById("analyst-more").addEventListener("click", () => loadAnalystResults(false));
+  const menu = document.getElementById("user-menu-analysts");
+  if (menu) menu.addEventListener("click", () => { toggleUserMenu(false); openAnalystPage(state.user.username); });
+})();
+
 async function openEntityDetail(id) {
   setActiveTab("entities"); // correct even when reached from Dashboard/Map, not just the Entities list
   switchViewRaw("entity-detail");
@@ -3756,6 +3941,7 @@ async function openEntityDetail(id) {
     const entity = await api(`/api/entities/${id}`);
     state.currentEntityId = id;
     renderEntityDetail(entity);
+    fillBylines(el);
   } catch (err) {
     el.innerHTML = `<p class="empty-state">${escapeHtml(err.message)}</p>`;
   }
@@ -3910,20 +4096,75 @@ function relWording(r) {
  * which loses the discovery date and the notes with it. So: edit in place.
  * The API has always supported this (PATCH /api/relationships/{id}); it was
  * only ever the UI that insisted a relationship was written in stone. */
-const CONFIDENCE_LEVELS_UI = ["possible", "probable", "confirmed"];
+/* The scale is the 1-6 Admiralty credibility scale a report carries, so a
+ * link and a report are graded the same way and sit beside a source's A-F
+ * reliability the way they do in any intelligence grading. */
+const CONFIDENCE_SCALE = [
+  ["1", "Confirmed"], ["2", "Probably true"], ["3", "Possibly true"],
+  ["4", "Doubtful"], ["5", "Improbable"], ["6", "Cannot be judged"],
+];
+const CONFIDENCE_LABEL = Object.fromEntries(CONFIDENCE_SCALE);
+
+function confidenceBadgeHtml(c) {
+  if (!c) return "";
+  const label = CONFIDENCE_LABEL[c] || c;
+  return `<span class="conf-badge conf-${escapeHtml(c)}" title="Graded ${escapeHtml(c)}: ${escapeHtml(label)}"
+    >${escapeHtml(c)} · ${escapeHtml(label)}</span>`;
+}
+
+function confidenceOptionsHtml(selected) {
+  return CONFIDENCE_SCALE.map(([v, label]) =>
+    `<option value="${v}" ${v === String(selected) ? "selected" : ""}>${v} — ${label}</option>`).join("");
+}
+
+/* A link that stops counting. "Seen at the café once" is a fact about that
+ * week; left forever it becomes one more strand in a web that hides the
+ * real structure. Past its date a link is kept, still listed here — faded
+ * and marked — but left off the network unless someone asks for it. */
+function expiryChipHtml(r) {
+  if (r.expired) return `<span class="rel-expired-tag" title="Stopped counting after ${escapeHtml(r.expires_on)}">Expired ${escapeHtml(r.expires_on)}</span>`;
+  if (r.expires_on) return `<span class="rel-expires">until ${escapeHtml(r.expires_on)}</span>`;
+  return "";
+}
+
+function isoDaysFromNow(days) {
+  const d = new Date();
+  d.setDate(d.getDate() + days);
+  return d.toISOString().slice(0, 10);
+}
+
+/* Quick picks beside an expiry date: almost every expiring link is "this
+ * week", "this month" or "this quarter", and typing a date for each is the
+ * kind of friction that means nobody sets one. */
+function expiryPresetsHtml(target) {
+  const picks = [["1 week", 7], ["1 month", 30], ["3 months", 91], ["1 year", 365]];
+  return `<span class="expiry-presets">${picks.map(([label, days]) =>
+    `<button type="button" class="chip-btn" data-expiry-target="${target}" data-expiry-days="${days}">${label}</button>`).join("")}
+    <button type="button" class="chip-btn" data-expiry-target="${target}" data-expiry-days="">Never</button></span>`;
+}
+
+function wireExpiryPresets(root) {
+  root.querySelectorAll("[data-expiry-target]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const input = root.querySelector(btn.dataset.expiryTarget);
+      if (input) input.value = btn.dataset.expiryDays ? isoDaysFromNow(Number(btn.dataset.expiryDays)) : "";
+    });
+  });
+}
 
 function relRowHtml(r) {
   const arrow = r.direction === "outgoing" ? "→" : "←";
   return `
-    <li class="rel-row" data-rel-id="${r.id}">
+    <li class="rel-row${r.expired ? " rel-row-expired" : ""}" data-rel-id="${r.id}">
       <div class="rel-line">
         <span class="rel-main">
           <span class="rel-arrow">${arrow}</span>
           <strong>${escapeHtml(relWording(r))}</strong>
           <a href="#" data-open-entity="${escapeHtml(r.other_entity_id)}">${nameHtml(r.other_entity_name, r.other_entity_alignment)}</a>
           <span class="type-pill type-${r.other_entity_type}">${escapeHtml(r.other_entity_type)}</span>
-          <span class="confidence-${r.confidence}">${escapeHtml(r.confidence)}</span>
+          ${confidenceBadgeHtml(r.confidence)}
           ${r.discovery_date ? `<span class="rel-discovery-date">discovered ${escapeHtml(r.discovery_date)}</span>` : ""}
+          ${expiryChipHtml(r)}
         </span>
         <span class="rel-row-actions">
           <button class="btn-link btn-sm" data-edit-rel="${r.id}" aria-expanded="false">Edit</button>
@@ -3938,15 +4179,16 @@ function relRowHtml(r) {
                    value="${escapeHtml(r.relationship_type)}" required>
           </label>
           <label>Confidence
-            <select data-field="confidence">
-              ${CONFIDENCE_LEVELS_UI.map((c) =>
-                `<option value="${c}" ${c === r.confidence ? "selected" : ""}>${c}</option>`).join("")}
-            </select>
+            <select data-field="confidence">${confidenceOptionsHtml(r.confidence)}</select>
           </label>
           <label>Discovered
             <input type="date" data-field="discovery_date" value="${escapeHtml(r.discovery_date || "")}">
           </label>
+          <label>Expires
+            <input type="date" data-field="expires_on" value="${escapeHtml(r.expires_on || "")}">
+          </label>
         </div>
+        <div class="rel-edit-presets">${expiryPresetsHtml(`[data-rel-form="${r.id}"] [data-field=expires_on]`)}</div>
         <label class="rel-edit-notes">Notes
           <textarea rows="2" data-field="notes">${escapeHtml(r.notes || "")}</textarea>
         </label>
@@ -3975,6 +4217,7 @@ function ensureRelationshipTypeList() {
 
 function wireRelationshipEditing(el, entity) {
   ensureRelationshipTypeList();
+  wireExpiryPresets(el);
 
   const closeAll = () => {
     el.querySelectorAll("[data-rel-form]").forEach((f) => { f.hidden = true; });
@@ -4012,6 +4255,7 @@ function wireRelationshipEditing(el, entity) {
         // Cleared rather than skipped: blanking a wrong date has to be
         // possible, and PATCH with an explicit null is how you say so.
         discovery_date: value("discovery_date") || null,
+        expires_on: value("expires_on") || null,
         notes: value("notes") || null,
       };
       if (!body.relationship_type) {
@@ -4263,6 +4507,7 @@ function renderEntityDetail(entity) {
             ${eventExpiryBadgeHtml(entity)}
             ${retentionBadgeHtml(entity)}</h2>
           ${entity.description ? `<p>${escapeHtml(entity.description)}</p>` : ""}
+          ${entity.created_by ? `<p class="detail-byline" data-byline-user="${entity.created_by}"></p>` : ""}
           ${retentionNoticeHtml(entity)}
           <div id="entity-board-notice"></div>
         </div>
@@ -4456,16 +4701,19 @@ function openRelationshipForm(entity) {
       </div>
       <div class="form-row">
         <label>Confidence</label>
-        <select id="rel-confidence">
-          <option value="possible">Possible</option>
-          <option value="probable">Probable</option>
-          <option value="confirmed">Confirmed</option>
-        </select>
+        <select id="rel-confidence">${confidenceOptionsHtml("3")}</select>
+        <p class="field-hint">How far the link itself can be believed — the scale reports use.</p>
       </div>
       <div class="form-row">
         <label>Discovery date</label>
         <input type="date" id="rel-discovery-date" value="${new Date().toISOString().slice(0, 10)}">
         <p class="field-hint">When you learned of it.</p>
+      </div>
+      <div class="form-row">
+        <label>Expires</label>
+        <input type="date" id="rel-expires-on">
+        ${expiryPresetsHtml("#rel-expires-on")}
+        <p class="field-hint">Optional. After this date the link is marked expired and left off the network — for a sighting, a visit, anything true for a while rather than for good.</p>
       </div>
       <div class="form-row"><label>Notes</label><textarea id="rel-notes" rows="2"></textarea></div>
       <p class="form-error" id="rel-form-error"></p>
@@ -4477,6 +4725,7 @@ function openRelationshipForm(entity) {
   `;
   openModal(html);
   wireEntityPicker("rel-to");
+  wireExpiryPresets(document.getElementById("rel-form"));
   loadRelationshipTypesInto("rel-type-list");
   document.getElementById("rel-form-cancel").addEventListener("click", closeModal);
   document.getElementById("rel-form").addEventListener("submit", async (e) => {
@@ -4489,6 +4738,7 @@ function openRelationshipForm(entity) {
       relationship_type: document.getElementById("rel-type").value.trim().toLowerCase().replace(/\s+/g, "_"),
       confidence: document.getElementById("rel-confidence").value,
       discovery_date: document.getElementById("rel-discovery-date").value || null,
+      expires_on: document.getElementById("rel-expires-on").value || null,
       notes: document.getElementById("rel-notes").value.trim() || null,
     };
     try {
@@ -5715,7 +5965,7 @@ async function showLocationPopup(marker, loc) {
       <li>
         <a href="#" data-open-entity="${escapeHtml(r.other_entity_id)}">${escapeHtml(r.other_entity_name)}</a>
         <span class="type-pill type-${r.other_entity_type}">${escapeHtml(r.other_entity_type)}</span>
-        (${escapeHtml(relWording(r))}, ${escapeHtml(r.confidence)})
+        (${escapeHtml(relWording(r))}, ${escapeHtml(r.confidence)} ${escapeHtml(CONFIDENCE_LABEL[r.confidence] || "")}${r.expired ? ", expired" : ""})
       </li>`;
     const reportRow = (r) => `
       <li>
@@ -6026,7 +6276,7 @@ async function peekEntity(entityId) {
       .map(([k, v]) => `<div class="form-row"><label>${escapeHtml(k.replace(/_/g, " "))}</label><div>${escapeHtml(Array.isArray(v) ? v.join(", ") : String(v))}</div></div>`)
       .join("");
     const rels = (entity.relationships || []).slice(0, 8).map((r) =>
-      `<li>${r.direction === "outgoing" ? "→" : "←"} ${escapeHtml(relWording(r))} ${escapeHtml(r.other_entity_name)} <span class="card-meta">(${escapeHtml(r.confidence)})</span></li>`).join("");
+      `<li>${r.direction === "outgoing" ? "→" : "←"} ${escapeHtml(relWording(r))} ${escapeHtml(r.other_entity_name)} ${confidenceBadgeHtml(r.confidence)}${r.expired ? ' <span class="rel-expired-tag">Expired</span>' : ""}</li>`).join("");
     openModal(`
       <h2><span class="type-pill type-${escapeHtml(entity.entity_type)}">${escapeHtml(entity.entity_type)}</span> ${escapeHtml(entity.name)}</h2>
       ${entity.description ? `<p>${escapeHtml(entity.description)}</p>` : ""}
@@ -10293,12 +10543,19 @@ function renderAdminUserList(items) {
           <option value="analyst" ${u.role === "analyst" ? "selected" : ""}>Analyst</option>
           <option value="admin" ${u.role === "admin" ? "selected" : ""}>Admin</option>
         </select>
+        <button class="btn-secondary btn-sm admin-reset-pw-btn" data-user-id="${u.id}"
+                data-username="${escapeHtml(u.username)}">Reset password</button>
         <button class="btn-secondary btn-sm admin-toggle-active-btn" data-user-id="${u.id}" data-active="${u.is_active}">
           ${u.is_active ? "Deactivate" : "Reactivate"}
         </button>
       </div>
     </div>
   `).join("");
+
+  el.querySelectorAll(".admin-reset-pw-btn").forEach((btn) => {
+    btn.addEventListener("click", () =>
+      openResetPasswordForm(Number(btn.dataset.userId), btn.dataset.username));
+  });
 
   // Every action re-loads the whole list rather than patching the DOM in
   // place — including on failure. That's deliberate: a <select> already
@@ -10356,6 +10613,67 @@ function renderAdminUserList(items) {
       }
     });
   });
+}
+
+/* Four random words and a number, from a list short enough to read aloud and
+ * type on a phone keyboard. Generated in the browser with crypto randomness
+ * and never sent anywhere except in the reset request itself. */
+const PASSPHRASE_WORDS = ("amber anchor arrow badge banner beacon birch bison bolt bramble canyon cedar " +
+  "chisel cobalt comet copper coral crane delta dune ember falcon fern flint forge frost garnet glacier " +
+  "granite harbor hazel heron indigo iron ivory jasper juniper kestrel lantern lichen linden lunar maple " +
+  "marble meadow mesa nickel north oak onyx orbit osprey otter pebble pine pilot prairie quartz quill " +
+  "raven reef ridge river rook saddle sable sage shale signal slate sparrow spruce summit talon thistle " +
+  "timber topaz tundra valley vapor walnut willow yarrow zephyr").split(" ");
+
+function generatePassphrase() {
+  const r = new Uint32Array(5);
+  crypto.getRandomValues(r);
+  const words = Array.from(r.slice(0, 4), (n) => PASSPHRASE_WORDS[n % PASSPHRASE_WORDS.length]);
+  return `${words.join("-")}-${10 + (r[4] % 90)}`;
+}
+
+function openResetPasswordForm(userId, username) {
+  const self = userId === state.user.id;
+  openModal(`
+    <h2>Reset password — ${escapeHtml(username)}</h2>
+    <form id="reset-pw-form" autocomplete="off">
+      <div class="form-row">
+        <label for="reset-pw">New password</label>
+        <div class="reset-pw-line">
+          <input type="text" id="reset-pw" minlength="10" required spellcheck="false" autocomplete="new-password">
+          <button type="button" class="btn-secondary btn-sm" id="reset-pw-generate">Generate</button>
+        </div>
+        <p class="field-hint">At least 10 characters. Shown in the clear so you can read it to them —
+          close this once they have it. ${self
+            ? "Your other sessions will be signed out; this one stays."
+            : `Any session ${escapeHtml(username)} has open is signed out, and a login lockout is cleared.`}</p>
+      </div>
+      <p class="form-error" id="reset-pw-error"></p>
+      <div class="modal-actions">
+        <button type="button" class="btn-secondary" id="reset-pw-cancel">Cancel</button>
+        <button type="submit" class="btn-primary">Set password</button>
+      </div>
+    </form>`);
+  const input = document.getElementById("reset-pw");
+  document.getElementById("reset-pw-generate").addEventListener("click", () => {
+    input.value = generatePassphrase();
+    input.select();
+  });
+  document.getElementById("reset-pw-cancel").addEventListener("click", closeModal);
+  document.getElementById("reset-pw-form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const err = document.getElementById("reset-pw-error");
+    err.textContent = "";
+    if (input.value.length < 10) { err.textContent = "At least 10 characters."; return; }
+    try {
+      const res = await api(`/api/users/${userId}/password`, { method: "POST", body: { password: input.value } });
+      closeModal();
+      showToast(`Password set for ${username}` +
+        (res.sessions_ended ? ` — ${res.sessions_ended} session${res.sessions_ended === 1 ? "" : "s"} signed out` : ""));
+      loadAdminUsers();
+    } catch (ex) { err.textContent = ex.message; }
+  });
+  input.focus();
 }
 
 /* ============================================================================
@@ -12448,8 +12766,10 @@ function wireFieldQueue(el) {
         const r = await api(`/api/field/submissions/${b.dataset.subAccept}/accept`,
                             { method: "POST",
                               body: { create_entity: !!(box && box.checked) } });
+        const n = r.entity && r.entity.attachments ? r.entity.attachments.length : 0;
         showToast(r.entity
-          ? `Draft report created, and a ${r.entity.entity_type} record started`
+          ? `Draft report created, and a ${r.entity.entity_type} record started` +
+            (n ? ` with ${n} photo${n === 1 ? "" : "s"} attached` : "")
           : "Draft report created — finish it in the editor");
         refreshFieldBadge();
         openReportDetail(r.report_id);

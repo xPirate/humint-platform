@@ -784,6 +784,26 @@ link-signal pass stays off until somebody switches it on in **Admin → Link
 signals** — see "Suggested links" below before you do, because switching it on
 for an established case file produces a burst of proposals all at once.
 
+**Graded, expiring links** (v1.7) change one column and add another:
+
+```
+docker compose exec -T db psql -U <POSTGRES_USER> -d <POSTGRES_DB> \
+    < db/migrate-v1.7-relationship-grading.sql
+```
+
+`relationships.confidence` moves from confirmed/probable/possible to the 1–6
+credibility scale reports use, existing links mapping to 1/2/3; and
+`relationships.expires_on` is new. **Run it before starting the new API** —
+the new code validates 1–6, so a relationship form would refuse to save
+against an unmigrated table. Backups taken before v1.7, including the bundled
+sample case files, still restore: the restore maps the old words on the way
+in (`RETIRED_VALUES` in `api/backup.py`). The API also still accepts the old
+words from older clients and scripts.
+
+The other v1.7 changes — admin password reset, the analyst results page,
+field photos copied onto the entity an accepted report creates — need no
+schema change.
+
 **Device codes and one spelling** (v1.6) add a column and relabel an audit
 action:
 

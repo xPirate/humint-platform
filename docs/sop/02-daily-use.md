@@ -246,25 +246,42 @@ If you are coming from an older build, Faction became Alignment and lost its
 *Family* value; kinship belongs on a `family_of` relationship, where it can
 also say how. Records that already had Family keep it, shown as retired.
 
-## 4. Fix the confidences
+## 4. Grade the links, and let the passing ones expire
 
-Everything from extraction and the signal pass arrives as **possible**. That
-is the honest default for a machine's opinion. The point of review is that
-some of those become probable and a few become confirmed as you corroborate
-them.
+Every relationship carries a grade on the same 1–6 credibility scale a report
+does, so a link sits beside a source's A–F reliability the way any graded
+reporting does. Everything from extraction and the signal pass arrives as
+**3 — possibly true**. That is the honest default for a machine's opinion. The
+point of review is that some of those move up as you corroborate them, and
+some move down.
 
-On any record, press **Edit** on a relationship to change its type,
-confidence, discovery date and notes in place. Use the notes: *why* something
-is only possible is exactly what you need when you come back to it in three
-weeks.
-
-A rough scale that works:
+On any record, press **Edit** on a relationship to change its type, grade,
+discovery date, expiry and notes in place. Use the notes: *why* something is
+only a 3 is exactly what you need when you come back to it in three weeks.
 
 | | Means |
 |---|---|
-| **possible** | One source said so, or a machine inferred it. Nothing corroborates it. |
-| **probable** | More than one source, or one source you trust with something to lose. |
-| **confirmed** | You would put it in a report and defend it. |
+| **1 — Confirmed** | Corroborated by other sources. You would put it in a report and defend it. |
+| **2 — Probably true** | More than one source, or one source you trust with something to lose. |
+| **3 — Possibly true** | One source said so, or a machine inferred it. Nothing corroborates it. |
+| **4 — Doubtful** | Said, but at odds with what else you hold. |
+| **5 — Improbable** | Said, and contradicted. Kept so you know it was said. |
+| **6 — Cannot be judged** | No basis yet for any of the above. |
+
+On the network a 1 is drawn heavier than a 3, and anything 4 or worse is
+dashed.
+
+**Expiry.** Some links are true for a while rather than for good: a person
+seen at a café once, a car parked outside an address last week. Give those an
+**Expires** date (the quick picks — 1 week, 1 month, 3 months, 1 year — cover
+most of them). After that date the link is *expired*: it stays on both records,
+faded and marked **Expired**, but drops off the relationship network, so one
+sighting does not stay a permanent strand in the web. **Show expired links**
+above the network draws them again, faint and dashed. Expiry never deletes
+anything; clear the date to make a link current again.
+
+Records saved before v1.7 were graded in words; they were converted
+confirmed → 1, probable → 2, possible → 3.
 
 The exercise is built around this: the roster identification is *probable* and
 is deliberately the weakest link in the chain, which the final assessment says
@@ -514,6 +531,17 @@ page has the same menu on its **Actions** button.
 
 The first four need Ollama. With it switched off they stay in the menu, greyed
 out, so you can see what you would get by turning it on.
+
+## Everything one analyst entered
+
+Type a username into the search box at the top and pick **Everything entered
+by …**, or use **Search by analyst** in your account menu. The page lists
+every entity, report, link, document and field report that person created,
+newest first and grouped by day, with a count per kind across the top. Filter
+by title or by date range; click any row to open it. The page has its own
+address (`#analyst/<name>`), so it can be opened in a new tab, bookmarked or
+sent to someone. Every record's page also says **Entered by …**, linking to
+the same view.
 
 ## Reading the Entities page
 

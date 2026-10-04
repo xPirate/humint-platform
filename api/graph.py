@@ -59,6 +59,10 @@ def entity_graph(
     q: Optional[str] = Query(default=None),
     active_only: bool = Query(default=True),
     hide_expired: bool = Query(default=False),
+    # Expired LINKS (relationships past their expires_on) are left off by
+    # default — that is the point of letting a link expire. This brings them
+    # back, flagged so the network can draw them faded.
+    include_expired_links: bool = Query(default=False),
     limit: int = Query(default=MAX_GRAPH_NODES, ge=1, le=MAX_GRAPH_NODES),
     user: dict = Depends(auth.require_user),
 ):
@@ -82,6 +86,8 @@ def entity_graph(
             "  SELECT entity_id FROM event_details"
             "  WHERE expires_at IS NULL OR expires_at >= CURRENT_DATE))")
     where_clause = "WHERE " + " AND ".join(where)
+    live_links = "" if include_expired_links else \
+        "WHERE expires_on IS NULL OR expires_on >= CURRENT_DATE"
 
     with db_cursor() as cur:
         # One pass, not one query per entity. The degree subquery counts both
@@ -91,9 +97,9 @@ def entity_graph(
             f"""
             WITH degree AS (
                 SELECT entity_id, count(*) AS n FROM (
-                    SELECT from_entity_id AS entity_id FROM relationships
+                    SELECT from_entity_id AS entity_id FROM relationships {live_links}
                     UNION ALL
-                    SELECT to_entity_id AS entity_id FROM relationships
+                    SELECT to_entity_id AS entity_id FROM relationships {live_links}
                 ) both_ends
                 GROUP BY entity_id
             )
@@ -122,14 +128,18 @@ def entity_graph(
         if ids:
             cur.execute(
                 """
-                SELECT id, from_entity_id, to_entity_id, relationship_type, confidence
+                SELECT id, from_entity_id, to_entity_id, relationship_type, confidence,
+                       expires_on,
+                       (expires_on IS NOT NULL AND expires_on < CURRENT_DATE) AS expired
                   FROM relationships
                  WHERE from_entity_id = ANY(%s) AND to_entity_id = ANY(%s)
+                   AND (%s OR expires_on IS NULL OR expires_on >= CURRENT_DATE)
                  ORDER BY id
                 """,
-                (ids, ids))
+                (ids, ids, include_expired_links))
             edges = [{"id": r[0], "from": r[1], "to": r[2],
-                      "relationship_type": r[3], "confidence": r[4]}
+                      "relationship_type": r[3], "confidence": r[4],
+                      "expires_on": r[5], "expired": r[6]}
                      for r in cur.fetchall()]
 
     return {

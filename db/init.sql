@@ -402,13 +402,26 @@ CREATE TABLE IF NOT EXISTS relationships (
     from_entity_id TEXT NOT NULL REFERENCES entities(id) ON DELETE CASCADE,
     to_entity_id TEXT NOT NULL REFERENCES entities(id) ON DELETE CASCADE,
     relationship_type TEXT NOT NULL,
-    confidence TEXT NOT NULL DEFAULT 'possible' CHECK (confidence IN ('confirmed', 'probable', 'possible')),
+    -- NATO/Admiralty information credibility, the same 1-6 scale a report
+    -- carries: 1 confirmed by other sources, 2 probably true, 3 possibly
+    -- true, 4 doubtful, 5 improbable, 6 truth cannot be judged. It sits
+    -- beside a source's A-F reliability the way it does in any intelligence
+    -- grading, and a link is graded like any other piece of reporting.
+    -- Was confirmed/probable/possible until v1.7, which map to 1/2/3.
+    confidence TEXT NOT NULL DEFAULT '3' CHECK (confidence IN ('1', '2', '3', '4', '5', '6')),
     -- When the analyst learned of this relationship, not when it was
     -- allegedly active — a validity date range implies a precision about
     -- when a relationship started/ended that HUMINT reporting usually can't
     -- actually support, whereas "when did we find this out" is always a
     -- fact the analyst genuinely knows.
     discovery_date DATE,
+    -- The last day this link should count. A person seen at a location once
+    -- is a fact about that week, not a permanent edge, and a network where
+    -- every sighting is forever becomes a web in which the real structure
+    -- disappears. Past this date the link is EXPIRED: kept, still shown on
+    -- both records (faded, marked expired), but left off the network unless
+    -- someone asks to see expired links. NULL means it does not expire.
+    expires_on DATE,
     notes TEXT,
     created_by INTEGER REFERENCES users(id),
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),

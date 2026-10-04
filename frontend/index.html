@@ -175,6 +175,7 @@
             </div>
           </div>
           <button type="button" class="user-menu-item" id="user-menu-admin" role="menuitem" hidden>Admin settings</button>
+          <button type="button" class="user-menu-item" id="user-menu-analysts" role="menuitem">Search by analyst</button>
           <button type="button" class="user-menu-item" id="user-menu-audit" role="menuitem" hidden>Audit log</button>
           <button type="button" class="user-menu-item user-menu-item-danger" id="user-menu-logout" role="menuitem">Log out</button>
         </div>
@@ -327,6 +328,9 @@
             <label class="inline-check" title="Hide entities with no relationships">
               <input type="checkbox" id="graph-hide-isolated" checked> Hide unconnected
             </label>
+            <label class="inline-check" title="Links past their expiry date are left off the network. Tick to draw them, faded.">
+              <input type="checkbox" id="graph-show-expired-links"> Show expired links
+            </label>
             <button id="graph-refit" class="btn-secondary btn-sm"
                     title="Re-run the layout and release anything you have dragged">Refit</button>
           </div>
@@ -349,6 +353,27 @@
     <section id="view-entity-detail" class="view">
       <button class="btn-link back-link" data-back="entities">&larr; Back to Entities</button>
       <div id="entity-detail-body"></div>
+    </section>
+
+    <!-- ---------- Analyst results: everything one person entered ---------- -->
+    <section id="view-analyst" class="view">
+      <div class="analyst-head">
+        <div>
+          <p class="analyst-eyebrow">Entered by</p>
+          <div class="analyst-picker">
+            <select id="analyst-select" aria-label="Analyst"></select>
+            <span id="analyst-role" class="card-meta"></span>
+          </div>
+        </div>
+        <div class="analyst-filters">
+          <input type="search" id="analyst-q" placeholder="Filter by title…" autocomplete="off">
+          <label class="analyst-date">From <input type="date" id="analyst-since"></label>
+          <label class="analyst-date">To <input type="date" id="analyst-until"></label>
+        </div>
+      </div>
+      <div class="analyst-kinds" id="analyst-kinds" role="tablist"></div>
+      <div id="analyst-results" class="analyst-results"></div>
+      <div class="analyst-more"><button id="analyst-more" class="btn-secondary" hidden>Load more</button></div>
     </section>
 
     <!-- ---------- Reports list view ---------- -->

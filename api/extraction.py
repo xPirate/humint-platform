@@ -514,19 +514,14 @@ def accept_extraction_suggestion(
                     detail="relationship_type must be lowercase snake_case, e.g. 'employed_by'",
                 )
             # Deliberately NOT mapping the LLM's 0-1 confidence score onto
-            # confirmed/probable/possible — those measure different things
+            # the 1-6 credibility scale — those measure different things
             # (the model's certainty about the wording vs. an analyst's
             # tradecraft judgment about the claim itself). Auto-promoting an
-            # unreviewed suggestion straight to 'confirmed' would undercut
-            # the whole point of a review queue, so this defaults to the
-            # most conservative option unless the analyst explicitly
-            # overrides it in the accept call.
-            confidence = overrides.confidence or "possible"
-            if confidence not in entities_module.CONFIDENCE_LEVELS:
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"confidence must be one of {entities_module.CONFIDENCE_LEVELS}",
-                )
+            # unreviewed suggestion straight to 1 (confirmed) would undercut
+            # the whole point of a review queue, so this defaults to 3,
+            # "possibly true", unless the analyst explicitly grades it in
+            # the accept call.
+            confidence = entities_module.normalize_confidence(overrides.confidence or "3")
             if overrides.from_entity_id == overrides.to_entity_id:
                 raise HTTPException(status_code=400, detail="An entity cannot have a relationship with itself")
             if not entities_module._entity_exists(cur, overrides.from_entity_id):

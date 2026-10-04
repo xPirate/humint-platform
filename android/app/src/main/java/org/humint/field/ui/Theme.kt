@@ -1,5 +1,8 @@
 package org.humint.field.ui
 
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.Shapes
+
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Typography
@@ -27,48 +30,75 @@ import org.humint.field.data.ThemeChoice
  * do.
  */
 
-private val Green = Color(0xFF39FF88)
-private val GreenDim = Color(0xFF1F7A46)
+/*
+ * v1.3: still green, no longer a terminal. The old scheme was neon on
+ * near-black with a green cast to every surface, which read as a 1980s
+ * monitor. This keeps the green as the one accent and lets the surfaces be
+ * neutral and layered — background, then cards a step lighter, then the
+ * bottom bar — the way current apps are built. The dark scheme is still the
+ * one that got the attention, for the same reason as before: night, and not
+ * lighting up the person holding it.
+ */
+private val Green = Color(0xFF3DDC84)
+private val GreenDeep = Color(0xFF0E6B3A)
 private val Amber = Color(0xFFFFB020)
-private val Red = Color(0xFFFF4D3D)
+private val Red = Color(0xFFFF5A4E)
 
 private val Dark = darkColorScheme(
     primary = Green,
-    onPrimary = Color(0xFF00210E),
-    primaryContainer = GreenDim,
-    onPrimaryContainer = Color(0xFFD6FFE2),
-    secondary = Color(0xFF7FD4B0),
-    background = Color(0xFF05100A),
-    onBackground = Color(0xFFD6FFE2),
-    surface = Color(0xFF0B1B12),
-    onSurface = Color(0xFFD6FFE2),
-    surfaceVariant = Color(0xFF14291C),
-    onSurfaceVariant = Color(0xFF8FBFA3),
-    outline = Color(0xFF2C5740),
+    onPrimary = Color(0xFF00210F),
+    primaryContainer = GreenDeep,
+    onPrimaryContainer = Color(0xFFCFF8DE),
+    secondary = Color(0xFF8FD3B0),
+    onSecondary = Color(0xFF00210F),
+    background = Color(0xFF0B0F0D),
+    onBackground = Color(0xFFE6ECE8),
+    surface = Color(0xFF151B18),
+    onSurface = Color(0xFFE6ECE8),
+    surfaceVariant = Color(0xFF222B26),
+    onSurfaceVariant = Color(0xFF9AA9A0),
+    surfaceContainer = Color(0xFF151B18),
+    surfaceContainerLow = Color(0xFF111613),
+    surfaceContainerHigh = Color(0xFF1C2420),
+    outline = Color(0xFF34413A),
+    outlineVariant = Color(0xFF263029),
     error = Red,
     onError = Color(0xFF2A0000),
 )
 
 private val Light = lightColorScheme(
-    primary = Color(0xFF13704A),
+    primary = Color(0xFF0F7A45),
     onPrimary = Color.White,
-    primaryContainer = Color(0xFFB8F0D2),
-    onPrimaryContainer = Color(0xFF00210E),
+    primaryContainer = Color(0xFFC6F2D8),
+    onPrimaryContainer = Color(0xFF002110),
     secondary = Color(0xFF3C6B55),
-    background = Color(0xFFF7FBF8),
-    onBackground = Color(0xFF111B15),
+    background = Color(0xFFF3F5F4),
+    onBackground = Color(0xFF111714),
     surface = Color.White,
-    onSurface = Color(0xFF111B15),
-    surfaceVariant = Color(0xFFE2EFE7),
-    onSurfaceVariant = Color(0xFF41544A),
-    outline = Color(0xFF9DB3A6),
+    onSurface = Color(0xFF111714),
+    surfaceVariant = Color(0xFFE4EAE6),
+    onSurfaceVariant = Color(0xFF4F5D55),
+    surfaceContainer = Color.White,
+    surfaceContainerLow = Color(0xFFF7F9F8),
+    surfaceContainerHigh = Color(0xFFEDF1EE),
+    outline = Color(0xFFB7C3BC),
+    outlineVariant = Color(0xFFD9E0DC),
     error = Color(0xFFB3261E),
+)
+
+private val FieldShapes = Shapes(
+    extraSmall = RoundedCornerShape(8.dp),
+    small = RoundedCornerShape(12.dp),
+    medium = RoundedCornerShape(16.dp),
+    large = RoundedCornerShape(24.dp),
+    extraLarge = RoundedCornerShape(28.dp),
 )
 
 val FieldAmber = Amber
 
 private val FieldTypography = Typography().let { base ->
     base.copy(
+        headlineMedium = base.headlineMedium.copy(fontSize = 32.sp, letterSpacing = (-0.5).sp),
         headlineSmall = base.headlineSmall.copy(fontSize = 26.sp),
         titleLarge = base.titleLarge.copy(fontSize = 22.sp),
         titleMedium = base.titleMedium.copy(fontSize = 19.sp),
@@ -93,6 +123,7 @@ fun FieldTheme(choice: ThemeChoice = ThemeChoice.SYSTEM, content: @Composable ()
     MaterialTheme(
         colorScheme = if (dark) Dark else Light,
         typography = FieldTypography,
+        shapes = FieldShapes,
         content = content,
     )
 }

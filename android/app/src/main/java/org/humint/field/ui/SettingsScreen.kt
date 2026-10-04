@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
@@ -48,7 +49,7 @@ import java.util.concurrent.Executor
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun SettingsScreen(onBack: () -> Unit) {
+fun SettingsScreen(outer: androidx.compose.foundation.layout.PaddingValues) {
     val context = LocalContext.current
     val activity = context as? FragmentActivity
     val theme by Settings.theme.collectAsStateWithLifecycle()
@@ -62,19 +63,17 @@ fun SettingsScreen(onBack: () -> Unit) {
             BiometricManager.BIOMETRIC_SUCCESS
     }
 
-    Scaffold(
-        topBar = {
-            TopAppBar(
-                title = { Text("Settings") },
-                navigationIcon = { TextButton(onClick = onBack) { Text("Back") } },
-            )
-        },
-    ) { padding ->
+    // A tab on the bottom bar now, not a screen pushed over the queue, so
+    // there is no Back: the bar is the way out.
+    run {
         Column(
-            Modifier.fillMaxSize().padding(padding)
+            Modifier.fillMaxSize().padding(outer)
                 .verticalScroll(rememberScrollState())
                 .padding(horizontal = 20.dp),
         ) {
+            Text("Settings", style = MaterialTheme.typography.headlineMedium,
+                 fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
+                 modifier = Modifier.padding(top = 18.dp))
             Section("Appearance")
             ThemeChoice.entries.forEach { choice ->
                 Row(
@@ -162,9 +161,12 @@ fun SettingsScreen(onBack: () -> Unit) {
 
 @Composable
 private fun Section(title: String) {
-    Spacer(Modifier.height(16.dp))
-    Text(title, style = MaterialTheme.typography.titleMedium)
-    Spacer(Modifier.height(4.dp))
+    Spacer(Modifier.height(20.dp))
+    Text(title.uppercase(), style = MaterialTheme.typography.labelMedium,
+         color = MaterialTheme.colorScheme.primary,
+         fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold,
+         letterSpacing = androidx.compose.ui.unit.TextUnit(1.2f, androidx.compose.ui.unit.TextUnitType.Sp))
+    Spacer(Modifier.height(6.dp))
 }
 
 @Composable

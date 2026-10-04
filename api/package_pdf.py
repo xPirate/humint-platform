@@ -36,6 +36,7 @@ from reportlab.platypus import (
 from report_pdf import (
     CREDIBILITY_LABELS,
     FONT_BOLD,
+    link_grading,
     FONT_REGULAR,
     PAGE_MARGIN,
     PAGE_SIZE,
@@ -187,8 +188,8 @@ def _neighbour_line(rel, neighbour, contact, s):
         facts.append(f"{contact.get('kind')}: {contact.get('value')}")
     line = " · ".join(bits)
     detail = f"<br/><font size='8' color='#666666'>{_esc(' · '.join(facts))}</font>" if facts else ""
-    confidence = rel.get("confidence")
-    conf = f" <font size='8' color='#666666'>({_esc(confidence)})</font>" if confidence else ""
+    grading = link_grading(rel)
+    conf = f" <font size='8' color='#666666'>({_esc(grading)})</font>" if grading else ""
     return Paragraph(
         f"{_esc(_wording(rel.get('reads_as') or rel.get('relationship_type')))} "
         f"&nbsp;{line}{conf}{detail}",

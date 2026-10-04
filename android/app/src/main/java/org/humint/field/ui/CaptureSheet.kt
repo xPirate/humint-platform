@@ -130,9 +130,15 @@ private fun VideoPane(onDone: (Capture.Captured?) -> Unit) {
     var elapsed by remember { mutableStateOf(0) }
     var plainFile by remember { mutableStateOf<File?>(null) }
 
-    CameraPreview(bind = { provider, preview ->
-        provider.bindToLifecycle(owner, CameraSelector.DEFAULT_BACK_CAMERA, preview, videoCapture)
-    })
+    var camera by remember { mutableStateOf<androidx.camera.core.Camera?>(null) }
+    CameraPreview(
+        bind = { provider, preview ->
+            camera = provider.bindToLifecycle(owner, CameraSelector.DEFAULT_BACK_CAMERA, preview, videoCapture)
+        },
+        // Pinch and tap work while recording too. No preset chips here: the
+        // preview is small, and chips would cover what is being filmed.
+        overlay = { CameraGestureLayer(camera, showPresets = false) },
+    )
 
     LaunchedEffect(recording) {
         while (recording != null) {

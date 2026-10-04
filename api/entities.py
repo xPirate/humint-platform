@@ -105,7 +105,41 @@ def inverse_relationship_type(relationship_type: str) -> str:
     """How `relationship_type` reads from the far end of the edge."""
     return INVERSE_RELATIONSHIP_TYPES.get(relationship_type, relationship_type)
 RELATIONSHIP_TYPE_RE = re.compile(r"^[a-z][a-z0-9_]{1,63}$")
-CONFIDENCE_LEVELS = ("confirmed", "probable", "possible")
+# NATO/Admiralty information credibility — the scale a report's
+# credibility_rating uses, applied to a link. Stored as text '1'..'6'.
+CONFIDENCE_LEVELS = ("1", "2", "3", "4", "5", "6")
+CONFIDENCE_LABELS = {
+    "1": "Confirmed", "2": "Probably true", "3": "Possibly true",
+    "4": "Doubtful", "5": "Improbable", "6": "Cannot be judged",
+}
+# The words the scale replaced (v1.7). Still accepted on the way in, so an
+# older client or script that sends "probable" is understood rather than
+# refused, and mapped onto the grades they always meant.
+LEGACY_CONFIDENCE = {"confirmed": "1", "probable": "2", "possible": "3"}
+
+
+def normalize_confidence(value) -> str:
+    """'2', 2, 'probable' -> '2'. Raises HTTPException on anything else."""
+    v = str(value).strip().lower() if value is not None else ""
+    v = LEGACY_CONFIDENCE.get(v, v)
+    if v not in CONFIDENCE_LEVELS:
+        raise HTTPException(
+            status_code=400,
+            detail="confidence must be 1-6 (1 confirmed, 2 probably true, 3 possibly true, "
+                   "4 doubtful, 5 improbable, 6 cannot be judged)")
+    return v
+
+
+def link_is_expired(expires_on) -> bool:
+    """Past its last day. Computed at read time, never stored — the same
+    reason an event's expiry is: it is a fact about today."""
+    return expires_on is not None and expires_on < date.today()
+
+
+def _check_expiry(discovery_date, expires_on) -> None:
+    if discovery_date and expires_on and expires_on < discovery_date:
+        raise HTTPException(status_code=400,
+                            detail="A link cannot expire before the date it was discovered.")
 
 # An analyst's own operational read on where someone or something stands
 # relative to the case — not a fact to extract from text, so the extraction
@@ -305,8 +339,9 @@ class RelationshipCreate(BaseModel):
     from_entity_id: str
     to_entity_id: str
     relationship_type: str
-    confidence: str = "possible"
+    confidence: str = "3"
     discovery_date: Optional[date] = None
+    expires_on: Optional[date] = None
     notes: Optional[str] = None
 
 
@@ -314,6 +349,8 @@ class RelationshipUpdate(BaseModel):
     relationship_type: Optional[str] = None
     confidence: Optional[str] = None
     discovery_date: Optional[date] = None
+    # Explicit null clears it: "this no longer expires".
+    expires_on: Optional[date] = None
     notes: Optional[str] = None
 
 
@@ -729,12 +766,12 @@ def get_entity(entity_id: str, user: dict = Depends(auth.require_user)):
         cur.execute(
             """
             SELECT r.id, r.relationship_type, r.confidence, r.discovery_date, r.notes,
-                   'outgoing', e2.id, e2.name, e2.entity_type
+                   'outgoing', e2.id, e2.name, e2.entity_type, r.expires_on
             FROM relationships r JOIN entities e2 ON e2.id = r.to_entity_id
             WHERE r.from_entity_id = %s
             UNION ALL
             SELECT r.id, r.relationship_type, r.confidence, r.discovery_date, r.notes,
-                   'incoming', e2.id, e2.name, e2.entity_type
+                   'incoming', e2.id, e2.name, e2.entity_type, r.expires_on
             FROM relationships r JOIN entities e2 ON e2.id = r.from_entity_id
             WHERE r.to_entity_id = %s
             """,
@@ -758,9 +795,15 @@ def get_entity(entity_id: str, user: dict = Depends(auth.require_user)):
                 "reads_as": r[1] if r[5] == "outgoing" else inverse_relationship_type(r[1]),
                 "other_entity_id": r[6], "other_entity_name": r[7], "other_entity_type": r[8],
                 "other_entity_alignment": neighbour_alignments.get(r[6]),
+                "expires_on": r[9],
+                "expired": link_is_expired(r[9]),
             }
             for r in relationship_rows
         ]
+        # Live links first, expired ones after them: the expired ones are
+        # history, kept for the record, and should not push current links
+        # off the bottom of the list.
+        entity["relationships"].sort(key=lambda rel: rel["expired"])
 
         # Only three types can hold them (see contacts.CONTACTABLE_TYPES); the
         # others get an empty list rather than the key being absent, so a
@@ -924,8 +967,8 @@ def create_relationship(payload: RelationshipCreate, user: dict = Depends(auth.r
             status_code=400,
             detail="relationship_type must be lowercase snake_case, e.g. 'employed_by'",
         )
-    if payload.confidence not in CONFIDENCE_LEVELS:
-        raise HTTPException(status_code=400, detail=f"confidence must be one of {CONFIDENCE_LEVELS}")
+    payload.confidence = normalize_confidence(payload.confidence)
+    _check_expiry(payload.discovery_date, payload.expires_on)
 
     with db_cursor(commit=True) as cur:
         if not _entity_exists(cur, payload.from_entity_id):
@@ -936,13 +979,15 @@ def create_relationship(payload: RelationshipCreate, user: dict = Depends(auth.r
         cur.execute(
             """
             INSERT INTO relationships
-                (from_entity_id, to_entity_id, relationship_type, confidence, discovery_date, notes, created_by)
-            VALUES (%s, %s, %s, %s, %s, %s, %s)
+                (from_entity_id, to_entity_id, relationship_type, confidence, discovery_date,
+                 expires_on, notes, created_by)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
             RETURNING id, created_at
             """,
             (
                 payload.from_entity_id, payload.to_entity_id, payload.relationship_type,
-                payload.confidence, payload.discovery_date, payload.notes, user["id"],
+                payload.confidence, payload.discovery_date, payload.expires_on, payload.notes,
+                user["id"],
             ),
         )
         rel_id, created_at = cur.fetchone()
@@ -951,7 +996,8 @@ def create_relationship(payload: RelationshipCreate, user: dict = Depends(auth.r
                  object_label=f"{payload.from_entity_id} {payload.relationship_type} {payload.to_entity_id}",
                  detail={"from": payload.from_entity_id, "to": payload.to_entity_id,
                          "relationship_type": payload.relationship_type,
-                         "confidence": payload.confidence})
+                         "confidence": payload.confidence,
+                         "expires_on": payload.expires_on.isoformat() if payload.expires_on else None})
     return {
         "id": rel_id,
         "from_entity_id": payload.from_entity_id,
@@ -959,6 +1005,8 @@ def create_relationship(payload: RelationshipCreate, user: dict = Depends(auth.r
         "relationship_type": payload.relationship_type,
         "confidence": payload.confidence,
         "discovery_date": payload.discovery_date,
+        "expires_on": payload.expires_on,
+        "expired": link_is_expired(payload.expires_on),
         "notes": payload.notes,
         "created_at": created_at,
     }
@@ -969,15 +1017,19 @@ def update_relationship(relationship_id: int, payload: RelationshipUpdate, user:
     updates = payload.model_dump(exclude_unset=True)
     if "relationship_type" in updates and not RELATIONSHIP_TYPE_RE.match(updates["relationship_type"]):
         raise HTTPException(status_code=400, detail="relationship_type must be lowercase snake_case")
-    if "confidence" in updates and updates["confidence"] not in CONFIDENCE_LEVELS:
-        raise HTTPException(status_code=400, detail=f"confidence must be one of {CONFIDENCE_LEVELS}")
+    if "confidence" in updates:
+        updates["confidence"] = normalize_confidence(updates["confidence"])
     if not updates:
         raise HTTPException(status_code=400, detail="No fields to update")
 
     with db_cursor(commit=True) as cur:
-        cur.execute("SELECT 1 FROM relationships WHERE id = %s", (relationship_id,))
-        if cur.fetchone() is None:
+        cur.execute("SELECT discovery_date, expires_on FROM relationships WHERE id = %s",
+                    (relationship_id,))
+        current = cur.fetchone()
+        if current is None:
             raise HTTPException(status_code=404, detail="Relationship not found")
+        _check_expiry(updates.get("discovery_date", current[0]),
+                      updates.get("expires_on", current[1]))
         set_clause = ", ".join(f"{k} = %s" for k in updates)
         cur.execute(
             f"UPDATE relationships SET {set_clause} WHERE id = %s",
@@ -985,7 +1037,10 @@ def update_relationship(relationship_id: int, payload: RelationshipUpdate, user:
         )
     audit.record("relationship.update", user=user, object_type="relationship",
                  object_id=relationship_id, detail={"fields": sorted(updates)})
-    return {"id": relationship_id, **updates}
+    out = {"id": relationship_id, **updates}
+    if "expires_on" in updates:
+        out["expired"] = link_is_expired(updates["expires_on"])
+    return out
 
 
 @router.delete("/relationships/{relationship_id}", status_code=204)

@@ -405,9 +405,10 @@ def _move_relationships(cur, loser_id: str, survivor_id: str, moved: dict) -> No
     moved["relationships"] += cur.rowcount
 
     # Two records related to the same third party the same way are now one
-    # relationship stated twice. Keep the row carrying the most — a confirmed
-    # edge with notes beats a bare possible one — and the lowest id to break a
-    # tie deterministically.
+    # relationship stated twice. Keep the row carrying the most — a live link
+    # beats an expired one, a better-graded one (1 beats 3) beats a weaker,
+    # one with notes beats a bare one — and the lowest id to break a tie
+    # deterministically.
     cur.execute(
         """
         DELETE FROM relationships r
@@ -417,10 +418,12 @@ def _move_relationships(cur, loser_id: str, survivor_id: str, moved: dict) -> No
           AND r.relationship_type = keep.relationship_type
           AND r.id <> keep.id
           AND (
-            (CASE keep.confidence WHEN 'confirmed' THEN 2 WHEN 'probable' THEN 1 ELSE 0 END,
+            ((keep.expires_on IS NULL OR keep.expires_on >= CURRENT_DATE)::int,
+             -keep.confidence::int,
              (keep.notes IS NOT NULL)::int, (keep.discovery_date IS NOT NULL)::int, -keep.id)
             >
-            (CASE r.confidence WHEN 'confirmed' THEN 2 WHEN 'probable' THEN 1 ELSE 0 END,
+            ((r.expires_on IS NULL OR r.expires_on >= CURRENT_DATE)::int,
+             -r.confidence::int,
              (r.notes IS NOT NULL)::int, (r.discovery_date IS NOT NULL)::int, -r.id)
           )
           AND (r.from_entity_id = %s OR r.to_entity_id = %s)

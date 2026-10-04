@@ -6,13 +6,13 @@ here is gated on auth.require_admin. Account creation itself still lives in
 auth.py's POST /api/auth/register (already admin-gated once bootstrap is
 done) — this module only adds what was missing: seeing who exists, and
 changing an existing account's role or active state without creating a new
-one.
+one, or setting a new password for someone who has forgotten theirs.
 """
 
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
+from fastapi import APIRouter, Depends, HTTPException, Request
+from pydantic import BaseModel, Field
 
 import audit
 import auth
@@ -26,6 +26,10 @@ _USER_COLS = ["id", "username", "role", "is_active", "created_at", "failed_login
 class UserUpdate(BaseModel):
     role: Optional[str] = None
     is_active: Optional[bool] = None
+
+
+class PasswordReset(BaseModel):
+    password: str = Field(min_length=auth.MIN_PASSWORD_LENGTH, max_length=256)
 
 
 def _row_to_user(row) -> dict:
@@ -94,3 +98,40 @@ def update_user(user_id: int, payload: UserUpdate, admin_user: dict = Depends(au
         detail={"changes": updates} if updates else {"changes": {}},
     )
     return updated
+
+
+@router.post("/users/{user_id}/password")
+def reset_password(user_id: int, payload: PasswordReset, request: Request,
+                   admin_user: dict = Depends(auth.require_admin)):
+    """Set a new password for an account.
+
+    The alternative was deleting the analyst and recreating them, which
+    orphans everything they authored from their name — created_by and
+    author_id point at the old id. This keeps the account and its history.
+
+    It also clears a lockout (the usual reason somebody is asking), and
+    signs the account out everywhere: whoever was holding a session under
+    the old password should not keep it. Resetting your OWN password keeps
+    the session you are using, so an admin is not thrown out mid-task.
+    """
+    with db_cursor(commit=True) as cur:
+        cur.execute("SELECT username FROM users WHERE id = %s", (user_id,))
+        row = cur.fetchone()
+        if row is None:
+            raise HTTPException(status_code=404, detail="User not found")
+        username = row[0]
+        cur.execute(
+            "UPDATE users SET password_hash = %s, failed_login_attempts = 0, locked_until = NULL "
+            "WHERE id = %s",
+            (auth._hash_password(payload.password), user_id),
+        )
+        keep = request.cookies.get(auth.SESSION_COOKIE_NAME) if user_id == admin_user["id"] else None
+        cur.execute("DELETE FROM sessions WHERE user_id = %s AND token IS DISTINCT FROM %s",
+                    (user_id, keep))
+        signed_out = cur.rowcount
+
+    # The password itself never goes in the audit log, in any form.
+    audit.record("user.password_reset", user=admin_user, object_type="user",
+                 object_id=user_id, object_label=username,
+                 detail={"sessions_ended": signed_out})
+    return {"id": user_id, "username": username, "sessions_ended": signed_out}

@@ -25,12 +25,19 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.FlashAuto
+import androidx.compose.material.icons.filled.FlashOff
+import androidx.compose.material.icons.filled.FlashOn
+import androidx.compose.material.icons.filled.FlashlightOn
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -64,9 +71,22 @@ import org.humint.field.media.Capture
  *
  * A camera is also a thing people have firm expectations about: a big
  * viewfinder, a shutter at the bottom under your thumb, a way out that is
- * not a gesture, and a torch. None of that fits in a sheet, so it is a
- * screen.
+ * not a gesture, a flash that is off until you want it, and zoom. None of
+ * that fits in a sheet, so it is a screen.
+ *
+ * The flash used to be a torch toggle — a light that stayed on while you
+ * framed the shot, announcing you to whoever you were photographing. It is
+ * now a flash, the way every phone camera does it: Off by default, Auto, On
+ * (fires at the shutter only), and Light for the rare case you need to see
+ * to frame. The choice lasts for this screen, not forever — a flash left on
+ * from last night's photo is not something to find out about in daylight.
  */
+
+/** The four positions of the flash button, in the order a tap cycles them. */
+private enum class FlashChoice(val label: String) {
+    Off("Flash off"), Auto("Flash auto"), On("Flash on"), Light("Light");
+    fun next() = entries[(ordinal + 1) % entries.size]
+}
 @Composable
 fun PhotoCaptureScreen(
     onDone: (Capture.Captured?) -> Unit,
@@ -85,10 +105,26 @@ fun PhotoCaptureScreen(
     ) { granted = it }
     LaunchedEffect(Unit) { if (!granted) permission.launch(Manifest.permission.CAMERA) }
 
-    val capture = remember { ImageCapture.Builder().build() }
+    val capture = remember {
+        ImageCapture.Builder()
+            // Explicit, not left to the default: some vendor camera stacks
+            // read "unset" as auto.
+            .setFlashMode(ImageCapture.FLASH_MODE_OFF)
+            .build()
+    }
     var camera by remember { mutableStateOf<Camera?>(null) }
-    var torch by remember { mutableStateOf(false) }
+    var flash by remember { mutableStateOf(FlashChoice.Off) }
     var busy by remember { mutableStateOf(false) }
+
+    fun applyFlash(choice: FlashChoice) {
+        flash = choice
+        capture.flashMode = when (choice) {
+            FlashChoice.Auto -> ImageCapture.FLASH_MODE_AUTO
+            FlashChoice.On -> ImageCapture.FLASH_MODE_ON
+            else -> ImageCapture.FLASH_MODE_OFF
+        }
+        runCatching { camera?.cameraControl?.enableTorch(choice == FlashChoice.Light) }
+    }
 
     Box(Modifier.fillMaxSize().background(Color.Black)) {
 
@@ -113,6 +149,7 @@ fun PhotoCaptureScreen(
                 },
                 modifier = Modifier.fillMaxSize(),
             )
+            CameraGestureLayer(camera)
         } else {
             Column(
                 Modifier.fillMaxSize().padding(32.dp),
@@ -128,27 +165,36 @@ fun PhotoCaptureScreen(
             }
         }
 
-        // --- top bar: out, and the torch ---------------------------------
+        // --- top bar: out, and the flash --------------------------------
         Row(
             Modifier.fillMaxWidth().statusBarsPadding().padding(horizontal = 8.dp, vertical = 4.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            TextButton(onClick = onCancel, modifier = Modifier.heightIn(min = TapTarget)) {
-                Text("Back", color = Color.White, fontWeight = FontWeight.Medium)
+            RoundIcon(onClick = onCancel) {
+                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = Color.White)
             }
             Spacer(Modifier.weight(1f))
-            val hasTorch = camera?.cameraInfo?.hasFlashUnit() == true
-            if (hasTorch) {
-                TextButton(
-                    onClick = {
-                        torch = !torch
-                        runCatching { camera?.cameraControl?.enableTorch(torch) }
-                    },
-                    modifier = Modifier.heightIn(min = TapTarget),
+            if (camera?.cameraInfo?.hasFlashUnit() == true) {
+                Row(
+                    Modifier.clip(CircleShape).background(Color.Black.copy(alpha = 0.4f))
+                        .padding(start = 4.dp, end = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Text(if (torch) "Light on" else "Light off",
-                         color = if (torch) FieldAmber else Color.White,
-                         fontWeight = FontWeight.Medium)
+                    IconButton(onClick = { applyFlash(flash.next()) },
+                               modifier = Modifier.size(TapTarget)) {
+                        Icon(
+                            when (flash) {
+                                FlashChoice.Off -> Icons.Filled.FlashOff
+                                FlashChoice.Auto -> Icons.Filled.FlashAuto
+                                FlashChoice.On -> Icons.Filled.FlashOn
+                                FlashChoice.Light -> Icons.Filled.FlashlightOn
+                            },
+                            contentDescription = "${flash.label}. Tap to change.",
+                            tint = if (flash == FlashChoice.Off) Color.White else FieldAmber,
+                        )
+                    }
+                    Text(flash.label, color = Color.White, fontWeight = FontWeight.Medium,
+                         style = MaterialTheme.typography.labelLarge)
                 }
             }
         }
@@ -159,7 +205,7 @@ fun PhotoCaptureScreen(
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
             Text(
-                if (busy) "Saving…" else "Tap to take the photo",
+                if (busy) "Saving…" else "Pinch to zoom · tap to focus",
                 color = Color.White.copy(alpha = 0.85f),
                 style = MaterialTheme.typography.labelMedium,
             )
@@ -206,5 +252,17 @@ fun PhotoCaptureScreen(
                 ProcessCameraProvider.getInstance(context).get().unbindAll()
             }
         }
+    }
+}
+
+
+/** A round, translucent icon button for use over a viewfinder. */
+@Composable
+internal fun RoundIcon(onClick: () -> Unit, content: @Composable () -> Unit) {
+    Box(
+        Modifier.size(TapTarget).clip(CircleShape).background(Color.Black.copy(alpha = 0.4f)),
+        contentAlignment = Alignment.Center,
+    ) {
+        IconButton(onClick = onClick, modifier = Modifier.size(TapTarget)) { content() }
     }
 }

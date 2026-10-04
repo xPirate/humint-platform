@@ -158,7 +158,7 @@ Then:
    The two variables come from your `.env`; `set -a; . ./.env; set +a` puts
    them in the shell. Run the migrations **in order** if you are skipping
    several versions
-   — v1.4 before v1.5 before v1.6 — and note the `-T`, without which
+   — v1.4 before v1.5 before v1.6 before v1.7 — and note the `-T`, without which
    compose eats the redirected file. A fresh install needs none of them.
 4. **Check `/health`** and open the app.
 5. **Hard-reload the browser** once (Ctrl-Shift-R / Cmd-Shift-R) if anything
@@ -203,14 +203,24 @@ the audit trail references them, and a dangling author is worse than an
 inactive one. The app will refuse to remove or demote the last active admin,
 which is the one thing that would lock everybody out.
 
-### There is no password change and no reset
+### Resetting someone's password
 
-This is the honest statement of a real limitation. No self-service reset, no
-email flow, no "change my password" screen. If somebody needs a new password,
-an admin cannot do it from the app either.
+**Admin settings → Users → Reset password** on their row. Type a new one, or
+press **Generate** for four random words and a number that can be read out
+over a radio. It is shown in the clear so you can pass it on — close the
+dialog once they have it. Setting it also clears a lockout and signs that
+account out everywhere it was logged in (resetting your own keeps the session
+you are using). The audit log records that it happened and who did it; the
+password itself is never logged.
 
-Recovering an account means writing a new hash into the database directly.
-It works, and it is deliberately not one command:
+There is still no self-service reset and no email flow: a person who has
+forgotten theirs asks an admin.
+
+### Recovering the last admin password
+
+If the only admin is the one locked out, nobody can use the button above.
+Recovering means writing a new hash into the database directly. It works, and
+it is deliberately not one command:
 
 ```bash
 # 1. Generate a bcrypt hash for the new password.
@@ -223,14 +233,13 @@ docker compose exec db psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c \
    locked_until = NULL WHERE username = '<the user>';"
 ```
 
-The same procedure recovers a lost admin password. Keep the admin password
-somewhere you will still have it after losing the laptop.
+Keep the admin password somewhere you will still have it after losing the
+laptop.
 
 ### Lockouts
 
 Five failed logins locks an account for fifteen minutes. It clears itself.
-To clear it now, run just the `failed_login_attempts`/`locked_until` part of
-the statement above.
+To clear it now, reset the password from the Users list.
 
 ## Deleting records for good
 

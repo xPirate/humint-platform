@@ -216,7 +216,10 @@ def _entity_context_block(entity: dict) -> str:
             arrow = "->" if rel["direction"] == "outgoing" else "<-"
             lines.append(
                 f"- {arrow} {rel['relationship_type']} {arrow} "
-                f"{rel['other_entity_type']}: {rel['other_entity_name']} ({rel['confidence']})"
+                f"{rel['other_entity_type']}: {rel['other_entity_name']} "
+                f"(graded {rel['confidence']}: "
+                f"{entities_module.CONFIDENCE_LABELS.get(rel['confidence'], rel['confidence'])}"
+                f"{', EXPIRED ' + str(rel['expires_on']) if rel.get('expired') else ''})"
             )
     if entity.get("reports"):
         titles = ", ".join(f'"{r["title"]}"' for r in entity["reports"][:5])

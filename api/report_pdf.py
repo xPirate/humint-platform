@@ -107,6 +107,17 @@ CREDIBILITY_LABELS = {
     "5": "Improbable",
     "6": "Truth cannot be judged",
 }
+def link_grading(rel: dict) -> str:
+    """'2 Probably true' for a relationship, plus 'expired 2026-05-01' when it
+    has. Links share the report credibility scale, so they share its labels.
+    The bare value is passed through for anything not on the scale."""
+    c = str(rel.get("confidence") or "")
+    text = f"{c} {CREDIBILITY_LABELS[c]}" if c in CREDIBILITY_LABELS else c
+    if rel.get("expired"):
+        text += f", expired {rel.get('expires_on')}"
+    return text
+
+
 RELIABILITY_LABELS = {
     "A": "Completely reliable",
     "B": "Usually reliable",
@@ -652,7 +663,7 @@ def _entity_section(entity: dict, s: dict, content_width: float) -> list:
             wording = r.get("reads_as") or r["relationship_type"]
             items.append(ListItem(_plain(
                 f"{direction} {wording} {direction} "
-                f"{r['other_entity_type'].capitalize()}: {r['other_entity_name']} ({r['confidence']})",
+                f"{r['other_entity_type'].capitalize()}: {r['other_entity_name']} ({link_grading(r)})",
                 s["cell"],
             ), leftIndent=14))
         flow.append(ListFlowable(items, bulletType="bullet", bulletFontName=FONT_REGULAR,

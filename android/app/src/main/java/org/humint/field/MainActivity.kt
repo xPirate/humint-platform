@@ -24,6 +24,17 @@ import org.humint.field.ui.QueueScreen
 import org.humint.field.ui.ReportScreen
 import org.humint.field.ui.ScanScreen
 import org.humint.field.ui.UploadScreen
+import org.humint.field.ui.MainShell
+import org.humint.field.ui.SendScreen
+import org.humint.field.ui.Tab
+import org.humint.field.ui.TemplatePickerSheet
+import org.humint.field.data.Templates
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
+import androidx.navigation.NavHostController
+import kotlinx.coroutines.launch
 
 // FragmentActivity rather than ComponentActivity: BiometricPrompt needs a
 // fragment host, and there is no Compose-only way around that.
@@ -89,14 +100,58 @@ class MainActivity : FragmentActivity() {
                     return@FieldTheme
                 }
                 val nav = rememberNavController()
+                val scope = rememberCoroutineScope()
+                val ready by vm.readyCount.collectAsStateWithLifecycle()
+                var picking by remember { mutableStateOf(false) }
+
+                // The three bar destinations share one frame. Switching
+                // between them replaces the top of the stack rather than
+                // piling up, so Back from any tab leaves the app the way
+                // it does from any other app's home tabs.
+                fun goTab(tab: Tab) {
+                    if (tab == Tab.Lock) { Vault.lock(); return }
+                    val route = when (tab) {
+                        Tab.Reports -> "queue"; Tab.Send -> "send"; else -> "settings"
+                    }
+                    nav.navigate(route) {
+                        popUpTo("queue") { saveState = true }
+                        launchSingleTop = true
+                        restoreState = true
+                    }
+                }
+                val shell: @androidx.compose.runtime.Composable (Tab, @androidx.compose.runtime.Composable (androidx.compose.foundation.layout.PaddingValues) -> Unit) -> Unit =
+                    { tab, body -> MainShell(tab, ready, ::goTab, onNew = { picking = true }, content = body) }
+
+                if (picking) {
+                    TemplatePickerSheet(
+                        templates = Templates.all,
+                        onPick = { t ->
+                            scope.launch {
+                                val id = vm.newReport(t.key)
+                                picking = false
+                                nav.navigate("report/$id")
+                            }
+                        },
+                        onDismiss = { picking = false },
+                    )
+                }
+
                 NavHost(navController = nav, startDestination = "queue") {
                     composable("queue") {
-                        QueueScreen(
-                            vm = vm,
-                            onOpen = { id -> nav.navigate("report/$id") },
-                            onUpload = { nav.navigate("scan") },
-                            onSettings = { nav.navigate("settings") },
-                        )
+                        shell(Tab.Reports) { padding ->
+                            QueueScreen(
+                                vm = vm,
+                                padding = padding,
+                                onOpen = { id -> nav.navigate("report/$id") },
+                                onSend = { goTab(Tab.Send) },
+                                onNew = { picking = true },
+                            )
+                        }
+                    }
+                    composable("send") {
+                        shell(Tab.Send) { padding ->
+                            SendScreen(vm = vm, padding = padding, onScan = { nav.navigate("scan") })
+                        }
                     }
                     composable("report/{id}") { entry ->
                         ReportScreen(
@@ -121,7 +176,7 @@ class MainActivity : FragmentActivity() {
                         })
                     }
                     composable("settings") {
-                        SettingsScreen(onBack = { nav.popBackStack() })
+                        shell(Tab.Settings) { padding -> SettingsScreen(padding) }
                     }
                 }
             }

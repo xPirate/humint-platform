@@ -102,7 +102,9 @@ class ToRecordRequest(BaseModel):
     body: Optional[str] = None
     link_entity_ids: list[str] = Field(default_factory=list, max_length=200)
     relationship_type: str = "mentioned_in"
-    confidence: str = "confirmed"
+    # A document filed as a Record states what it names: the link is to the
+    # document itself, so it is graded 1 by default.
+    confidence: str = "1"
     file_original: bool = True
 
 
@@ -461,8 +463,7 @@ def document_to_record(document_id: int, payload: ToRecordRequest,
     if not entities_module.RELATIONSHIP_TYPE_RE.match(payload.relationship_type):
         raise HTTPException(status_code=400,
                             detail="relationship_type must be lowercase snake_case")
-    if payload.confidence not in entities_module.CONFIDENCE_LEVELS:
-        raise HTTPException(status_code=400, detail="Unknown confidence level")
+    payload.confidence = entities_module.normalize_confidence(payload.confidence)
 
     link_ids = list(dict.fromkeys(i for i in payload.link_entity_ids if i))
     with db_cursor(commit=True) as cur:

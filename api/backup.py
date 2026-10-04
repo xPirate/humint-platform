@@ -468,6 +468,33 @@ RENAMED_COLUMNS: dict[tuple, str] = {
 }
 
 
+# Values this app has retired, and what they are now. Same reasoning as
+# RENAMED_COLUMNS: a backup from before the change -- including the sample
+# case files -- has to restore into the current schema, whose CHECK
+# constraints would otherwise refuse the old values outright.
+RETIRED_VALUES: dict[tuple, dict] = {
+    # v1.7: relationship confidence moved from three words to 1-6.
+    ("relationships", "confidence"): {"confirmed": "1", "probable": "2", "possible": "3"},
+}
+
+
+def _apply_value_upgrades(payload: dict) -> list:
+    """Map retired values in a loaded backup onto their replacements."""
+    applied = []
+    for (table, column), mapping in RETIRED_VALUES.items():
+        block = payload.get("tables", {}).get(table)
+        if not isinstance(block, dict):
+            continue
+        changed = 0
+        for row in block.get("rows", []):
+            if isinstance(row, dict) and row.get(column) in mapping:
+                row[column] = mapping[row[column]]
+                changed += 1
+        if changed:
+            applied.append(f"{table}.{column}: {changed} value(s) upgraded")
+    return applied
+
+
 def _apply_column_renames(payload: dict) -> list:
     """Rewrite retired column names in a loaded backup. Returns what it did,
     for the restore's own report -- an admin should be told that an old
@@ -665,7 +692,7 @@ def restore_backup(
             edges = _fk_edges(cur)
             serials = _serial_columns(cur)
 
-        renamed = _apply_column_renames(payload)
+        renamed = _apply_column_renames(payload) + _apply_value_upgrades(payload)
         _validate_against_schema(payload, db_tables, column_types)
 
         backup_tables = {t: b for t, b in payload["tables"].items() if t not in EXCLUDED_TABLES}

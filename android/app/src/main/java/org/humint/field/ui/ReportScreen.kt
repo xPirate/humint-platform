@@ -46,6 +46,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.platform.LocalContext
@@ -115,9 +116,20 @@ fun ReportScreen(vm: FieldViewModel, reportId: String, onDone: () -> Unit) {
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text(template.label) },
+                title = {
+                    androidx.compose.foundation.layout.Row(
+                        verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                        TemplateBadge(template.key, 34)
+                        androidx.compose.foundation.layout.Spacer(Modifier.padding(horizontal = 5.dp))
+                        Text(template.label, fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold)
+                    }
+                },
                 navigationIcon = {
-                    TextButton(onClick = onDone) { Text("Queue") }
+                    androidx.compose.material3.IconButton(onClick = onDone) {
+                        androidx.compose.material3.Icon(
+                            androidx.compose.material.icons.Icons.AutoMirrored.Filled.ArrowBack,
+                            contentDescription = "Back to reports")
+                    }
                 },
                 actions = {
                     TextButton(onClick = { confirmDiscard = true }) {

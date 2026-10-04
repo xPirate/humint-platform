@@ -35,6 +35,7 @@ import logging
 import os
 import re
 import secrets
+import shutil
 import time
 import uuid
 from datetime import datetime, timezone
@@ -729,6 +730,48 @@ class HandleRequest(BaseModel):
     title: str | None = None
 
 
+def _copy_media_to_entity(cur, entity_id: str, files, device_label, user: dict) -> list:
+    """Give the new entity its own copy of the report's photos and video.
+
+    A copy, not the same row with two parents: deleting an attachment removes
+    its file, so a shared row would mean that taking a bad photo off the
+    vehicle also takes it off the report — and the report is the record of
+    what was seen. Two rows, two files, each managed where it lives. Photos
+    are a few megabytes; the disk can afford it.
+
+    The copy is not queued for text extraction: the report's copy already is,
+    and reading the same image twice would put every suggestion in the review
+    queue twice.
+
+    Returns the new attachment ids, in the order the phone sent them.
+    """
+    made = []
+    for name, path, mime, size in files:
+        if not (mime or "").startswith(("image/", "video/")):
+            continue          # voice memos stay with the report they narrate
+        src = os.path.join(UPLOAD_DIR, path)
+        if not os.path.isfile(src):
+            continue
+        rel_dir = os.path.dirname(path)
+        new_path = os.path.join(rel_dir, f"{uuid.uuid4().hex}{os.path.splitext(path)[1]}")
+        shutil.copyfile(src, os.path.join(UPLOAD_DIR, new_path))
+        cur.execute(
+            "INSERT INTO attachments (entity_id, filename, title, source_note, storage_path, "
+            "        mime_type, file_size_bytes, uploaded_by, extraction_status) "
+            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, 'skipped') RETURNING id",
+            (entity_id, name, name, f"Field submission from {device_label or 'a device'}",
+             new_path, mime, size, user["id"]))
+        made.append((cur.fetchone()[0], mime))
+    # The first photo becomes the record's picture — the face, the vehicle,
+    # the building — unless it already has one. It is what the analyst
+    # photographed the thing to show.
+    first_image = next((i for i, m in made if (m or "").startswith("image/")), None)
+    if first_image:
+        cur.execute("UPDATE entities SET portrait_attachment_id = %s "
+                    " WHERE id = %s AND portrait_attachment_id IS NULL", (first_image, entity_id))
+    return [i for i, _ in made]
+
+
 def _entity_from_draft(cur, draft: dict, device_label, user: dict) -> dict:
     """Create the record a field report describes, inside the accept's own
     transaction.
@@ -839,6 +882,11 @@ def accept_submission(submission_id: int, payload: HandleRequest,
             created_entity = _entity_from_draft(cur, draft, device_label, user)
             cur.execute("INSERT INTO report_entities (report_id, entity_id) VALUES (%s, %s) "
                         " ON CONFLICT DO NOTHING", (report_id, created_entity["id"]))
+            # The photos are of the thing the entity is. Without this they
+            # sat on the report only, and attaching them to the vehicle meant
+            # downloading each one and uploading it again.
+            created_entity["attachments"] = _copy_media_to_entity(
+                cur, created_entity["id"], files, device_label, user)
 
         cur.execute(
             "UPDATE field_submissions SET status = 'accepted', report_id = %s, "
