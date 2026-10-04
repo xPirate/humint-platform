@@ -2122,3 +2122,42 @@ a .hostile-name,.hostile-name a{color:var(--red);}
 .radio-stack legend{font-size:12px; color:var(--muted); margin-bottom:.4em; padding:0;}
 .radio-stack label{display:flex; gap:.6em; align-items:flex-start; margin:.35em 0; cursor:pointer;}
 .radio-stack input{margin-top:.25em;}
+
+/* ---------- Analyst profile card (top of the analyst page) ---------- */
+.profile-card{border:1px solid var(--border); border-left:5px solid var(--accent-dim); border-radius:10px;
+  background:var(--panel); padding:1em 1.2em; margin:0 0 1.2em;}
+.profile-card.profile-warn{border-left-color:#b85c00;}
+.profile-card.profile-bad{border-left-color:#b3261e;}
+.profile-card.profile-dead{border-left-color:#555;}
+.profile-top{display:flex; flex-wrap:wrap; align-items:flex-start; gap:.8em 1.2em;}
+.profile-avatar{width:56px; height:56px; border-radius:50%; display:flex; align-items:center; justify-content:center;
+  font-weight:800; font-size:20px; background:var(--panel-2); color:var(--text-bright); border:1px solid var(--border); flex:0 0 auto;}
+.profile-ident{flex:1 1 14em; min-width:0;}
+.profile-name{margin:0; font-size:1.35rem;}
+.profile-sub{margin:.2em 0 0; color:var(--muted); font-size:13px;}
+.profile-status-block{display:flex; flex-direction:column; align-items:flex-start; gap:.25em; max-width:22em;}
+.profile-status-note{margin:0; font-size:13px; overflow-wrap:anywhere;}
+.profile-status{display:inline-block; font-size:12px; font-weight:800; letter-spacing:.06em; text-transform:uppercase;
+  padding:.2em .7em; border-radius:999px; color:#fff; background:#2f7a4c;}
+.profile-status-warn{background:#b85c00;}
+.profile-status-bad{background:#b3261e;}
+.profile-status-dead{background:#444;}
+.profile-contacts{display:grid; grid-template-columns:repeat(auto-fill, minmax(min(100%, 240px), 1fr));
+  gap:.5em 1.2em; margin:1em 0 0;}
+.profile-contact{display:flex; flex-direction:column; gap:.1em; padding:.45em .6em; border-radius:6px; background:var(--panel-2);}
+.profile-contact dt{font-size:11px; letter-spacing:.06em; text-transform:uppercase; color:var(--muted);}
+.profile-contact dd{margin:0; overflow-wrap:anywhere;}
+.profile-contact-plain{user-select:all; font-family:var(--font-mono); font-size:13px;}
+.profile-empty{margin:.8em 0 0;}
+.profile-notes{margin:.9em 0 0; white-space:pre-wrap;}
+.profile-form-grid{display:grid; grid-template-columns:repeat(auto-fit, minmax(12em, 1fr)); gap:.6em 1em;}
+.profile-form label{display:flex; flex-direction:column; gap:.25em; font-size:12px; color:var(--muted);}
+.profile-form-wide{margin-top:.8em;}
+.profile-form-contacts{border:1px solid var(--border); border-radius:8px; padding:.6em .8em .8em; margin:1em 0 0;}
+.profile-form-contacts legend{font-size:12px; color:var(--muted); padding:0 .3em;}
+.profile-edit-contact{display:grid; grid-template-columns:9em 1fr 1fr auto; gap:.4em; margin:0 0 .4em; align-items:center;}
+@media (max-width: 720px){ .profile-edit-contact{grid-template-columns:1fr 1fr; } }
+.profile-edit-contact{grid-template-columns:8.5em minmax(0, 1.3fr) minmax(0, 1fr) auto;}
+.profile-edit-contact input{min-width:0; width:100%; box-sizing:border-box;}
+.profile-form .field-hint{margin-top:.6em;}
+.admin-user-controls a.btn-secondary{text-decoration:none;}

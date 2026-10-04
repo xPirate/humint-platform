@@ -158,7 +158,7 @@ Then:
    The two variables come from your `.env`; `set -a; . ./.env; set +a` puts
    them in the shell. Run the migrations **in order** if you are skipping
    several versions
-   — v1.4 before v1.5 before v1.6 before v1.7 — and note the `-T`, without which
+   — v1.4 before v1.5 before v1.6 before v1.7 before v1.8 — and note the `-T`, without which
    compose eats the redirected file. A fresh install needs none of them.
 4. **Check `/health`** and open the app.
 5. **Hard-reload the browser** once (Ctrl-Shift-R / Cmd-Shift-R) if anything
@@ -202,6 +202,22 @@ If two pieces of work must not see each other, run two instances.
 the audit trail references them, and a dangling author is worse than an
 inactive one. The app will refuse to remove or demote the last active admin,
 which is the one thing that would lock everybody out.
+
+### Profiles and status
+
+Every account has a profile — name, callsign, role, contact details and a
+**status**: At liberty, Under duress, Incapacitated, Captured or Deceased.
+It is how the team keeps its own people out of the case file: a colleague
+is not an Entity. Each analyst edits their own (account menu → **My
+profile**); an admin can edit anyone's from **Profile** in the Users list.
+
+Contact details are a free list — add as many as a person uses, of any kind
+(Radio, Meshtastic, MeshCore, Email, Mobile, Signal, a social handle…).
+Everyone signed in can see everyone's profile; that is the point of it.
+
+A status other than At liberty shows on the Users list. Every change of
+status records who set it and when, and goes in the audit log with the old
+and new value (**profile.status**). Contact details are not logged.
 
 ### Resetting someone's password
 

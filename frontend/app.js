@@ -3915,6 +3915,7 @@ async function openAnalystPage(who) {
   if (match) select.value = match.username;
   analystPage.who = match ? match.username : who;
   analystPage.kind = "";
+  loadAnalystProfile();
   loadAnalystResults(true);
 }
 
@@ -3963,6 +3964,161 @@ async function loadAnalystResults(reset) {
   document.getElementById("analyst-more").hidden = analystPage.offset >= data.total;
 }
 
+/* ---------------------------------------------------------------------------
+ * Analyst profiles (api/profiles.py)
+ *
+ * Who a team member is and how to reach them, without making them a record
+ * in the case file. Shown at the top of their analyst page; editable by them
+ * and by any admin.
+ * ------------------------------------------------------------------------- */
+
+const PROFILE_STATUS_CLASS = {
+  "At liberty": "ok", "Under duress": "warn", "Incapacitated": "warn",
+  "Captured": "bad", "Deceased": "dead",
+};
+
+function profileStatusHtml(status) {
+  const cls = PROFILE_STATUS_CLASS[status] || "ok";
+  return `<span class="profile-status profile-status-${cls}">${escapeHtml(status || "At liberty")}</span>`;
+}
+
+/* A contact value as something you can act on where the kind says how:
+ * mail for an email, a call for a number. Everything else — a radio
+ * channel, a mesh node id, a handle — is shown as written, selectable. */
+function contactValueHtml(c) {
+  const kind = (c.kind || "").toLowerCase();
+  const v = c.value || "";
+  if (kind === "email" && /@/.test(v)) return `<a href="mailto:${encodeURIComponent(v)}">${escapeHtml(v)}</a>`;
+  if (/^(mobile|phone|cell|sms|landline)$/.test(kind)) return `<a href="tel:${escapeHtml(v.replace(/[^\d+]/g, ""))}">${escapeHtml(v)}</a>`;
+  if (/^https?:\/\//i.test(v)) return `<a href="${escapeHtml(v)}" target="_blank" rel="noopener noreferrer">${escapeHtml(v)}</a>`;
+  return `<span class="profile-contact-plain">${escapeHtml(v)}</span>`;
+}
+
+async function loadAnalystProfile() {
+  const el = document.getElementById("analyst-profile");
+  if (!el) return;
+  let p;
+  try { p = await api(`/api/profiles/${encodeURIComponent(analystPage.who)}`); }
+  catch (e) { el.innerHTML = ""; return; }
+  const name = p.display_name || p.username;
+  const initials = name.split(/\s+/).slice(0, 2).map((w) => w[0]).join("").toUpperCase();
+  const sub = [p.display_name ? "@" + p.username : null, p.role_title, p.callsign ? `callsign ${p.callsign}` : null]
+    .filter(Boolean).map(escapeHtml).join(" · ");
+  const changed = p.status_changed_at
+    ? `<span class="card-meta">set ${timeAgoHtml(p.status_changed_at)}${p.status_changed_by ? " by " + escapeHtml(p.status_changed_by) : ""}</span>` : "";
+  el.innerHTML = `
+    <section class="profile-card profile-${PROFILE_STATUS_CLASS[p.status] || "ok"}">
+      <div class="profile-top">
+        <div class="profile-avatar" aria-hidden="true">${escapeHtml(initials)}</div>
+        <div class="profile-ident">
+          <h2 class="profile-name">${escapeHtml(name)}</h2>
+          ${sub ? `<p class="profile-sub">${sub}</p>` : ""}
+        </div>
+        <div class="profile-status-block">
+          ${profileStatusHtml(p.status)} ${changed}
+          ${p.status_note ? `<p class="profile-status-note">${escapeHtml(p.status_note)}</p>` : ""}
+        </div>
+        ${p.can_edit ? '<button type="button" class="btn-secondary btn-sm" id="profile-edit-btn">Edit profile</button>' : ""}
+      </div>
+      ${p.contacts && p.contacts.length ? `
+        <dl class="profile-contacts">${p.contacts.map((c) => `
+          <div class="profile-contact"><dt>${escapeHtml(c.kind)}</dt>
+            <dd>${contactValueHtml(c)}${c.note ? ` <span class="card-meta">${escapeHtml(c.note)}</span>` : ""}</dd></div>`).join("")}
+        </dl>` : `<p class="card-meta profile-empty">No contact details yet.${p.can_edit ? " Use Edit profile to add some." : ""}</p>`}
+      ${p.notes ? `<p class="profile-notes">${escapeHtml(p.notes)}</p>` : ""}
+    </section>`;
+  const btn = document.getElementById("profile-edit-btn");
+  if (btn) btn.addEventListener("click", () => openProfileEditor(p));
+}
+
+function profileContactRowHtml(c) {
+  return `
+    <div class="profile-edit-contact">
+      <input type="text" class="pc-kind" list="profile-kind-list" maxlength="40" placeholder="Kind"
+             value="${escapeHtml(c.kind || "")}" aria-label="Kind of contact">
+      <input type="text" class="pc-value" maxlength="300" placeholder="Number, address, node, handle…"
+             value="${escapeHtml(c.value || "")}" aria-label="Contact">
+      <input type="text" class="pc-note" maxlength="300" placeholder="Note (optional)"
+             value="${escapeHtml(c.note || "")}" aria-label="Note">
+      <button type="button" class="btn-link btn-sm pc-remove" title="Remove this contact">Remove</button>
+    </div>`;
+}
+
+function openProfileEditor(p) {
+  const isAdmin = state.user.role === "admin";
+  openModal(`
+    <h2>Profile — ${escapeHtml(p.username)}</h2>
+    <form id="profile-form" class="profile-form">
+      <div class="profile-form-grid">
+        <label>Name <input type="text" id="pf-name" maxlength="120" value="${escapeHtml(p.display_name || "")}" placeholder="How the team knows you"></label>
+        <label>Callsign <input type="text" id="pf-callsign" maxlength="60" value="${escapeHtml(p.callsign || "")}"></label>
+        <label>Role <input type="text" id="pf-role" maxlength="120" value="${escapeHtml(p.role_title || "")}" placeholder="e.g. Radio operator"></label>
+        <label>Status
+          <select id="pf-status">${(p.statuses || []).map((s) =>
+            `<option ${s === p.status ? "selected" : ""}>${escapeHtml(s)}</option>`).join("")}</select>
+        </label>
+      </div>
+      <label class="profile-form-wide">Status note
+        <input type="text" id="pf-status-note" maxlength="500" value="${escapeHtml(p.status_note || "")}"
+               placeholder="What is known, and when it was last confirmed">
+      </label>
+      <fieldset class="profile-form-contacts">
+        <legend>Contact details</legend>
+        <p class="field-hint">As many or as few as you use. Pick a kind or type your own.</p>
+        <div id="pf-contacts">${(p.contacts || []).map(profileContactRowHtml).join("")}</div>
+        <button type="button" class="btn-secondary btn-sm" id="pf-add-contact">+ Add contact</button>
+        <datalist id="profile-kind-list">${(p.suggested_kinds || []).map((k) => `<option value="${escapeHtml(k)}">`).join("")}</datalist>
+      </fieldset>
+      <label class="profile-form-wide">Notes
+        <textarea id="pf-notes" rows="3" maxlength="4000">${escapeHtml(p.notes || "")}</textarea>
+      </label>
+      ${isAdmin && p.user_id !== state.user.id ? '<p class="field-hint">You are editing as an admin. The change is logged under your name.</p>' : ""}
+      <p class="form-error" id="pf-error"></p>
+      <div class="modal-actions">
+        <button type="button" class="btn-secondary" id="pf-cancel">Cancel</button>
+        <button type="submit" class="btn-primary">Save</button>
+      </div>
+    </form>`);
+  const list = document.getElementById("pf-contacts");
+  const wireRemove = () => list.querySelectorAll(".pc-remove").forEach((b) => {
+    b.onclick = () => b.closest(".profile-edit-contact").remove();
+  });
+  wireRemove();
+  document.getElementById("pf-add-contact").addEventListener("click", () => {
+    list.insertAdjacentHTML("beforeend", profileContactRowHtml({}));
+    wireRemove();
+    list.lastElementChild.querySelector(".pc-kind").focus();
+  });
+  if (!(p.contacts || []).length) document.getElementById("pf-add-contact").click();
+  document.getElementById("pf-cancel").addEventListener("click", closeModal);
+  document.getElementById("profile-form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const contacts = [...list.querySelectorAll(".profile-edit-contact")].map((row) => ({
+      kind: row.querySelector(".pc-kind").value.trim(),
+      value: row.querySelector(".pc-value").value.trim(),
+      note: row.querySelector(".pc-note").value.trim() || null,
+    })).filter((c) => c.kind || c.value);
+    const half = contacts.find((c) => !c.kind || !c.value);
+    if (half) { document.getElementById("pf-error").textContent = "Each contact needs both a kind and a value."; return; }
+    const body = {
+      display_name: document.getElementById("pf-name").value,
+      callsign: document.getElementById("pf-callsign").value,
+      role_title: document.getElementById("pf-role").value,
+      status: document.getElementById("pf-status").value,
+      status_note: document.getElementById("pf-status-note").value,
+      contacts,
+      notes: document.getElementById("pf-notes").value,
+    };
+    try {
+      await api(`/api/profiles/${encodeURIComponent(p.username)}`, { method: "PUT", body });
+      closeModal();
+      showToast("Profile saved");
+      loadAnalystProfile();
+      if (document.getElementById("view-admin").classList.contains("active")) loadAdminUsers();
+    } catch (err) { document.getElementById("pf-error").textContent = err.message; }
+  });
+}
+
 const ANALYST_KIND_LABEL = { entity: "Entity", report: "Report", relationship: "Link", document: "Document", field: "Field report" };
 
 function analystResultsHtml(items) {
@@ -4008,6 +4164,8 @@ function openAnalystItem(d) {
   ["analyst-since", "analyst-until"].forEach((id) =>
     document.getElementById(id).addEventListener("change", () => loadAnalystResults(true)));
   document.getElementById("analyst-more").addEventListener("click", () => loadAnalystResults(false));
+  const mine = document.getElementById("user-menu-profile");
+  if (mine) mine.addEventListener("click", () => { toggleUserMenu(false); openAnalystPage(state.user.username); });
   const menu = document.getElementById("user-menu-analysts");
   if (menu) menu.addEventListener("click", () => { toggleUserMenu(false); openAnalystPage(state.user.username); });
 })();
@@ -10619,7 +10777,10 @@ async function loadAdminUsers() {
   const el = document.getElementById("admin-user-list");
   el.innerHTML = '<p class="empty-state">Loading…</p>';
   try {
-    const data = await api("/api/users");
+    const [data, prof] = await Promise.all([
+      api("/api/users"), api("/api/profiles").catch(() => ({ items: [] }))]);
+    const byId = new Map(prof.items.map((p) => [p.user_id, p]));
+    data.items.forEach((u) => { u.profile = byId.get(u.id) || null; });
     renderAdminUserList(data.items);
   } catch (err) {
     el.innerHTML = `<p class="empty-state">${escapeHtml(err.message)}</p>`;
@@ -10635,7 +10796,8 @@ function renderAdminUserList(items) {
   el.innerHTML = items.map((u) => `
     <div class="card admin-user-row" data-id="${u.id}">
       <div class="admin-user-main">
-        <div class="card-title">${escapeHtml(u.username)}${u.id === state.user.id ? ' <span class="card-meta">(you)</span>' : ""}</div>
+        <div class="card-title">${escapeHtml(u.username)}${u.profile && u.profile.display_name ? ` <span class="card-meta">${escapeHtml(u.profile.display_name)}</span>` : ""}${u.id === state.user.id ? ' <span class="card-meta">(you)</span>' : ""}
+          ${u.profile && u.profile.status && u.profile.status !== "At liberty" ? profileStatusHtml(u.profile.status) : ""}</div>
         <div class="card-meta">
           ${u.is_active ? "" : "Deactivated · "}${isLocked(u) ? "Locked out (too many failed logins) · " : ""}Created ${timeAgoHtml(u.created_at)}
         </div>
@@ -10645,6 +10807,7 @@ function renderAdminUserList(items) {
           <option value="analyst" ${u.role === "analyst" ? "selected" : ""}>Analyst</option>
           <option value="admin" ${u.role === "admin" ? "selected" : ""}>Admin</option>
         </select>
+        <a class="btn-secondary btn-sm" href="#analyst/${encodeURIComponent(u.username)}">Profile</a>
         <button class="btn-secondary btn-sm admin-reset-pw-btn" data-user-id="${u.id}"
                 data-username="${escapeHtml(u.username)}">Reset password</button>
         <button class="btn-secondary btn-sm admin-toggle-active-btn" data-user-id="${u.id}" data-active="${u.is_active}">

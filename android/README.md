@@ -364,11 +364,11 @@ address or token, so every upload begins by scanning a QR.
 
 ### Current release
 
-**HUMINT Field 1.2** (`versionCode` 3) —
-[`humint-field-1.2.apk`](https://github.com/xPirate/humint-platform/releases/tag/v1.2),
-17,968,262 bytes.
+**HUMINT Field 1.3** (`versionCode` 4) —
+[`humint-field-1.3.apk`](https://github.com/xPirate/humint-platform/releases/tag/v1.3),
+18,066,566 bytes.
 
-    SHA-256  7dd4eeb0660c6010ca2b55f73d8caf9315a10faef016a475c10be19e804d5cd8
+    SHA-256  e174a4dfafa17fc96524bff98e7183ef8eef6d7b83a670f88b27af330a1951dc
 
 The file hash changes with every build. The signing certificate does not —
 every release is signed with the same key, which is what lets a new version
@@ -378,7 +378,7 @@ install over the old one without losing the queue:
     47:54:2F:4F:BE:D5:5A:9C:00:A6:1E:01:98:3C:6A:A2:
     AA:41:F1:66:1B:DE:ED:61:01:E1:CE:4C:BB:5C:DA:A0
 
-`apksigner verify --print-certs humint-field-1.2.apk` prints it. If the file
+`apksigner verify --print-certs humint-field-1.3.apk` prints it. If the file
 hash matches the release notes, the download is the file that was built; if
 the certificate matches this one, it was built by the same hands as the last.
 
@@ -413,6 +413,15 @@ searched.
 Not `READ_MEDIA_IMAGES`: the app captures its own photos into its own
 sandbox and cannot read the gallery, so a seized phone's gallery is not
 something this app can be made to hand over.
+
+**Add image** (1.4) attaches a screenshot or saved picture — something seen
+on a screen, which the camera cannot take. It goes through Android's own
+photo picker, which needs no permission: the system shows the gallery, and
+the app is handed only the images the analyst picks, once. Each is read into
+memory and sealed on the way to disk like a camera still, and kept byte for
+byte as it was (a screenshot may be the evidence, and a recompressed copy is
+a different file). The original stays in the gallery — deleting it is the
+analyst's call, and the app does not reach in to do it.
 
 The app also sets `FLAG_SECURE`, which keeps it out of the recents thumbnail
 and blocks screenshots. The cost is that the analyst cannot screenshot their

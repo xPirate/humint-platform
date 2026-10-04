@@ -46,6 +46,37 @@ CREATE TABLE IF NOT EXISTS users (
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+-- ----------------------------------------------------------------------------
+-- Analyst profiles (v1.8)
+--
+-- Who the people using the platform are, without making them records in the
+-- case file. An analyst is a member of the team, not a subject; putting them
+-- in `entities` would mean they appear in searches, on the network and in
+-- exports alongside the people the team is looking at.
+--
+-- `status` is the team's welfare state for that person — at liberty, or not.
+-- `contacts` is a free list rather than columns, because a radio operator's
+-- channels (radio, Meshtastic, MeshCore, email, phone) and another analyst's
+-- (a mobile and one social account) have nothing in common but being a list:
+--   [{"kind": "Meshtastic", "value": "!a1b2c3d4", "note": "node TRAILHEAD"}]
+-- Any kind is accepted; the console suggests the common ones.
+-- ----------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS user_profiles (
+    user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+    display_name TEXT,
+    callsign TEXT,
+    role_title TEXT,
+    status TEXT NOT NULL DEFAULT 'At liberty'
+        CHECK (status IN ('At liberty', 'Under duress', 'Incapacitated', 'Deceased', 'Captured')),
+    status_note TEXT,
+    status_changed_at TIMESTAMPTZ,
+    status_changed_by INTEGER REFERENCES users(id),
+    contacts JSONB NOT NULL DEFAULT '[]'::jsonb,
+    notes TEXT,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_by INTEGER REFERENCES users(id)
+);
+
 -- Server-side sessions rather than a signed JWT: a row here can be revoked
 -- immediately (delete it, or flip users.is_active) without needing a
 -- token-blocklist. Cheap at this scale — a handful of users, not a

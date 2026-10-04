@@ -89,6 +89,30 @@ fun ReportScreen(vm: FieldViewModel, reportId: String, onDone: () -> Unit) {
     val scope = rememberCoroutineScope()
     var confirmDiscard by remember { mutableStateOf(false) }
     var capturing by remember { mutableStateOf<String?>(null) }
+    var importNotice by remember { mutableStateOf<String?>(null) }
+    // Android's own picker: no storage permission, no Google services, and
+    // it shows the screenshots folder. Up to ten at once.
+    val pickImages = androidx.activity.compose.rememberLauncherForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.PickMultipleVisualMedia(10)
+    ) { uris ->
+        if (uris.isEmpty()) return@rememberLauncherForActivityResult
+        importNotice = null
+        scope.launch {
+            var tooBig = 0
+            var failed = 0
+            for (uri in uris) {
+                val result = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                    runCatching { org.humint.field.media.Capture.importImage(context, uri) }
+                }
+                result.onSuccess { vm.attach(reportId, it, "image") }
+                    .onFailure { if (it is org.humint.field.media.Capture.TooLarge) tooBig++ else failed++ }
+            }
+            importNotice = listOfNotNull(
+                if (tooBig > 0) "$tooBig image${if (tooBig == 1) " was" else "s were"} over 25 MB and not added." else null,
+                if (failed > 0) "$failed image${if (failed == 1) "" else "s"} could not be read." else null,
+            ).joinToString(" ").ifBlank { null }
+        }
+    }
 
     // Position runs only while this screen is on it. See Position.kt: there
     // is no background location here on purpose.
@@ -207,7 +231,15 @@ fun ReportScreen(vm: FieldViewModel, reportId: String, onDone: () -> Unit) {
 
             CaptureRow(template.capture, attachments,
                        onCapture = { capturing = it },
+                       onImport = { pickImages.launch(
+                           androidx.activity.result.PickVisualMediaRequest(
+                               androidx.activity.result.contract.ActivityResultContracts
+                                   .PickVisualMedia.ImageOnly)) },
                        onRemove = { vm.removeAttachment(it) })
+            importNotice?.let {
+                Text(it, color = MaterialTheme.colorScheme.error,
+                     style = MaterialTheme.typography.bodyMedium)
+            }
 
             Spacer(Modifier.height(8.dp))
         }
@@ -401,6 +433,7 @@ private fun CaptureRow(
     capture: List<String>,
     attachments: List<AttachmentRow>,
     onCapture: (String) -> Unit,
+    onImport: () -> Unit,
     onRemove: (AttachmentRow) -> Unit,
 ) {
     var full by remember { mutableStateOf<AttachmentRow?>(null) }
@@ -411,6 +444,11 @@ private fun CaptureRow(
             if (capture.contains("photo")) {
                 OutlinedButton(onClick = { onCapture("image") },
                                modifier = Modifier.heightIn(min = TapTarget)) { Text("Photo") }
+                // Something seen on a screen rather than in front of you —
+                // a post, a profile, a listing — cannot be photographed with
+                // the camera. A screenshot can be attached instead.
+                OutlinedButton(onClick = onImport,
+                               modifier = Modifier.heightIn(min = TapTarget)) { Text("Add image") }
             }
             if (capture.contains("video")) {
                 OutlinedButton(onClick = { onCapture("video") },

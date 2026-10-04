@@ -555,13 +555,23 @@ page has the same menu on its **Actions** button.
 The first four need Ollama. With it switched off they stay in the menu, greyed
 out, so you can see what you would get by turning it on.
 
+## Your profile
+
+Account menu → **My profile**. Your name, callsign, role, how to reach you —
+add a line per contact, of whatever kind you use: a radio channel, a
+Meshtastic node, a MeshCore address, email, a mobile, a social handle — and
+your **status**. Keep the status honest; it is what the team looks at when
+someone misses a check-in. Anyone signed in can see your profile; an admin
+can edit it.
+
 ## Everything one analyst entered
 
 Type a username into the search box at the top and pick **Everything entered
 by …**, or use **Search by analyst** in your account menu. The page lists
 every entity, report, link, document and field report that person created,
 newest first and grouped by day, with a count per kind across the top. Filter
-by title or by date range; click any row to open it. The page has its own
+by title or by date range; click any row to open it. Their profile card sits
+at the top. The page has its own
 address (`#analyst/<name>`), so it can be opened in a new tab, bookmarked or
 sent to someone. Every record's page also says **Entered by …**, linking to
 the same view.

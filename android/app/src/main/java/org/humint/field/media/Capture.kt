@@ -80,6 +80,67 @@ object Capture {
             )
         }
 
+    /** Larger than this is not a screenshot or a saved picture; it is a
+     *  file that will not upload over the link these reports go out on. */
+    const val MAX_IMPORT_BYTES = 25L * 1024 * 1024
+
+    class TooLarge(val bytes: Long) : Exception("too large")
+
+    /**
+     * An image that already exists — a screenshot of a post, a picture saved
+     * from a page — brought into the report.
+     *
+     * Read into memory and sealed on the way to disk, the same path as a
+     * camera still: the copy this app keeps is never plaintext in a file.
+     * The original stays where it was, in the phone's gallery, which is the
+     * analyst's to delete; the app does not reach into the gallery to do it.
+     *
+     * The bytes are kept exactly as they are — no re-encoding, no stripping.
+     * A screenshot may be the evidence, and a recompressed copy is a
+     * different file from the one that was taken.
+     */
+    fun importImage(context: Context, uri: android.net.Uri): Captured {
+        val resolver = context.contentResolver
+        val mime = resolver.getType(uri)?.takeIf { it.startsWith("image/") } ?: "image/jpeg"
+        var displayName: String? = null
+        var declaredSize = -1L
+        runCatching {
+            resolver.query(uri, arrayOf(android.provider.OpenableColumns.DISPLAY_NAME,
+                                        android.provider.OpenableColumns.SIZE),
+                           null, null, null)?.use { c ->
+                if (c.moveToFirst()) {
+                    displayName = c.getString(0)
+                    if (!c.isNull(1)) declaredSize = c.getLong(1)
+                }
+            }
+        }
+        if (declaredSize > MAX_IMPORT_BYTES) throw TooLarge(declaredSize)
+        val bytes = resolver.openInputStream(uri)?.use { input ->
+            val out = ByteArrayOutputStream()
+            val buf = ByteArray(64 * 1024)
+            var total = 0L
+            while (true) {
+                val n = input.read(buf)
+                if (n < 0) break
+                total += n
+                if (total > MAX_IMPORT_BYTES) throw TooLarge(total)
+                out.write(buf, 0, n)
+            }
+            out.toByteArray()
+        } ?: throw java.io.IOException("Could not read that image.")
+        val ext = when (mime) {
+            "image/png" -> "png"; "image/webp" -> "webp"; "image/gif" -> "gif"
+            "image/heic", "image/heif" -> "heic"; else -> "jpg"
+        }
+        // The picker's name when it has a sensible one (Screenshot_20261003…),
+        // otherwise one in the app's own pattern.
+        val name = displayName?.takeIf { it.isNotBlank() && it.length <= 120 }
+            ?: "image-${stamp()}.$ext"
+        val target = File(mediaDir(context), "${System.nanoTime()}.bin")
+        target.writeBytes(Crypto.sealBytes(context, bytes))
+        return Captured(target, name, mime, bytes.size.toLong())
+    }
+
     private fun ImageProxy.toJpegBytes(): ByteArray {
         // ImageCapture in JPEG mode gives a single plane already holding a
         // complete JPEG; no YUV conversion is needed and attempting one here

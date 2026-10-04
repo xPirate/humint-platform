@@ -784,6 +784,17 @@ link-signal pass stays off until somebody switches it on in **Admin → Link
 signals** — see "Suggested links" below before you do, because switching it on
 for an established case file produces a burst of proposals all at once.
 
+**Analyst profiles** (v1.8) add one table, `user_profiles`:
+
+```
+docker compose exec -T db psql -U <POSTGRES_USER> -d <POSTGRES_DB> \
+    < db/migrate-v1.8-analyst-profiles.sql
+```
+
+Run it after v1.7. Without it the profile card and **My profile** fail; nothing
+else is affected. Backups from before it restore normally — the table simply
+starts empty.
+
 **Graded, expiring links** (v1.7) change one column and add another:
 
 ```
