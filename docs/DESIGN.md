@@ -3,7 +3,7 @@
 > This is the long-form document: what everything does and, more importantly,
 > **why it works the way it does**. It is the reference, not the starting
 > point. For installing and using the platform, start at the
-> [README](../README.md) and the [SOPs](sop/).
+> [README](../README.md) and the [how-to guides](how-to/).
 
 A self-hosted intelligence platform for civilian/personal use: create
 entities (people, organizations, locations, events, sources, communications,
@@ -2626,7 +2626,7 @@ it. Those are part of the case file now, and where they came from is not a
 reason to destroy them — they lose the provenance row and nothing else.
 
 There is no undo. Only a restore from a backup brings anything back, which is
-the other reason [SOP 03](sop/03-admin.md) asks you to test your backups.
+the other reason [the backup how-to](how-to/backup-and-restore.md) asks you to test your backups.
 
 ## Recording what the model missed
 
@@ -3683,7 +3683,7 @@ nothing on any handset. Re-issue is free.
 What it does invalidate is a code somebody printed. So the same screen got a
 **Print a card** button — one page with the QR, the token, the device, the
 account, the address and a line about what the credential can do. That is the
-artefact the SOP's "somebody has to be able to show the analyst a code" step
+artefact the how-to's "somebody has to be able to show the analyst a code" step
 actually needs.
 
 It prints rather than downloading. A file containing a live device token ends

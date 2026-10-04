@@ -212,8 +212,10 @@ fleet) and `x86_64` (so it still installs on an emulator); `abiFilters` in
 `app/build.gradle.kts` drops the other two architectures. Cutting x86_64 as
 well takes it to about 10 MB if you never use an emulator.
 
-There is no Play Store listing and there should not be. Sideload it, or use
-whatever device-management you already have.
+Sideload it, use whatever device-management you already have, or install it
+from Google Play. Publishing to Play — the bundle, the signing-key choice that
+decides whether Play and GitHub installs can update each other, the forms —
+is in [Release the field app](../docs/how-to/release-the-field-app.md).
 
 ## Publishing a build for other people
 
@@ -281,8 +283,10 @@ cd android
 
 Android Studio's **Build → Generate Signed App Bundle or APK…** does the
 same thing through a wizard that will also create the keystore for you.
-Choose **APK**, not App Bundle — an `.aab` is a Play Store upload format and
-is not installable by a human. Note that the wizard writes to a destination
+Choose **APK**, not App Bundle, for a GitHub release — an `.aab` is a Play
+Store upload format and is not installable by a human. For Play,
+`./gradlew bundleRelease` builds the `.aab`; see
+[Release the field app](../docs/how-to/release-the-field-app.md). Note that the wizard writes to a destination
 folder you pick, usually `app/release/`, rather than the Gradle path above.
 
 If the build dies with a bare version number as the whole error, that is the

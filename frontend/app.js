@@ -12816,7 +12816,7 @@ async function openReissueForm(deviceId, label, device) {
  * because in both cases this is the only moment the token is readable.
  *
  * The print button is the point of the whole feature. The intended workflow
- * (see SOP 03) is that somebody can show an analyst a code when they come
+ * (see docs/how-to/field-devices.md) is that somebody can show an analyst a code when they come
  * back in range, and the practical way to do that is to print it once and
  * keep it wherever the team keeps things that matter. Without a print path
  * the only options were a screenshot or re-issuing every time.

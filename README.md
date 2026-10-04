@@ -41,7 +41,7 @@ admin.
 
 That is the whole install. The step-by-step version, including running it on
 a Pi, putting it behind HTTPS, and turning on the optional model, is
-[SOP 01 — Install and first run](docs/sop/01-install.md).
+[How to install and run it for the first time](docs/how-to/install.md).
 
 ## What it does
 
@@ -100,18 +100,22 @@ memos, written offline and queued on the handset, encrypted. The app does not
 hold the console's address or its token: those are scanned off a QR at the
 moment of upload and wiped when it finishes, so a phone that is lost or seized
 gives up the reports still on it and no route to anything else. No Google Play
-Services anywhere in it, so it runs on a de-Googled handset. A signed APK
-(about 17 MB, Android 10 or later) is on the
+Services anywhere in it, so it runs on a de-Googled handset. Pinch and
+double-tap zoom, tap to focus, flash off unless you ask for it, and **Add
+image** for a screenshot of something seen on a screen. A signed APK (about
+18 MB, Android 10 or later) is on the
 [Releases page](https://github.com/xPirate/humint-platform/releases/latest)
-with its SHA-256 in the notes; source, build instructions and how to verify
-the download are in [`android/`](android/README.md). Version 1.1 carries the
-fixes from its first round on real hardware — which is a start, not the same
-thing as having been carried anywhere that mattered.
+with its SHA-256 in the notes, and a Google Play listing is on the way so
+handsets can skip the sideloading warnings —
+[how to publish it](docs/how-to/release-the-field-app.md). Source, build
+instructions and how to verify the download are in
+[`android/`](android/README.md).
 
 **Accepting one can start the record it describes.** A vehicle sighting offers
 a Vehicle with the plate, colour, make and model already in it; a person report
-offers a Person; a place offers a Location at the phone's coordinates. Ticked
-by default, because not retyping a plate is the point — and still a draft, and
+offers a Person; a place offers a Location at the phone's coordinates. Every
+photo and clip from the report goes onto that record too, the first photo as
+its portrait. Ticked by default, because not retyping a plate is the point — and still a draft, and
 still somebody's decision.
 
 **Link-finding you can switch on for ten minutes.** The no-model pass that
@@ -148,15 +152,32 @@ like it (aliases, second files on the same person), add a relationship, start a
 report, export a dossier. The model-backed items grey out with a reason when
 Ollama is off.
 
-**Relationships you can argue with.** Every link carries a confidence —
-possible, probable, confirmed — a discovery date and notes, all editable in
-place. Nothing the machine proposes arrives as anything better than
-*possible*.
+**Relationships you can argue with — and that can lapse.** Every link is
+graded 1–6 on the same credibility scale as reporting (1 confirmed … 6 cannot
+be judged), with a discovery date and notes, all editable in place. Nothing
+the machine proposes arrives better than *3 — possibly true*. A link can carry
+an expiry date — the car parked outside last week — after which it stays on
+both records, faded and marked expired, but leaves the network unless you ask
+to see it.
 
 **Reports that point at records.** Write a report, @-mention the entities it
 discusses, and the link is made both ways. Reports carry a credibility rating
-and a precedence (Flash / Immediate / Priority / Routine), and export to PDF
-on their own or as a package with everything they reference.
+and a precedence (Flash / Immediate / Priority / Routine), and export to PDF.
+
+**Packages you can hand to someone outside.** Export any record as a target
+package or dossier that stands on its own: a cover with the portrait,
+identifiers and who it was prepared for and why; the record in full; every
+connection, graded; a timeline; every report that mentions it, in full, with
+photographs. Built for passing a file to a police unit or a regulator. The
+BOLO board prints as a "most wanted" sheet — six to a page or one per page,
+with your own line on every sheet.
+
+**The team, without putting the team in the case file.** Every analyst has a
+profile — callsign, role, as many contact methods as they use (radio,
+Meshtastic, MeshCore, email, a mobile, a social handle) and a status: at
+liberty, under duress, incapacitated, captured, deceased. Status changes are
+stamped and audited. Search by analyst opens a page of everything one person
+has entered. Admins reset passwords from the Users list.
 
 **A document inbox.** Drop in a PDF, image, `.docx` or text file. The worker
 OCRs it if it needs OCR, then — if you have a model — proposes the entities
@@ -237,9 +258,12 @@ see [the exercise briefing](docs/exercise/BRIEFING.md).*
 
 | | |
 |---|---|
-| [SOP 01 — Install and first run](docs/sop/01-install.md) | Get it running, on a laptop or a Pi. Includes the optional model, HTTPS and first-login checks. |
-| [SOP 02 — Daily analyst use](docs/sop/02-daily-use.md) | The working loop: document in, suggestions reviewed, duplicates merged, report out. |
-| [SOP 03 — Admin and maintenance](docs/sop/03-admin.md) | Backups, restore, upgrading between builds, users, and what to do when something misbehaves. |
+| [How-to guides](docs/how-to/README.md) | Step-by-step instructions for every job, sorted by task. Start here. |
+| [Install and first run](docs/how-to/install.md) | Get it running on a laptop or a Pi, with the optional model, HTTPS and a five-minute check. |
+| [Upgrade](docs/how-to/upgrade.md) · [Back up and restore](docs/how-to/backup-and-restore.md) · [Users and profiles](docs/how-to/users-and-profiles.md) | Keeping an instance running. |
+| [Review and merge](docs/how-to/review-and-merge.md) · [Records and links](docs/how-to/records-and-links.md) · [Reports and exports](docs/how-to/reports-and-exports.md) | The analyst's working loop. |
+| [Field devices](docs/how-to/field-devices.md) · [Field reports](docs/how-to/field-reports.md) · [Release the field app](docs/how-to/release-the-field-app.md) | Phones: enrolling, reporting, and publishing the app on GitHub and Google Play. |
+| [Fix common problems](docs/how-to/troubleshooting.md) | What to check, and the commands to check it. |
 | [The companion app](android/README.md) | Building, testing and signing the Android app, what it keeps on the handset and what it deliberately does not. |
 | [Design notes](docs/DESIGN.md) | The long-form reference: what everything does and why it works that way. Read it when you want to know the reasoning, not the steps. |
 

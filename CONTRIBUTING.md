@@ -169,7 +169,7 @@ otherwise cost you an afternoon.
   the upgrade section of `docs/DESIGN.md`. Schema changes must be additive and
   safe to run twice (`IF NOT EXISTS`, `IF EXISTS`).
 - If it changes something a user would notice, update the relevant
-  [SOP](docs/sop/) too. A feature nobody can find is not finished.
+  [how-to guides](docs/how-to/) too. A feature nobody can find is not finished.
 - If it touches `api/field_templates.json`, bump its `version`, regenerate
   the title fixture, and run the Android unit tests. Three things read that
   file and only one of them is in Python.
