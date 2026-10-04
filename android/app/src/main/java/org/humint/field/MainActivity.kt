@@ -2,6 +2,7 @@ package org.humint.field
 
 import android.os.Bundle
 import android.view.WindowManager
+import androidx.activity.enableEdgeToEdge
 import androidx.activity.compose.setContent
 import androidx.activity.viewModels
 import androidx.lifecycle.DefaultLifecycleObserver
@@ -46,6 +47,16 @@ class MainActivity : FragmentActivity() {
         super.onCreate(savedInstanceState)
 
         /*
+         * Drawn edge to edge on every Android version, not only on 15 and
+         * later where the system forces it on an app targeting 35+. One
+         * layout everywhere means a phone running Android 12 shows exactly
+         * what an Android 16 handset will, so testing on either tests both.
+         * The screens take their insets from Scaffold, or ask for them
+         * (statusBarsPadding, imePadding) where they draw their own.
+         */
+        enableEdgeToEdge()
+
+        /*
          * FLAG_SECURE does two things that matter on a handset like this: it
          * keeps the app out of the recents thumbnail, so a half-written
          * report about a person is not sitting in the task switcher for
@@ -57,8 +68,14 @@ class MainActivity : FragmentActivity() {
          * anyway, and a screenshot of it would land in the gallery, outside
          * everything this app encrypts.
          */
-        window.setFlags(WindowManager.LayoutParams.FLAG_SECURE,
-                        WindowManager.LayoutParams.FLAG_SECURE)
+        // Release builds only. A debug build is already debuggable — anything
+        // on adb can read its memory — so FLAG_SECURE protects nothing there,
+        // and leaving it off is how screenshots for the Play listing are
+        // taken. The debug build is never handed out (see android/README.md).
+        if (!BuildConfig.DEBUG) {
+            window.setFlags(WindowManager.LayoutParams.FLAG_SECURE,
+                            WindowManager.LayoutParams.FLAG_SECURE)
+        }
 
         /*
          * The credentials die when the app leaves the foreground.

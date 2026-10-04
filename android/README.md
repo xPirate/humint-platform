@@ -135,15 +135,17 @@ From the command line, point `JAVA_HOME` at a 21 before running `./gradlew`.
 
 ### The SDK
 
-`compileSdk 35`, so you need `platforms;android-35` and
-`build-tools;35.0.0`. A fresh Studio install may have only the newest
+`compileSdk 36` (Android 16, which Google Play requires apps to target), so
+you need `platforms;android-36` and `build-tools;35.0.0`. The Android Gradle
+Plugin is 8.9.1, the first to compile against API 36 that still runs on
+Gradle 8.11.1. A fresh Studio install may have only the newest
 platform, and Gradle cannot fetch a missing one unless the SDK
 command-line tools are installed. Either tick them in Studio's SDK Manager,
 or:
 
 ```bash
 $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager \
-    "platforms;android-35" "build-tools;35.0.0"
+    "platforms;android-36" "build-tools;35.0.0"
 ```
 
 The build reads `../api/field_templates.json` and copies it into the app's
@@ -432,6 +434,20 @@ and blocks screenshots. The cost is that the analyst cannot screenshot their
 own report; the report is going to the console anyway, and a screenshot of
 it would land in the gallery outside everything this app encrypts.
 
+Release builds only. A **debug** build leaves screenshots on: it is already
+debuggable, so anything on `adb` can read its memory and `FLAG_SECURE` would
+protect nothing there — and a debug build is how the Play listing's
+screenshots are taken (see [`store/`](store/README.md)). Never hand one out.
+
+### Edge to edge
+
+From 1.5 the app draws edge to edge on every Android version, as Android 15+
+forces on any app targeting API 35 or later. Doing it everywhere means an
+older handset shows exactly what an Android 16 one will, so testing on either
+tests both. Screens take their insets from `Scaffold`, or ask for them where
+they draw their own (`statusBarsPadding`, and `imePadding` on anything with a
+text field, so the keyboard never covers the field being typed in).
+
 ## The seven forms
 
 From `api/field_templates.json`, so the console and the app always agree:
@@ -460,7 +476,7 @@ mismatch is reported rather than silently tolerated.
 `./gradlew test` is the part that needs nothing at all — JVM unit tests, no
 device, no emulator, a few seconds. Everything else needs an emulated Pixel,
 which Android Studio will create for you under **Device Manager**; a Pixel 7
-API 35 image is the closest thing to the target.
+API 36 image is the closest thing to the target.
 
 ### An emulator cannot reach `localhost`
 

@@ -38,7 +38,7 @@ val copyTemplateRegistry by tasks.registering(Copy::class) {
 
 android {
     namespace = "org.humint.field"
-    compileSdk = 35
+    compileSdk = 36
 
     defaultConfig {
         applicationId = "org.humint.field"
@@ -46,9 +46,11 @@ android {
         // permission model settled here and there is no reason to exclude an
         // older handset somebody already owns.
         minSdk = 29
-        targetSdk = 35
-        versionCode = 5
-        versionName = "1.4"
+        // Android 16. Google Play refuses new apps and updates targeting
+        // anything lower from 31 August 2026.
+        targetSdk = 36
+        versionCode = 6
+        versionName = "1.5"
 
         // SQLCipher ships a native library per ABI and they are 4-6 MB each,
         // which was a fifth of the debug APK for three architectures nothing
@@ -102,7 +104,9 @@ android {
         }
     }
 
-    buildFeatures { compose = true }
+    // buildConfig: MainActivity reads BuildConfig.DEBUG to leave screenshots
+    // on in debug builds, which is how the Play listing gets its screenshots.
+    buildFeatures { compose = true; buildConfig = true }
 
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
@@ -136,6 +140,8 @@ dependencies {
     implementation("androidx.compose.material3:material3")
     implementation("androidx.compose.material:material-icons-extended")
     implementation("androidx.activity:activity-compose:1.9.3")
+    // WindowCompat, for the system-bar icon colours under edge to edge.
+    implementation("androidx.core:core-ktx:1.13.1")
     implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.8.7")
     implementation("androidx.lifecycle:lifecycle-runtime-compose:2.8.7")
     // ProcessLifecycleOwner: how the app notices it has gone to the

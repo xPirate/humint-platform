@@ -10,6 +10,8 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.systemBarsPadding
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -283,7 +285,10 @@ private fun UnreadablePane() {
 @Composable
 private fun Pane(title: String, content: @Composable () -> Unit) {
     Column(
-        Modifier.fillMaxSize().padding(28.dp),
+        // systemBars and the keyboard: the PIN fields sit low on a small
+        // screen, and edge to edge nothing moves them clear of the keyboard
+        // unless asked.
+        Modifier.fillMaxSize().systemBarsPadding().imePadding().padding(28.dp),
         verticalArrangement = Arrangement.Center,
         horizontalAlignment = Alignment.Start,
     ) {

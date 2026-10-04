@@ -9,6 +9,9 @@ import androidx.compose.material3.Typography
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.SideEffect
+import androidx.compose.ui.platform.LocalView
+import androidx.core.view.WindowCompat
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.unit.dp
@@ -119,6 +122,20 @@ fun FieldTheme(choice: ThemeChoice = ThemeChoice.SYSTEM, content: @Composable ()
         ThemeChoice.SYSTEM -> isSystemInDarkTheme()
         ThemeChoice.DARK -> true
         ThemeChoice.LIGHT -> false
+    }
+    // Edge to edge, the status and navigation bars are transparent over the
+    // app, so their icons must follow the app's theme rather than the
+    // phone's: dark icons on the light palette, light icons on the dark one.
+    // The app's theme can differ from the system's (Settings → Appearance).
+    val view = LocalView.current
+    if (!view.isInEditMode) {
+        SideEffect {
+            val window = (view.context as? android.app.Activity)?.window ?: return@SideEffect
+            WindowCompat.getInsetsController(window, view).apply {
+                isAppearanceLightStatusBars = !dark
+                isAppearanceLightNavigationBars = !dark
+            }
+        }
     }
     MaterialTheme(
         colorScheme = if (dark) Dark else Light,

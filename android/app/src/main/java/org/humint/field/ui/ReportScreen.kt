@@ -15,6 +15,8 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.consumeWindowInsets
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
@@ -192,6 +194,11 @@ fun ReportScreen(vm: FieldViewModel, reportId: String, onDone: () -> Unit) {
             Modifier
                 .fillMaxSize()
                 .padding(padding)
+                // Keep the field being typed in above the keyboard. The
+                // Scaffold padding already covers the navigation bar, so it
+                // is consumed first rather than counted twice.
+                .consumeWindowInsets(padding)
+                .imePadding()
                 .verticalScroll(rememberScrollState())
                 .padding(horizontal = 16.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp),

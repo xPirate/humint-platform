@@ -76,17 +76,14 @@ Build details (JDK, SDK, tests, why never the debug APK) are in
 
 ## Publish on Google Play (AAB)
 
-### 0. Target the API level Play requires
+### 0. Use 1.5 or later
 
 Since **31 August 2026** Play requires new apps and updates to target
-**Android 16 (API 36)**; you can request an extension to 1 November 2026 in
-Play Console. Field 1.4 targets API 35, so Play will refuse it as-is.
-
-The change: `compileSdk = 36` and `targetSdk = 36` in
-`android/app/build.gradle.kts`, which needs a newer Android Gradle Plugin
-than the 8.7.3 in `android/build.gradle.kts` (8.7 stops at API 35), then a
-test pass on a phone. Ship that as the next version (e.g. 1.5, versionCode 6)
-on both channels.
+**Android 16 (API 36)**. Field **1.5** (versionCode 6) is the first build that
+does — `compileSdk`/`targetSdk` 36 on Android Gradle Plugin 8.9.1 — so it is
+the first one Play will accept. Its native libraries are also 16 KB-aligned,
+which Play checks for apps targeting Android 15 and later. 1.4 and earlier are
+GitHub-only.
 
 ### 1. Get a developer account
 
@@ -128,7 +125,16 @@ To use your own key:
 
 Never lose `field-release.jks` or its passwords — it now signs both channels.
 
-### 3. Build the bundle
+### 3. Build and sign the bundle
+
+**On the Mac build folder:** run `build-release.command` (it now builds the
+APK *and* the bundle), then `sign-bundle.command`. That signs
+`app-release.aab` with `field-release.jks` and writes
+`~/Downloads/humint-field-<version>.aab`. If you registered a separate upload
+key, run it as
+`KEYSTORE=~/humint-keys/upload.jks ALIAS=upload bash ~/Downloads/sign-bundle.command`.
+
+**By hand:**
 
 ```bash
 cd android
@@ -136,8 +142,14 @@ cd android
 # → app/build/outputs/bundle/release/app-release.aab
 ```
 
-It's signed with whatever `keystore.properties` points at — that must be the
-upload key you registered.
+With `keystore.properties` present, Gradle signs it with that key — which must
+be the upload key you registered. Without it the bundle is unsigned; sign it
+with `jarsigner`:
+
+```bash
+jarsigner -sigalg SHA256withRSA -digestalg SHA-256 \
+    -keystore ~/humint-keys/field-release.jks app-release.aab field
+```
 
 ### 4. Fill in the app's details
 
@@ -155,20 +167,18 @@ Under **Policy and programs → App content** and **Store presence**:
   user-to-user content).
 - **Target audience** — 18 and over.
 - **Data safety** — see below.
-- **Store listing** — name, short and full description, a 512×512 PNG icon,
-  a 1024×500 feature graphic, and at least two phone screenshots.
+- **Store listing** — everything is ready in
+  [`android/store/`](../../android/store/README.md): the name, the short and
+  full descriptions, the 512×512 icon and the 1024×500 feature graphic. You
+  add at least two phone screenshots.
 
-**Screenshots:** the app sets `FLAG_SECURE`, so screenshots of it come out
-black. Take them on an emulator from a local debug build with the two
-`window.setFlags(... FLAG_SECURE ...)` lines in `MainActivity.kt` commented
-out. Don't commit that change.
+**Screenshots:** release builds block screenshots (`FLAG_SECURE`), so take
+them from a **debug** build, which leaves them on — on the phone or an
+emulator, with invented data such as the exercise set, never a real case.
 
-**Describe it plainly**, e.g. *"Offline field reporting for teams that run
-their own HUMINT Platform console. Write structured reports with photos,
-video and voice notes; they're stored encrypted on the phone and sent to your
-team's console when you scan its QR code."* Avoid anything that reads as
-covert monitoring of other people's devices — that's not what it does, and
-Play reviews that category hard.
+The prepared description says plainly what the app is. Keep it that way:
+anything that reads as covert monitoring of other people's devices is not
+what the app does, and Play reviews that category hard.
 
 #### Data safety answers
 
