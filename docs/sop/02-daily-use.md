@@ -310,8 +310,23 @@ acting on it; that is the shape to copy.
 - **A report on its own** — **Export PDF** on the report's page.
 - **Everything about one record** — **Export** on the record's page, which
   offers three shapes: an *Organisation report* (structure, membership and
-  holdings), a *Target package* (everything on file), or a *Plain dossier*
-  (the record and what it connects to).
+  holdings), a *Target package*, or a *Plain dossier*. They differ only in how
+  connections are grouped; all three are complete, stand-alone packages for
+  someone who needs this one file and not the platform — a police unit, a
+  regulator, a partner agency. Each has:
+  - a cover page with the record's picture, its identifying details, a band if
+    it is on the BOLO, and **Prepared for** / **Purpose**, which you are asked
+    for when you export (both optional, both printed and kept in the audit log);
+  - the record in full, with every contact point (untick the box to include
+    only preferred ones);
+  - every directly connected record, graded, expired links marked;
+  - a timeline of reports, events and links;
+  - **every report that mentions it, in full**, oldest first, with their
+    photographs;
+  - every photograph on the record, and a list of its other documents.
+
+  It does not include connections more than one step away. Read it before
+  you hand it over: it carries everything in those reports.
 - **The last N days** — **Executive summary** on the dashboard.
 - **The whole instance** — Admin settings → Backup & Restore. That is a
   backup, not a document; see [SOP 03](03-admin.md).
@@ -473,10 +488,18 @@ an image on it, then press **Use as portrait** in its Attachments list.
 
 **BOLO.** Anything to recognise on sight. Press **Post a lookout**, pick the
 record, and write *what to do if you see it* — that is the content, not the
-fact that it is wanted. Set the urgency; it is the coloured stripe down the
-card. Give it a drop-off date if it has a natural end; past that it shows as
+fact that it is wanted. Set the urgency; it is the coloured band across the
+photo. Give the record a picture (on its page, **Use as portrait** on an
+image) — the board, the record page and the printed sheet all lead with it. Give it a drop-off date if it has a natural end; past that it shows as
 lapsed rather than vanishing, because "this expired and nobody noticed" is
 worth seeing.
+
+**Print sheet** turns the live board into a PDF for a wall or a vehicle
+folder: *Grid* puts six to a page; *One to a page* gives each a large photo
+with everything that helps recognise them. Most urgent first, active
+lookouts only, with a line of your own on every page (*If seen: do not
+approach, call…*). The sheet says when it was printed — reprint it when the
+board changes, and take the old one down.
 
 When it is over, **Close out** and say what happened. It leaves the live board
 and stays under *Show closed*. Do not just remove it — the next person learns

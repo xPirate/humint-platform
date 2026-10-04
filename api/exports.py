@@ -30,10 +30,12 @@ the audit trail exists.
 """
 
 from datetime import datetime, timezone
+from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 
 import audit
+import bolo_pdf
 import auth
 import contacts
 import entities
@@ -179,7 +181,82 @@ def _reports_for_entity(cur, entity_id: str) -> list[dict]:
     ]
 
 
-def gather_dossier(entity_id: str, shape: str, user: dict) -> dict:
+def _full_reports(cur, report_ids: list[str]) -> list[dict]:
+    """The linked reports in full — body and photographs — oldest first.
+
+    A package handed to someone outside the platform (a police unit, a
+    regulator) has to stand on its own: a list of report titles tells them
+    reporting exists and gives them none of it. Oldest first so the reporting
+    reads as the account it is, in the order it was learned.
+    """
+    if not report_ids:
+        return []
+    cur.execute(
+        """
+        SELECT rep.id, rep.title, rep.body_markdown, rep.status, rep.criticality,
+               rep.credibility_rating, rep.created_at, rep.updated_at, u.username
+          FROM reports rep LEFT JOIN users u ON u.id = rep.author_id
+         WHERE rep.id = ANY(%s)
+         ORDER BY rep.created_at, rep.id
+        """, (report_ids,))
+    out = [{"id": r[0], "title": r[1], "body_markdown": r[2], "status": r[3],
+            "criticality": r[4], "credibility_rating": r[5], "created_at": r[6],
+            "updated_at": r[7], "author": r[8], "attachments": []}
+           for r in cur.fetchall()]
+    by_id = {r["id"]: r for r in out}
+    cur.execute(
+        "SELECT id, report_id, filename, title, mime_type, storage_path, source_note "
+        "  FROM attachments WHERE report_id = ANY(%s) AND archived_at IS NULL ORDER BY id",
+        (report_ids,))
+    for a in cur.fetchall():
+        by_id[a[1]]["attachments"].append({
+            "id": a[0], "filename": a[3] or a[2], "mime_type": a[4],
+            "storage_path": a[5], "source_note": a[6]})
+    return out
+
+
+def _board_entries(cur, entity_id: str) -> list[dict]:
+    """Active BOLO / roster entries for this record, for the cover page."""
+    cur.execute(
+        "SELECT b.board, b.urgency, b.reason, b.role, b.callsign, b.created_at, b.expires_at, "
+        "       bo.label, bo.enabled "
+        "  FROM board_entries b JOIN boards bo ON bo.kind = b.board "
+        " WHERE b.entity_id = %s AND b.status = 'active'", (entity_id,))
+    return [{"board": r[0], "urgency": r[1], "reason": r[2], "role": r[3], "callsign": r[4],
+             "created_at": r[5], "expires_at": r[6], "label": r[7] or r[0].upper()}
+            for r in cur.fetchall() if r[8]]
+
+
+def _timeline(entity: dict, neighbours: dict, reports: list) -> list[dict]:
+    """One chronology across everything the package holds: when each report
+    was filed, when each linked event happened, when each link was learned
+    and until when it held. The order things happened in is half of what a
+    recipient needs and nothing else in the package gives it to them."""
+    items = []
+    for r in reports:
+        items.append({"when": r["created_at"], "kind": "Report",
+                      "what": r["title"], "note": r.get("criticality") or ""})
+    for rel in entity.get("relationships") or []:
+        n = neighbours.get(rel.get("other_entity_id")) or {}
+        if n.get("entity_type") == "event" and n.get("started_at"):
+            items.append({"when": n["started_at"], "kind": "Event", "what": n["name"],
+                          "note": n.get("event_type") or ""})
+        if rel.get("discovery_date"):
+            wording = (rel.get("reads_as") or rel.get("relationship_type") or "").replace("_", " ")
+            note = f"until {rel['expires_on']}" if rel.get("expires_on") else ""
+            if rel.get("expired"):
+                note = f"expired {rel['expires_on']}"
+            items.append({"when": rel["discovery_date"], "kind": "Link learned",
+                          "what": f"{wording} {rel.get('other_entity_name')}", "note": note})
+    def key(i):
+        w = i["when"]
+        return w.isoformat() if hasattr(w, "isoformat") else str(w)
+    return sorted(items, key=key)
+
+
+def gather_dossier(entity_id: str, shape: str, user: dict, *,
+                   prepared_for: str | None = None, purpose: str | None = None,
+                   contacts_scope: str = "all") -> dict:
     """Everything a dossier prints, in one dict.
 
     One hop: the entity, each directly related entity with the facts worth
@@ -197,6 +274,8 @@ def gather_dossier(entity_id: str, shape: str, user: dict) -> dict:
         })
         neighbours = _neighbour_details(cur, neighbour_ids)
         linked_reports = _reports_for_entity(cur, entity_id)
+        full_reports = _full_reports(cur, [r["id"] for r in linked_reports])
+        boards_on = _board_entries(cur, entity_id)
         _attach_storage_paths(cur, entity["attachments"])
         # Contacts for the neighbours too: in an organisation report, "how do I
         # reach this person" is most of the value, and it lives one table over.
@@ -217,6 +296,12 @@ def gather_dossier(entity_id: str, shape: str, user: dict) -> dict:
         "neighbours": neighbours,
         "neighbour_contacts": neighbour_contacts,
         "reports": linked_reports,
+        "full_reports": full_reports,
+        "boards": boards_on,
+        "timeline": _timeline(entity, neighbours, linked_reports),
+        "prepared_for": (prepared_for or "").strip() or None,
+        "purpose": (purpose or "").strip() or None,
+        "contacts_scope": contacts_scope,
     }
 
 
@@ -237,6 +322,15 @@ def _attach_storage_paths(cur, attachments: list) -> None:
 def export_dossier(
     entity_id: str,
     shape: str = Query(default=DEFAULT_SHAPE, description=f"One of {tuple(SHAPES)}"),
+    # Printed on the cover. A package handed outside the team — to a police
+    # unit, to a regulator — should say who it was made for and why, so a
+    # copy found later on a desk explains itself.
+    prepared_for: Optional[str] = Query(default=None, max_length=200),
+    purpose: Optional[str] = Query(default=None, max_length=500),
+    # Every contact point, or only the ones marked preferred. "all" by
+    # default now that a package is meant to stand on its own; "preferred"
+    # keeps the old, narrower behaviour for a wider audience.
+    contacts_scope: str = Query(default="all", alias="contacts"),
     user: dict = Depends(auth.require_user),
 ):
     if shape not in SHAPES:
@@ -244,7 +338,10 @@ def export_dossier(
             status_code=400,
             detail=f'shape must be one of {tuple(SHAPES)}',
         )
-    data = gather_dossier(entity_id, shape, user)
+    if contacts_scope not in ("all", "preferred"):
+        raise HTTPException(status_code=400, detail="contacts must be 'all' or 'preferred'")
+    data = gather_dossier(entity_id, shape, user, prepared_for=prepared_for,
+                          purpose=purpose, contacts_scope=contacts_scope)
     pdf_bytes = package_pdf.build_dossier(data, user["username"])
     filename = package_pdf.dossier_filename(data["entity"], shape)
 
@@ -253,6 +350,11 @@ def export_dossier(
         object_label=data["entity"]["name"],
         detail={
             "shape": shape,
+            # Who it was made for is the first question about any copy that
+            # left the building.
+            "prepared_for": data["prepared_for"],
+            "purpose": data["purpose"],
+            "contacts": contacts_scope,
             # Naming what left is the point of the entry: a dossier carries
             # every neighbour's details out with it, not just the subject's.
             "neighbours_included": sorted(data["neighbours"]),
@@ -597,3 +699,57 @@ def export_executive(
         content=pdf_bytes, media_type="application/pdf",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
+
+
+# ---------------------------------------------------------------------------
+# BOLO sheet — the lookout board, printed for a wall
+# ---------------------------------------------------------------------------
+
+@router.get("/bolo.pdf")
+def export_bolo(
+    layout: str = Query(default="grid", description="grid (six to a page) or single (one to a page)"),
+    # Printed on every page: what someone should do if they see one of these.
+    note: Optional[str] = Query(default=None, max_length=300),
+    user: dict = Depends(auth.require_user),
+):
+    if layout not in ("grid", "single"):
+        raise HTTPException(status_code=400, detail="layout must be 'grid' or 'single'")
+    with db_cursor() as cur:
+        cur.execute("SELECT enabled, label FROM boards WHERE kind = 'bolo'")
+        row = cur.fetchone()
+        if not row or not row[0]:
+            raise HTTPException(status_code=404, detail="The BOLO board is not switched on.")
+        label = row[1] or "BOLO"
+        # Most urgent first — a wall sheet is read top-left first — then the
+        # order the team arranged the board in.
+        cur.execute(
+            "SELECT b.entity_id, b.urgency, b.reason, b.created_at, b.expires_at, a.storage_path "
+            "  FROM board_entries b JOIN entities e ON e.id = b.entity_id "
+            "  LEFT JOIN attachments a ON a.id = e.portrait_attachment_id "
+            " WHERE b.board = 'bolo' AND b.status = 'active' "
+            "   AND (b.expires_at IS NULL OR b.expires_at >= CURRENT_DATE) "
+            " ORDER BY CASE b.urgency WHEN 'Critical' THEN 0 WHEN 'Urgent' THEN 1 "
+            "          WHEN 'Caution' THEN 2 WHEN 'Info' THEN 3 ELSE 4 END, "
+            "          b.sort_order, b.created_at DESC")
+        rows = cur.fetchall()
+    entries = []
+    for entity_id, urgency, reason, created_at, expires_at, portrait_path in rows:
+        entity = entities.get_entity(entity_id, user=user)
+        vehicle_ids = [r["other_entity_id"] for r in entity.get("relationships") or []
+                       if r.get("other_entity_type") == "vehicle"]
+        with db_cursor() as cur:
+            vehicles = _neighbour_details(cur, vehicle_ids)
+        entries.append({"entity": entity, "urgency": urgency, "reason": reason,
+                        "created_at": created_at, "expires_at": expires_at,
+                        "portrait_path": portrait_path, "vehicles": vehicles})
+
+    pdf_bytes = bolo_pdf.build_bolo_sheet(label, entries, layout, (note or "").strip() or None,
+                                          user["username"])
+    audit.record("export.bolo", user=user, object_type="board", object_id="bolo",
+                 object_label=label,
+                 detail={"layout": layout, "entities_included": [e["entity"]["id"] for e in entries],
+                         "size_bytes": len(pdf_bytes)})
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%d")
+    return Response(
+        content=pdf_bytes, media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="humint-bolo-{layout}-{stamp}.pdf"'})

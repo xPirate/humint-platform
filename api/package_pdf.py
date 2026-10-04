@@ -33,6 +33,7 @@ from reportlab.platypus import (
     TableStyle,
 )
 
+import report_pdf
 from report_pdf import (
     CREDIBILITY_LABELS,
     FONT_BOLD,
@@ -205,7 +206,259 @@ def _esc(text):
 # Dossier
 # ---------------------------------------------------------------------------
 
+URGENCY_COLORS = {
+    "Critical": "#a01810", "Urgent": "#7a4d00", "Caution": "#0a5f57", "Info": "#44564b",
+}
+
+
+def _portrait_for(entity: dict):
+    """The record's chosen picture, or None."""
+    pid = entity.get("portrait_attachment_id")
+    for a in entity.get("attachments") or []:
+        if a.get("id") == pid and (a.get("mime_type") or "").startswith("image/"):
+            return a
+    return None
+
+
+def _cover(story, data, s, content_width, generated_by, generated_at):
+    """Page one: who, what, for whom, and the lookout if there is one.
+
+    The cover is what is read when the package is handed across a desk, so
+    it carries the picture, the handful of facts that identify the subject,
+    and who the package was made for — everything else is inside.
+    """
+    entity = data["entity"]
+    spec = data["shape_spec"]
+    details = entity.get("details") or {}
+    _title_block(
+        story, s, entity.get("name") or "Untitled",
+        f"{spec['label'].upper()} · {(entity.get('entity_type') or '').capitalize()}",
+    )
+
+    rows = [("Type", (entity.get("entity_type") or "").capitalize())]
+    for key, label in (("aliases", "Also known as"), ("date_of_birth", "Date of birth"),
+                       ("occupation", "Occupation"), ("alignment", "Alignment"),
+                       ("life_status", "Status"), ("disposition", "Disposition"),
+                       ("physical_description", "Description"),
+                       ("license_plate", "Plate"), ("address", "Address"),
+                       ("org_type", "Kind of organisation"), ("event_type", "Kind of event")):
+        value = _format_value(details.get(key))
+        if value:
+            rows.append((label, value))
+    if entity.get("entity_type") == "vehicle":
+        described = " ".join(str(details[k]) for k in ("color", "make", "model", "style")
+                             if details.get(k))
+        if described:
+            rows.insert(1, ("Vehicle", described))
+    if not entity.get("is_active", True):
+        rows.append(("Record", "Archived"))
+    rows.append(("Reference", entity.get("id")))
+
+    portrait = _portrait_for(entity)
+    photo = report_pdf.portrait_flowable(portrait.get("storage_path"), 1.9 * inch, 2.4 * inch) \
+        if portrait else None
+    facts_width = content_width - (2.1 * inch if photo else 0)
+    facts = _kv_table(rows, s, facts_width)
+    if photo:
+        t = Table([[facts, photo]], colWidths=[facts_width, 2.1 * inch], hAlign="LEFT")
+        t.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "TOP"),
+                               ("LEFTPADDING", (0, 0), (-1, -1), 0),
+                               ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+                               ("ALIGN", (1, 0), (1, 0), "RIGHT")]))
+        story.append(t)
+    elif facts:
+        story.append(facts)
+    story.append(Spacer(1, 12))
+
+    # The lookout, as a band that cannot be missed. A record on the BOLO is
+    # the first thing anyone receiving its package needs to know.
+    for b in data.get("boards") or []:
+        if b["board"] != "bolo":
+            continue
+        colour = URGENCY_COLORS.get(b.get("urgency") or "", "#a01810")
+        text = f"<b>{_esc(b['label'].upper())}</b>"
+        if b.get("urgency"):
+            text += f" — <b>{_esc(b['urgency'].upper())}</b>"
+        if b.get("reason"):
+            text += f"<br/>{_esc(b['reason'])}"
+        posted = _format_value(b.get("created_at"))
+        text += f"<br/><font size='8'>Posted {posted}" + (
+            f" · in force until {_format_value(b.get('expires_at'))}" if b.get("expires_at") else "") + "</font>"
+        band = Table([[Paragraph(f"<font color='#ffffff'>{text}</font>", s["body"])]],
+                     colWidths=[content_width])
+        band.setStyle(TableStyle([("BACKGROUND", (0, 0), (-1, -1), colors.HexColor(colour)),
+                                  ("TOPPADDING", (0, 0), (-1, -1), 8),
+                                  ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+                                  ("LEFTPADDING", (0, 0), (-1, -1), 10)]))
+        story.extend([band, Spacer(1, 12)])
+
+    handling = [("Prepared for", data.get("prepared_for") or "—"),
+                ("Purpose", data.get("purpose") or "—"),
+                ("Prepared by", generated_by),
+                ("Date", generated_at.strftime("%Y-%m-%d %H:%M UTC"))]
+    if header_label():
+        handling.append(("Handling", header_label()))
+    story.append(Paragraph("About this package", s["section"]))
+    story.append(_kv_table(handling, s, content_width))
+    story.append(Spacer(1, 6))
+    story.append(_plain(
+        "This package holds what is on file about one record: the record itself, every "
+        "record directly connected to it, every report that mentions it in full, and its "
+        "photographs. It does not include connections more than one step away or anything "
+        "else in the case file. Contact details are "
+        + ("all those recorded." if data.get("contacts_scope") == "all"
+           else "only those marked preferred."),
+        s["meta"]))
+    story.append(Spacer(1, 12))
+
+    rels = entity.get("relationships") or []
+    images = [a for a in entity.get("attachments") or [] if (a.get("mime_type") or "").startswith("image/")]
+    report_images = sum(1 for r in data["full_reports"] for a in r["attachments"]
+                        if (a.get("mime_type") or "").startswith("image/"))
+    contents = [
+        ("1", "The record", "details and contact points"),
+        ("2", "Connections", f"{len(rels)} directly connected record{'s' if len(rels) != 1 else ''}"),
+        ("3", "Timeline", f"{len(data['timeline'])} dated item{'s' if len(data['timeline']) != 1 else ''}"),
+        ("4", "Reporting in full", f"{len(data['full_reports'])} report{'s' if len(data['full_reports']) != 1 else ''}"
+              + (f", {report_images} photograph{'s' if report_images != 1 else ''}" if report_images else "")),
+        ("5", "Photographs and documents", f"{len(entity.get('attachments') or [])} on this record"),
+    ]
+    story.append(Paragraph("Contents", s["section"]))
+    t = Table([[_plain(n, s["cell_label"]), _plain(t_, s["cell"]), _plain(note, s["meta"])]
+               for n, t_, note in contents],
+              colWidths=[0.35 * inch, content_width * 0.35, content_width * 0.65 - 0.35 * inch],
+              hAlign="LEFT")
+    t.setStyle(TableStyle([("LEFTPADDING", (0, 0), (-1, -1), 0),
+                           ("TOPPADDING", (0, 0), (-1, -1), 2),
+                           ("BOTTOMPADDING", (0, 0), (-1, -1), 2)]))
+    story.append(t)
+
+
+def _connections(story, data, s):
+    entity = data["entity"]
+    spec = data["shape_spec"]
+    rels = list(entity.get("relationships") or [])
+    neighbours = data["neighbours"]
+    neighbour_contacts = data["neighbour_contacts"]
+    if not rels:
+        story.append(_plain("No related entities.", s["meta"]))
+        return
+    if not spec["primary_groups"]:
+        story.append(_plain(
+            f"{len(rels)} related entit{'y' if len(rels) == 1 else 'ies'}. "
+            "Expired links are listed last and marked.", s["meta"]))
+        story.append(Spacer(1, 4))
+        for rel in rels:
+            story.append(_neighbour_line(
+                rel, neighbours.get(rel.get("other_entity_id")),
+                neighbour_contacts.get(rel.get("other_entity_id")), s))
+        return
+    placed = set()
+    for heading, types in spec["primary_groups"]:
+        if not types:
+            continue
+        # Match on how the edge READS from this record, not how it is
+        # stored — "has member" and "member_of" are the same fact, and an
+        # organisation's People section must catch it from either side.
+        group = [rel for rel in rels
+                 if (rel.get("reads_as") in types or rel.get("relationship_type") in types)]
+        if not group:
+            continue
+        placed.update(id(rel) for rel in group)
+        story.append(Paragraph(f"{heading} ({len(group)})", s["h2"]))
+        for rel in group:
+            story.append(_neighbour_line(
+                rel, neighbours.get(rel.get("other_entity_id")),
+                neighbour_contacts.get(rel.get("other_entity_id")), s))
+    rest = [rel for rel in rels if id(rel) not in placed]
+    if rest:
+        story.append(Paragraph(f"Other connections ({len(rest)})", s["h2"]))
+        for rel in rest:
+            story.append(_neighbour_line(
+                rel, neighbours.get(rel.get("other_entity_id")),
+                neighbour_contacts.get(rel.get("other_entity_id")), s))
+
+
+def _timeline_table(story, items, s, content_width):
+    if not items:
+        story.append(_plain("Nothing dated on file.", s["meta"]))
+        return
+    rows = [[_plain("Date", s["cell_label"]), _plain("What", s["cell_label"]),
+             _plain("", s["cell_label"]), _plain("Note", s["cell_label"])]]
+    for it in items:
+        rows.append([_plain(_format_value(it["when"]).replace(" UTC", ""), s["cell"]),
+                     _plain(it["kind"], s["meta"]),
+                     _plain(it["what"] or "", s["cell"]),
+                     _plain(it.get("note") or "", s["meta"])])
+    t = Table(rows, colWidths=[content_width * 0.21, content_width * 0.14,
+                               content_width * 0.45, content_width * 0.2],
+              hAlign="LEFT", repeatRows=1)
+    t.setStyle(TableStyle([
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("LINEBELOW", (0, 0), (-1, 0), 0.6, colors.HexColor("#999999")),
+        ("LINEBELOW", (0, 1), (-1, -2), 0.25, colors.HexColor("#e8e8e8")),
+        ("TOPPADDING", (0, 0), (-1, -1), 3), ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+        ("LEFTPADDING", (0, 0), (-1, -1), 0), ("RIGHTPADDING", (0, 0), (-1, -1), 6),
+    ]))
+    story.append(t)
+
+
+def _reports_in_full(story, reports, s, content_width):
+    if not reports:
+        story.append(_plain("No report mentions this record.", s["meta"]))
+        return
+    for i, rep in enumerate(reports, 1):
+        cred = rep.get("credibility_rating")
+        meta = [f"Filed {_format_value(rep.get('created_at'))}"]
+        if rep.get("author"):
+            meta.append(f"by {_esc(rep['author'])}")
+        meta.append((rep.get("status") or "draft").capitalize())
+        if cred:
+            meta.append(f"credibility {cred} — {CREDIBILITY_LABELS.get(cred, '')}")
+        badge = criticality_markup(rep.get("criticality"))
+        head = [Paragraph(f"{i}. {_esc(rep.get('title') or 'Untitled report')}", s["h2"]),
+                Paragraph((badge + " · " if badge else "") + _esc(" · ".join(meta)), s["meta"]),
+                Spacer(1, 6)]
+        body = markdown_to_flowables(rep.get("body_markdown") or "", s) \
+            or [_plain("(This report has no body text.)", s["meta"])]
+        # The heading stays with the first paragraph; a report title alone at
+        # the foot of a page is the classic printed-report failure.
+        story.append(KeepTogether(head + body[:1]))
+        story.extend(body[1:])
+        for att in rep["attachments"]:
+            if not (att.get("mime_type") or "").startswith("image/"):
+                continue
+            img = _image_flowable(att.get("storage_path"), content_width)
+            if img is None:
+                continue
+            caption = att.get("filename") or "image"
+            if att.get("source_note"):
+                caption += f" — {att['source_note']}"
+            story.extend([Spacer(1, 4), KeepTogether([img, _plain(caption, s["caption"])])])
+        others = [a for a in rep["attachments"] if not (a.get("mime_type") or "").startswith("image/")]
+        if others:
+            story.append(_plain("Also attached to this report: "
+                                + "; ".join(a.get("filename") or "file" for a in others), s["meta"]))
+        if i < len(reports):
+            story.extend([Spacer(1, 6), HRFlowable(width="100%", thickness=0.5,
+                                                   color=colors.HexColor("#cccccc")), Spacer(1, 4)])
+
+
 def build_dossier(data: dict, generated_by: str) -> bytes:
+    """A package that stands on its own.
+
+    It used to print the record and a list of connections, with each report a
+    title in a table — enough for a colleague who could open the app, not for
+    the people a package is actually for: a police unit, a regulator, a
+    partner agency, someone with a need to know about this one file and no
+    access to the platform. So it now carries the record in full, every
+    report that mentions it in full with its photographs, a timeline, and
+    every photograph on the record, behind a cover that says who it was
+    prepared for and why.
+
+    The three shapes still decide how the connections are grouped; what is
+    included is the same for all of them.
+    """
     entity = data["entity"]
     spec = data["shape_spec"]
     s = _styles()
@@ -215,100 +468,65 @@ def build_dossier(data: dict, generated_by: str) -> bytes:
     generated_at = datetime.now(timezone.utc)
     story = []
 
-    _title_block(
-        story, s, entity.get("name") or "Untitled",
-        f"{spec['label'].upper()} · {spec['subtitle']} · "
-        f"{(entity.get('entity_type') or '').capitalize()}",
-    )
+    _cover(story, data, s, content_width, generated_by, generated_at)
+    story.append(PageBreak())
 
-    header_rows = [
-        ("Entity ID", entity.get("id")),
-        ("Type", (entity.get("entity_type") or "").capitalize()),
-        ("Status", "Active" if entity.get("is_active", True) else "Archived"),
-        ("Related entities", str(len(entity.get("relationships") or []))),
-        ("Reports referencing", str(len(data["reports"]))),
-        ("Exported", f"{generated_at.strftime('%Y-%m-%d %H:%M UTC')} by {generated_by}"),
-    ]
-    table = _kv_table(header_rows, s, content_width)
-    if table:
-        story.extend([table, Spacer(1, 12)])
+    story.append(Paragraph("1. The record", s["section"]))
+    story.extend(_entity_section(entity, s, content_width,
+                                 contacts_scope=data.get("contacts_scope", "all"),
+                                 include_relationships=False, include_images=False))
 
-    story.append(Paragraph("Scope of this package", s["section"]))
-    story.append(_plain(
-        "The entity above, every entity directly related to it, and every report " "that mentions it. Connections more than one step away are not included.",
-        s["meta"],
-    ))
-    story.append(Spacer(1, 10))
-
-    # --- the subject itself ---
-    story.append(Paragraph("The entity", s["section"]))
-    story.extend(_entity_section(entity, s, content_width))
-
-    # --- connections, grouped per the chosen shape ---
-    story.append(Paragraph("Connections", s["section"]))
-    rels = list(entity.get("relationships") or [])
-    neighbours = data["neighbours"]
-    neighbour_contacts = data["neighbour_contacts"]
-
-    if not rels:
-        story.append(_plain("No related entities.", s["meta"]))
-    elif not spec["primary_groups"]:
-        story.append(_plain(
-            f"{len(rels)} related entit{'y' if len(rels) == 1 else 'ies'}, most recently discovered first.", s["meta"]))
-        story.append(Spacer(1, 4))
-        for rel in rels:
-            story.append(_neighbour_line(
-                rel, neighbours.get(rel.get("other_entity_id")),
-                neighbour_contacts.get(rel.get("other_entity_id")), s))
-    else:
-        placed = set()
-        for heading, types in spec["primary_groups"]:
-            if not types:
-                continue   # rendered elsewhere (status block on a target package)
-            # Match on how the edge READS from this record, not how it is
-            # stored — "has member" and "member_of" are the same fact, and an
-            # organisation's People section must catch it from either side.
-            group = [
-                rel for rel in rels
-                if (rel.get("reads_as") in types or rel.get("relationship_type") in types)
-            ]
-            if not group:
-                continue
-            placed.update(id(rel) for rel in group)
-            story.append(Paragraph(f"{heading} ({len(group)})", s["h2"]))
-            for rel in group:
-                story.append(_neighbour_line(
-                    rel, neighbours.get(rel.get("other_entity_id")),
-                    neighbour_contacts.get(rel.get("other_entity_id")), s))
-        rest = [rel for rel in rels if id(rel) not in placed]
-        if rest:
-            story.append(Paragraph(f"Other connections ({len(rest)})", s["h2"]))
-            for rel in rest:
-                story.append(_neighbour_line(
-                    rel, neighbours.get(rel.get("other_entity_id")),
-                    neighbour_contacts.get(rel.get("other_entity_id")), s))
-
+    story.append(Paragraph("2. Connections", s["section"]))
+    _connections(story, data, s)
     story.append(Spacer(1, 12))
 
-    # --- reporting history ---
-    story.append(Paragraph("Reports mentioning this entity", s["section"]))
-    story.extend(_report_rows(
-        data["reports"], s, content_width,
-        "No report mentions this entity.",
-    ))
+    story.append(Paragraph("3. Timeline", s["section"]))
+    _timeline_table(story, data.get("timeline") or [], s, content_width)
 
-    # --- the subject's own attachments ---
-    images = [a for a in (entity.get("attachments") or [])
-              if (a.get("mime_type") or "").startswith("image/")]
-    if images:
-        story.append(Spacer(1, 12))
-        story.append(Paragraph("Attached images", s["section"]))
-        for att in images:
-            img = _image_flowable(att.get("storage_path"), content_width)
-            if img is None:
-                continue
-            story.extend([Spacer(1, 4),
-                          KeepTogether([img, _plain(att.get("filename", "image"), s["caption"])])])
+    story.append(PageBreak())
+    story.append(Paragraph("4. Reporting in full", s["section"]))
+    _reports_in_full(story, data.get("full_reports") or [], s, content_width)
+
+    attachments = entity.get("attachments") or []
+    images = [a for a in attachments if (a.get("mime_type") or "").startswith("image/")]
+    portrait = _portrait_for(entity)
+    if portrait in images:                       # the record's own picture first
+        images.remove(portrait)
+        images.insert(0, portrait)
+    others = [a for a in attachments if a not in images]
+    story.append(Spacer(1, 12))
+    story.append(Paragraph("5. Photographs and documents", s["section"]))
+    if not attachments:
+        story.append(_plain("Nothing is attached to this record.", s["meta"]))
+    for att in images:
+        img = _image_flowable(att.get("storage_path"), content_width)
+        if img is None:
+            continue
+        caption = att.get("title") or att.get("filename") or "image"
+        if att.get("source_note"):
+            caption += f" — {att['source_note']}"
+        if att is portrait:
+            caption += " (the record's picture)"
+        story.extend([Spacer(1, 4), KeepTogether([img, _plain(caption, s["caption"])])])
+    if others:
+        rows = [[_plain("Document", s["cell_label"]), _plain("Type", s["cell_label"]),
+                 _plain("Where it came from", s["cell_label"])]]
+        for a in others:
+            rows.append([_plain(a.get("title") or a.get("filename") or "", s["cell"]),
+                         _plain(a.get("mime_type") or "", s["meta"]),
+                         _plain(a.get("source_note") or "", s["meta"])])
+        t = Table(rows, colWidths=[content_width * 0.45, content_width * 0.2, content_width * 0.35],
+                  hAlign="LEFT", repeatRows=1)
+        t.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "TOP"),
+                               ("LINEBELOW", (0, 0), (-1, 0), 0.6, colors.HexColor("#999999")),
+                               ("LEFTPADDING", (0, 0), (-1, -1), 0)]))
+        story.extend([Spacer(1, 8), _plain("Documents on file (not reproduced here):", s["meta"]),
+                      Spacer(1, 4), t])
+
+    story.extend([Spacer(1, 18), HRFlowable(width="100%", thickness=1, color=colors.HexColor("#0b5c2e")),
+                  _plain(f"End of package — prepared {generated_at.strftime('%Y-%m-%d %H:%M UTC')} "
+                         f"by {generated_by}" + (f" for {data['prepared_for']}" if data.get("prepared_for") else "")
+                         + ".", s["meta"])])
 
     doc.build(story, canvasmaker=_NumberedCanvas)
     return buf.getvalue()

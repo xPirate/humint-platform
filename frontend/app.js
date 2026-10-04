@@ -2306,7 +2306,7 @@ const EXPORT_SHAPES = {
   },
   plain: {
     label: "Plain dossier",
-    note: "This entity and what it connects to",
+    note: "The record, its connections and reporting, in full",
   },
 };
 
@@ -2384,10 +2384,7 @@ function wireExportMenu(entity) {
     item.addEventListener("click", (e) => {
       e.stopPropagation();
       close();
-      startExport(
-        `/api/exports/entities/${encodeURIComponent(entity.id)}/dossier.pdf`
-        + `?shape=${encodeURIComponent(item.dataset.exportShape)}`,
-        EXPORT_SHAPES[item.dataset.exportShape].label);
+      openPackageForm(entity, item.dataset.exportShape);
     });
   });
   const hotspotItem = menu.querySelector("[data-export-hotspot]");
@@ -2403,6 +2400,89 @@ function wireExportMenu(entity) {
         "Hotspot package");
     });
   }
+}
+
+/* Before a package is built: who it is for and why. Printed on its cover, and
+ * recorded in the audit log, because a package handed outside the team — to
+ * a police unit, to a regulator — should explain itself when a copy turns up
+ * on a desk months later. Both are optional; the package builds without. */
+function openPackageForm(entity, shape) {
+  const spec = EXPORT_SHAPES[shape];
+  openModal(`
+    <h2>${escapeHtml(spec.label)} — ${escapeHtml(entity.name)}</h2>
+    <p class="field-hint">A complete, stand-alone package: the record, everything directly
+      connected to it, every report that mentions it in full, a timeline and its photographs —
+      for someone who needs this file and not the platform.</p>
+    <form id="package-form">
+      <div class="form-row">
+        <label for="pkg-for">Prepared for</label>
+        <input type="text" id="pkg-for" maxlength="200" placeholder="e.g. County Sheriff — Investigations">
+      </div>
+      <div class="form-row">
+        <label for="pkg-purpose">Purpose</label>
+        <input type="text" id="pkg-purpose" maxlength="500" placeholder="e.g. Referral of unlicensed transmissions">
+      </div>
+      <label class="inline-check"><input type="checkbox" id="pkg-all-contacts" checked>
+        Include every contact point, not only the preferred ones</label>
+      <div class="modal-actions">
+        <button type="button" class="btn-secondary" id="pkg-cancel">Cancel</button>
+        <button type="submit" class="btn-primary">Build PDF</button>
+      </div>
+    </form>`);
+  document.getElementById("pkg-cancel").addEventListener("click", closeModal);
+  document.getElementById("package-form").addEventListener("submit", (e) => {
+    e.preventDefault();
+    const params = new URLSearchParams({ shape });
+    const who = document.getElementById("pkg-for").value.trim();
+    const why = document.getElementById("pkg-purpose").value.trim();
+    if (who) params.set("prepared_for", who);
+    if (why) params.set("purpose", why);
+    params.set("contacts", document.getElementById("pkg-all-contacts").checked ? "all" : "preferred");
+    closeModal();
+    startExport(`/api/exports/entities/${encodeURIComponent(entity.id)}/dossier.pdf?${params}`, spec.label);
+  });
+  document.getElementById("pkg-for").focus();
+}
+
+/* The BOLO board as a sheet for a wall. The note goes on every page — what
+ * to do on a sighting — and is remembered on this browser, because it is the
+ * same sentence every time. */
+function openBoloPrintForm() {
+  let lastNote = "";
+  try { lastNote = localStorage.getItem("boloPrintNote") || ""; } catch (_) { /* storage off */ }
+  openModal(`
+    <h2>Print the lookout sheet</h2>
+    <form id="bolo-print-form">
+      <fieldset class="radio-stack">
+        <legend>Layout</legend>
+        <label><input type="radio" name="bolo-layout" value="grid" checked>
+          <span><strong>Grid</strong> — six to a page, for a noticeboard</span></label>
+        <label><input type="radio" name="bolo-layout" value="single">
+          <span><strong>One to a page</strong> — large photo, everything that helps recognise them</span></label>
+      </fieldset>
+      <div class="form-row">
+        <label for="bolo-note">Printed on every page</label>
+        <input type="text" id="bolo-note" maxlength="300" value="${escapeHtml(lastNote)}"
+               placeholder="e.g. If seen: do not approach. Call the duty desk on 555-0100.">
+      </div>
+      <p class="field-hint">Active lookouts only, most urgent first. The sheet says when it was
+        printed — the wall is not updated when the board is.</p>
+      <div class="modal-actions">
+        <button type="button" class="btn-secondary" id="bolo-print-cancel">Cancel</button>
+        <button type="submit" class="btn-primary">Build PDF</button>
+      </div>
+    </form>`);
+  document.getElementById("bolo-print-cancel").addEventListener("click", closeModal);
+  document.getElementById("bolo-print-form").addEventListener("submit", (e) => {
+    e.preventDefault();
+    const layout = document.querySelector("input[name=bolo-layout]:checked").value;
+    const note = document.getElementById("bolo-note").value.trim();
+    try { localStorage.setItem("boloPrintNote", note); } catch (_) { /* storage off */ }
+    const params = new URLSearchParams({ layout });
+    if (note) params.set("note", note);
+    closeModal();
+    startExport(`/api/exports/bolo.pdf?${params}`, "BOLO sheet");
+  });
 }
 
 /* A PDF export is a normal authenticated GET that returns a file. Fetching it
@@ -3932,6 +4012,20 @@ function openAnalystItem(d) {
   if (menu) menu.addEventListener("click", () => { toggleUserMenu(false); openAnalystPage(state.user.username); });
 })();
 
+/* The record's picture, beside its name. A face or a number plate is how
+ * people recognise a record, and it used to be one attachment among many
+ * further down the page. Click for the full image. */
+function entityPortraitHtml(entity) {
+  if (!entity.portrait_attachment_id) return "";
+  const src = `/api/attachments/${encodeURIComponent(entity.portrait_attachment_id)}/file?inline=true`;
+  return `
+    <a class="detail-portrait" id="entity-portrait" href="${src}" target="_blank" rel="noopener"
+       title="Open the full picture">
+      <img src="${src}" alt="Picture of ${escapeHtml(entity.name)}" loading="lazy">
+      <span class="detail-portrait-flag" hidden></span>
+    </a>`;
+}
+
 async function openEntityDetail(id) {
   setActiveTab("entities"); // correct even when reached from Dashboard/Map, not just the Entities list
   switchViewRaw("entity-detail");
@@ -3987,7 +4081,8 @@ function contactSectionHtml(entity) {
   const rows = (entity.contacts || []).map(contactRowHtml).join("");
   return `
     <div class="section-title">Contact</div>
-    <p class="field-hint">Only <span class="chip-preferred">preferred</span> contacts appear in PDF exports.</p>
+    <p class="field-hint">Only <span class="chip-preferred">preferred</span> contacts appear in report PDFs.
+      A target package or dossier can include them all.</p>
     <ul class="contact-list" id="entity-contact-list">${rows || '<li class="empty-state">None recorded.</li>'}</ul>
     <button class="btn-secondary btn-sm" id="add-contact-btn" style="margin-top:.6em;">+ Add contact</button>`;
 }
@@ -4511,6 +4606,7 @@ function renderEntityDetail(entity) {
           ${retentionNoticeHtml(entity)}
           <div id="entity-board-notice"></div>
         </div>
+        <div class="detail-side">
         <div class="detail-actions">
           <button class="btn-secondary btn-sm" id="entity-actions-btn"
                   title="Also on right-click, anywhere this record appears">Actions &#9662;</button>
@@ -4522,6 +4618,8 @@ function renderEntityDetail(entity) {
                   title="${entity.retention_hold ? "This record is exempt from the retention policy" : "Exempt this record from the retention policy"}"
             >${entity.retention_hold ? "Let it age" : "Keep indefinitely"}</button>
           ${canDelete() ? '<button class="btn-danger btn-sm" id="delete-entity-btn">Delete</button>' : ""}
+        </div>
+        ${entityPortraitHtml(entity)}
         </div>
         <div class="export-menu" id="export-shape-menu" role="menu" hidden>
           ${exportShapeMenuHtml(entity)}
@@ -10010,15 +10108,18 @@ async function loadBolo() {
     el.innerHTML = data.items.map((item) => `
       <div class="bolo-card urgency-${escapeHtml((item.urgency || "info").toLowerCase())}${
             item.status === "active" ? "" : " bolo-card-closed"}" data-entry="${item.id}">
+        <button type="button" class="bolo-photo" data-open-entity="${escapeHtml(item.entity_id)}"
+                title="Open the record">
+          ${portraitHtml(item, "board-portrait-bolo")}
+          ${item.urgency ? `<span class="bolo-photo-band">${escapeHtml(item.urgency)}</span>` : ""}
+        </button>
         <div class="bolo-head">
-          ${portraitHtml(item, "board-portrait-sm")}
           <div class="bolo-headings">
             <span class="type-pill type-${escapeHtml(item.entity_type)}">${
               escapeHtml(ENTITY_TYPE_LABELS[item.entity_type] || item.entity_type)}</span>
             <button type="button" class="btn-link bolo-name" data-open-entity="${escapeHtml(item.entity_id)}"
               >${nameHtml(item.name, item.alignment)}</button>
           </div>
-          ${item.urgency ? `<span class="bolo-urgency">${escapeHtml(item.urgency)}</span>` : ""}
         </div>
         ${item.reason ? `<p class="bolo-reason">${escapeHtml(item.reason)}</p>` : ""}
         <div class="bolo-meta">
@@ -10434,6 +10535,7 @@ const DEFAULT_BOARD_NAMES = { roster: "Roster", bolo: "BOLO", priorities: "Prior
   const on = (id, fn) => { const el = document.getElementById(id); if (el) el.addEventListener("click", fn); };
   on("roster-add-btn", () => openBoardEntryForm("roster", null));
   on("bolo-add-btn", () => openBoardEntryForm("bolo", null));
+  on("bolo-print-btn", () => openBoloPrintForm());
   on("priority-add-btn", () => openPriorityForm(null));
   const closedBolo = document.getElementById("bolo-show-closed");
   if (closedBolo) closedBolo.addEventListener("change", loadBolo);
@@ -11811,6 +11913,16 @@ async function renderEntityBoardNotice(entityId) {
       P${p.priority}: ${escapeHtml(p.title)}</p>`);
   }
   el.innerHTML = bits.join("");
+  // A record on the lookout board says so on its picture too, in the board's
+  // urgency colour — the picture is what the eye lands on first.
+  const portrait = document.getElementById("entity-portrait");
+  const bolo = data.entries.find((e) => e.board === "bolo");
+  if (portrait && bolo) {
+    portrait.classList.add("on-bolo", `urgency-${(bolo.urgency || "info").toLowerCase()}`);
+    const flag = portrait.querySelector(".detail-portrait-flag");
+    flag.textContent = `${data.labels.bolo}${bolo.urgency ? " · " + bolo.urgency : ""}`;
+    flag.hidden = false;
+  }
 }
 
 /* ============================================================================

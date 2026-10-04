@@ -1715,17 +1715,36 @@ a .hostile-name,.hostile-name a{color:var(--red);}
 .roster-contact{color:var(--muted); font-size:12px; overflow-wrap:anywhere;}
 .roster-card-actions{display:flex; gap:.6em; padding:.2em .8em .6em; border-top:1px solid var(--border-soft);}
 
-.bolo-grid{display:grid; gap:1em;
-  grid-template-columns:repeat(auto-fill, minmax(min(100%, 320px), 1fr));}
-.bolo-card{border:1px solid var(--border); border-left:4px solid var(--border-strong);
-  border-radius:8px; background:var(--panel); padding:.8em .9em;
-  display:flex; flex-direction:column; gap:.5em;}
+/* Faces first: the board is for recognising someone, and a 46px thumbnail
+   beside a paragraph was the wrong way round. Each card now leads with the
+   photograph, large, under a band in the urgency colour. */
+.bolo-grid{display:grid; gap:1.1em;
+  grid-template-columns:repeat(auto-fill, minmax(min(100%, 250px), 1fr));}
+.bolo-card{border:1px solid var(--border); border-top:5px solid var(--border-strong);
+  border-radius:10px; background:var(--panel); padding:0 0 .8em;
+  display:flex; flex-direction:column; gap:.5em; overflow:hidden;}
+.bolo-card > :not(.bolo-photo){margin-left:.9em; margin-right:.9em;}
+.bolo-photo{position:relative; display:block; padding:0; border:none; background:none; cursor:pointer; width:100%;}
+.board-portrait-bolo{width:100%; aspect-ratio:4/5; border-radius:0; border:none;}
+.board-portrait-bolo.board-portrait-blank{font-size:56px;}
+.bolo-photo:hover .board-portrait-bolo, .bolo-photo:focus-visible .board-portrait-bolo{filter:brightness(1.08);}
+/* Fixed colours with white text rather than theme tokens: the theme's amber
+   and teal are light on the dark theme and dark on the light one, and a
+   band has to read on a photograph in both. */
+.bolo-photo-band{position:absolute; left:0; right:0; bottom:0; padding:.35em .6em; font-size:12px; font-weight:800;
+  letter-spacing:.1em; text-transform:uppercase; text-align:center; color:#fff; background:#4f5d55;}
+.urgency-critical .bolo-photo-band{background:#b3261e;}
+.urgency-urgent .bolo-photo-band{background:#b85c00;}
+.urgency-caution .bolo-photo-band{background:#0a6b62;}
+.bolo-card.urgency-critical, .bolo-card.urgency-urgent, .bolo-card.urgency-caution,
+.bolo-card.urgency-info{border-left:1px solid var(--border);}
+.bolo-card.urgency-critical{border-top-color:#b3261e;}
+.bolo-card.urgency-urgent{border-top-color:#b85c00;}
+.bolo-card.urgency-caution{border-top-color:#0a6b62;}
+.bolo-card .bolo-name{font-size:17px;}
 /* Urgency is the whole point of the board, so it is the loudest thing on the
-   card -- the stripe, not a word somebody has to read. */
-.bolo-card.urgency-critical{border-left-color:var(--red);}
-.bolo-card.urgency-urgent{border-left-color:var(--amber);}
-.bolo-card.urgency-caution{border-left-color:var(--teal);}
-.bolo-card.urgency-info{border-left-color:var(--border-strong);}
+   card -- the band across the photo and the stripe on top, not a word
+   somebody has to read. */
 .bolo-card-closed{opacity:.62;}
 .bolo-head{display:flex; gap:.7em; align-items:flex-start;}
 .bolo-headings{display:flex; flex-direction:column; gap:.2em; min-width:0; flex:1 1 auto;}
@@ -2076,3 +2095,30 @@ a .hostile-name,.hostile-name a{color:var(--red);}
   .analyst-row-kind{grid-column:1 / -1;}
   .analyst-row-sub{justify-content:flex-start;}
 }
+
+/* ---------- The record's picture, top right of its page ---------- */
+.detail-side{display:flex; flex-direction:column; align-items:flex-end; gap:.9em; flex:0 0 auto;}
+.detail-side .detail-actions{justify-content:flex-end;}
+.detail-portrait{position:relative; display:block; width:200px; aspect-ratio:4/5; border-radius:10px;
+  overflow:hidden; border:1px solid var(--border); background:var(--panel-2);}
+.detail-portrait img{width:100%; height:100%; object-fit:cover; display:block;}
+.detail-portrait:hover, .detail-portrait:focus-visible{border-color:var(--accent-dim);}
+.detail-portrait.on-bolo{border:3px solid #b3261e;}
+.detail-portrait.on-bolo.urgency-urgent{border-color:#b85c00;}
+.detail-portrait.on-bolo.urgency-caution{border-color:#0a6b62;}
+.detail-portrait.on-bolo.urgency-info{border-color:#4f5d55;}
+.detail-portrait-flag{position:absolute; left:0; right:0; bottom:0; padding:.3em .5em; font-size:11px;
+  font-weight:700; letter-spacing:.06em; text-transform:uppercase; text-align:center; color:#fff;
+  background:#b3261e;}
+.urgency-urgent .detail-portrait-flag{background:#b85c00;}
+.urgency-caution .detail-portrait-flag{background:#0a6b62;}
+.urgency-info .detail-portrait-flag{background:#4f5d55;}
+@media (max-width: 720px){
+  .detail-side{align-items:stretch; width:100%;}
+  .detail-portrait{width:min(240px, 60vw); align-self:center;}
+}
+
+.radio-stack{border:none; padding:0; margin:0 0 1em;}
+.radio-stack legend{font-size:12px; color:var(--muted); margin-bottom:.4em; padding:0;}
+.radio-stack label{display:flex; gap:.6em; align-items:flex-start; margin:.35em 0; cursor:pointer;}
+.radio-stack input{margin-top:.25em;}

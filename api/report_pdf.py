@@ -586,9 +586,41 @@ def _image_flowable(storage_path: str, content_width: float):
         return None
 
 
-def _entity_section(entity: dict, s: dict, content_width: float) -> list:
+def portrait_flowable(storage_path: str, width: float, height: float):
+    """A photo cropped to fill exactly width x height, centred — the way a
+    portrait sits in an ID card or a lookout poster, rather than scaled to
+    fit and leaving bands either side. None if the file is unreadable."""
+    abs_path = os.path.join(UPLOAD_DIR, storage_path or "")
+    if not storage_path or not os.path.isfile(abs_path):
+        return None
+    try:
+        with PILImage.open(abs_path) as img:
+            img = ImageOps.exif_transpose(img)
+            if img.mode not in ("RGB", "L"):
+                img = img.convert("RGB")
+            # Enough pixels to print sharp at the size asked for (~200 dpi),
+            # no more — a 12 MP phone photo per card would make a BOLO sheet
+            # with twenty entries a hundred-megabyte file.
+            target = (max(1, int(width / 72 * 200)), max(1, int(height / 72 * 200)))
+            img = ImageOps.fit(img, target, method=PILImage.LANCZOS, centering=(0.5, 0.35))
+            buf = io.BytesIO()
+            img.save(buf, format="JPEG", quality=88)
+            buf.seek(0)
+        return Image(buf, width=width, height=height)
+    except Exception:
+        return None
+
+
+def _entity_section(entity: dict, s: dict, content_width: float, *,
+                    contacts_scope: str = "preferred",
+                    include_relationships: bool = True,
+                    include_images: bool = True) -> list:
     """One entity's dossier: identity, its detail fields, its relationships,
-    and any photographs attached directly to it."""
+    and any photographs attached directly to it.
+
+    The package exports print relationships and photographs in sections of
+    their own, so they switch those off here rather than print them twice,
+    and may ask for every contact rather than only the preferred ones."""
     flow = [Paragraph(
         _escape(_sanitize_for_builtin_font(f"{entity['entity_type'].capitalize()}: {entity['name']}")),
         s["h2"],
@@ -630,7 +662,8 @@ def _entity_section(entity: dict, s: dict, content_width: float) -> list:
     # and a dossier that carried every number ever recorded against someone
     # would make sharing a report a bigger decision than it should be. The
     # full list stays in the app.
-    contacts = [c for c in (entity.get("contacts") or []) if c.get("is_preferred")]
+    contacts = [c for c in (entity.get("contacts") or [])
+                if contacts_scope == "all" or c.get("is_preferred")]
     if contacts:
         flow.append(Spacer(1, 7))
         flow.append(_plain("Contact", s["h3"]))
@@ -647,7 +680,7 @@ def _entity_section(entity: dict, s: dict, content_width: float) -> list:
         if contact_table:
             flow.append(contact_table)
 
-    rels = entity.get("relationships") or []
+    rels = (entity.get("relationships") or []) if include_relationships else []
     if rels:
         flow.append(Spacer(1, 7))
         flow.append(_plain("Relationships", s["h3"]))
@@ -669,7 +702,8 @@ def _entity_section(entity: dict, s: dict, content_width: float) -> list:
         flow.append(ListFlowable(items, bulletType="bullet", bulletFontName=FONT_REGULAR,
                                  bulletFontSize=8, leftIndent=16))
 
-    images = [a for a in (entity.get("attachments") or []) if (a.get("mime_type") or "").startswith("image/")]
+    images = [a for a in (entity.get("attachments") or [])
+              if include_images and (a.get("mime_type") or "").startswith("image/")]
     for att in images:
         img = _image_flowable(att.get("storage_path"), content_width)
         if img is None:
