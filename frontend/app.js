@@ -51,6 +51,13 @@ const LEGACY_ALIGNMENT_OPTIONS = ["Family"];
 const ENVIRONMENT_OPTIONS = ["", "Permissive", "Semi-permissive", "Non-permissive",
                              "Denied", "Unknown"];
 
+// Must match TRAVEL_MODES in api/entities.py.
+const TRAVEL_MODE_OPTIONS = ["", "On foot", "Vehicle", "Bicycle", "Boat", "Aircraft", "Other"];
+
+// The two kinds that are a shape on the map. Made on the Map page — drawn or
+// imported — never from the New Entity form, which has nowhere to put a shape.
+const GEOMETRY_TYPES = ["zone", "route"];
+
 const ALIGNMENT_FIELD = {
   key: "alignment", label: "Alignment", type: "select", options: ALIGNMENT_OPTIONS,
   hint: "Your assessment. For a named group, create it as an Organization and link people to it.",
@@ -133,6 +140,14 @@ const DETAIL_FIELDS = {
     { key: "style", label: "Style", type: "select", options: VEHICLE_STYLE_OPTIONS },
     { key: "notes", label: "Notes", type: "textarea",
       hint: "Damage, markings, equipment, who drives it." },
+  ],
+  // A zone's fields are its outline, its assessment and its clock, all edited
+  // through Edit zone (which keeps the timeline) — see geometryDetailHtml.
+  zone: [],
+  route: [
+    { key: "environment", label: "How workable", type: "select", options: ENVIRONMENT_OPTIONS,
+      hint: "Sets the route's colour on the map. Blank means nobody has assessed it." },
+    { key: "travel_mode", label: "Travelled by", type: "select", options: TRAVEL_MODE_OPTIONS },
   ],
   record: [
     { key: "record_kind", label: "Kind", type: "text", placeholder: "Letter, bank statement, registration…" },
@@ -476,6 +491,21 @@ function startMergeFrom(ctx) {
 /* Open the Map on one Location. The map may not have finished loading its
    markers yet, so this waits for the pin rather than guessing a delay. */
 function focusMapOnEntity(entityId, tries = 0) {
+  // Wait for the map to finish (re)loading: loadMap fits the view to every pin
+  // when it is done, which would undo a focus made halfway through.
+  if (mapState.loading || !leafletMap) {
+    if (tries < 40) setTimeout(() => focusMapOnEntity(entityId, tries + 1), 200);
+    return;
+  }
+  // A route or a zone: fit the map to the whole shape and flash it.
+  const shape = (routeState.layersById && routeState.layersById[entityId])
+    || (zoneState.layersByEntity && zoneState.layersByEntity[entityId]);
+  if (shape && leafletMap) {
+    leafletMap.fitBounds(shape.getBounds(), { padding: [40, 40], maxZoom: 17 });
+    const el = shape.getElement && shape.getElement();
+    if (el) { el.classList.add("map-shape-flash"); setTimeout(() => el.classList.remove("map-shape-flash"), 2400); }
+    return;
+  }
   const marker = mapState.markersById && mapState.markersById[entityId];
   if (!marker) {
     if (tries < 25) setTimeout(() => focusMapOnEntity(entityId, tries + 1), 200);
@@ -606,6 +636,13 @@ function summaryFacts(entity) {
     push("Kind", d.record_kind);
     push("Dated", d.record_date);
     push("Issued by", d.issued_by);
+  } else if (entity.entity_type === "zone") {
+    push("Environment", d.environment);
+    push("Until", d.valid_until ? d.valid_until.replace("T", " ").slice(0, 16) : "open-ended");
+  } else if (entity.entity_type === "route") {
+    push("Length", formatLength(d.length_m));
+    push("Travelled by", d.travel_mode);
+    push("Workable", d.environment);
   }
   return out;
 }
@@ -849,6 +886,7 @@ wireGlobalSearch();
 wireMapSourceControls();
 wireMapAdmin();
 wireZoneControls();
+wireMapFileControls();
 
 /* ============================================================================
  * Entity picker (search-as-you-type with a custom results dropdown, used
@@ -2127,7 +2165,7 @@ document.getElementById("import-entities-btn").addEventListener("click", () => o
 const ENTITY_TYPE_LABELS = {
   person: "Person", organization: "Organization", location: "Location",
   event: "Event", source: "Source", communication: "Communication",
-  vehicle: "Vehicle", record: "Record",
+  vehicle: "Vehicle", record: "Record", zone: "Zone", route: "Route",
 };
 
 function openImportForm() {
@@ -2322,6 +2360,8 @@ const EXPORT_SHAPE_ORDER = {
   communication: ["plain", "target", "org"],
   vehicle: ["target", "plain", "org"],
   record: ["plain", "target", "org"],
+  zone: ["plain", "target", "org"],
+  route: ["plain", "target", "org"],
 };
 
 function exportShapeMenuHtml(entity) {
@@ -3713,6 +3753,20 @@ function renderDetailFields(entityType, details) {
   return rows.length ? rows.join("") : '<p class="empty-state">No additional details.</p>';
 }
 
+// A KML/KMZ/GPX attached to a record or report: read it into the map import,
+// which shows what is in it before anything is made.
+document.addEventListener("click", async (e) => {
+  const btn = e.target.closest("[data-import-att]");
+  if (!btn) return;
+  e.preventDefault();
+  try {
+    const res = await fetch(`/api/attachments/${btn.dataset.importAtt}/file`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const blob = await res.blob();
+    openMapImport(new File([blob], btn.dataset.importName || "map-file"));
+  } catch (err) { showToast("Could not read that file: " + err.message, true); }
+});
+
 document.getElementById("entity-detail-body").addEventListener("click", (e) => {
   const btn = e.target.closest("[data-open-document]");
   if (!btn) return;
@@ -3783,6 +3837,12 @@ function entityFormDetailsHtml(entityType, existingDetails) {
   if (entityType === "location") {
     html += '<p class="field-hint">Leave latitude/longitude blank to look them up from the address.</p>';
   }
+  if (entityType === "zone") {
+    html += '<p class="field-hint">The area, environment and dates are changed with Edit zone on this record, which keeps the zone\'s timeline.</p>';
+  }
+  if (entityType === "route") {
+    html += '<p class="field-hint">The description is why this route was recorded. Redraw the line from this record\'s map.</p>';
+  }
   return html;
 }
 
@@ -3801,7 +3861,7 @@ function openEntityForm(entity, prefill, opts) {
       <div class="form-row">
         <label>Type</label>
         <select id="entity-form-type" ${isEdit ? "disabled" : ""}>
-          ${Object.keys(DETAIL_FIELDS).map((t) => `<option value="${t}" ${t === type ? "selected" : ""}>${ENTITY_TYPE_LABELS[t] || t}</option>`).join("")}
+          ${Object.keys(DETAIL_FIELDS).filter((t) => isEdit || !GEOMETRY_TYPES.includes(t)).map((t) => `<option value="${t}" ${t === type ? "selected" : ""}>${ENTITY_TYPE_LABELS[t] || t}</option>`).join("")}
         </select>
       </div>
       <div class="form-row"><label>Name</label><input type="text" id="entity-form-name" required value="${escapeHtml(isEdit ? entity.name : (prefill && prefill.name) || "")}"></div>
@@ -4601,6 +4661,7 @@ function attachmentRowHtml(a, opts) {
       <span class="attachment-row-actions">
         ${portrait}
         ${previewable ? `<button type="button" class="btn-link btn-sm" data-preview-att="${a.id}">Preview</button>` : ""}
+        ${/\.(kml|kmz|gpx)$/i.test(a.filename || "") ? `<button type="button" class="btn-link btn-sm" data-import-att="${a.id}" data-import-name="${escapeHtml(a.filename)}" title="Read its routes, areas and points into the case file">Import to map</button>` : ""}
         <a class="btn-link btn-sm" href="/api/attachments/${a.id}/file">Download</a>
         <button type="button" class="btn-link btn-sm" data-delete-att="${a.id}">Delete</button>
       </span>
@@ -4786,7 +4847,8 @@ function renderEntityDetail(entity) {
 
       <div class="section-title">Details</div>
       ${entity.entity_type === "location" ? locationGeocodeStatusHtml(entity.details) : ""}
-      <div>${renderDetailFields(entity.entity_type, entity.details)}</div>
+      <div>${GEOMETRY_TYPES.includes(entity.entity_type)
+        ? geometryDetailHtml(entity) : renderDetailFields(entity.entity_type, entity.details)}</div>
       ${entity.entity_type === "location" ? '<div id="entity-zones"></div>' : ""}
 
       ${contactSectionHtml(entity)}
@@ -4816,6 +4878,7 @@ function renderEntityDetail(entity) {
 
   document.getElementById("edit-entity-btn").addEventListener("click", () => openEntityForm(entity));
   if (entity.entity_type === "location") loadZonesForEntity(entity.id);
+  if (GEOMETRY_TYPES.includes(entity.entity_type)) wireGeometryDetail(el, entity);
   wireExportMenu(entity);
   document.getElementById("toggle-active-btn").addEventListener("click", async () => {
     try {
@@ -5753,6 +5816,7 @@ function renderZones() {
   if (!leafletMap) return;
   if (!zoneState.layer) zoneState.layer = L.layerGroup().addTo(leafletMap);
   zoneState.layer.clearLayers();
+  zoneState.layersByEntity = {};
 
   zoneState.items.forEach((zone) => {
     if (!zoneState.showExpired && zoneIsExpired(zone)) return;
@@ -5766,6 +5830,7 @@ function renderZones() {
       openZonePanel(zone.id);
     });
     shape.addTo(zoneState.layer);
+    if (zone.entity_id) zoneState.layersByEntity[zone.entity_id] = shape;
   });
 }
 
@@ -5921,7 +5986,7 @@ function zoneDateTimeValue(iso) {
   return localDateTimeValue(d);
 }
 
-function openZoneForm(zone, geometry) {
+function openZoneForm(zone, geometry, onSaved) {
   const isEdit = !!zone;
   const z = zone || { name: "", environment: "Semi-permissive", notes: "",
                       valid_from: new Date().toISOString(), valid_until: "" };
@@ -5990,7 +6055,8 @@ function openZoneForm(zone, geometry) {
         : await api("/api/map/zones", { method: "POST", body });
       closeModal();
       showToast(isEdit ? "Zone updated" : "Zone created");
-      await loadZones();
+      if (onSaved) { onSaved(saved); return; }
+      if (leafletMap) await loadZones();
       if (!isEdit && saved.event_id) {
         showToast(`Tied to the event “${saved.event_name}”`);
       }
@@ -6026,6 +6092,8 @@ async function openZonePanel(zoneId) {
       <a href="#" data-open-entity="${escapeHtml(zone.event_id)}">${escapeHtml(zone.event_name || "an event")}</a>
       </p>` : ""}
     ${zone.notes ? `<p>${escapeHtml(zone.notes)}</p>` : ""}
+    ${zone.entity_id ? `<p class="field-hint"><a href="#" data-open-entity="${escapeHtml(zone.entity_id)}">Open the zone's record</a>
+      — link organisations, events and people to it there.</p>` : ""}
 
     <h3>How it has changed</h3>
     <ul class="zone-timeline">
@@ -6057,12 +6125,12 @@ async function openZonePanel(zoneId) {
   const del = document.getElementById("zone-panel-delete");
   if (del) {
     del.addEventListener("click", async () => {
-      if (!confirm(`Delete “${zone.name}”?\n\nThis removes the zone and its timeline. To end a zone, let it expire instead.`)) return;
+      if (!confirm(`Delete “${zone.name}”?\n\nThis removes the zone, its record, its links and its timeline. To end a zone, let it expire instead.`)) return;
       try {
         await api(`/api/map/zones/${zone.id}`, { method: "DELETE" });
         closeModal();
         showToast("Zone deleted");
-        loadZones();
+        if (leafletMap) loadZones();
       } catch (err) { showToast(err.message, true); }
     });
   }
@@ -6128,6 +6196,614 @@ function wireZoneControls() {
   }
 }
 
+/* ---------------------------------------------------------------------------
+ * Routes, map files, and shapes as records (v1.9)
+ *
+ *   - A Route is a record whose detail is a line: drawn here, imported from a
+ *     KML/KMZ/GPX file, or walked with the field app. It is coloured by the
+ *     same environment scale as zones and pins; blank is drawn in the route
+ *     blue, which says "not assessed" rather than "fine".
+ *   - A Zone is a record too, so both open the ordinary record page, where
+ *     they can be linked to anything.
+ *   - Files go both ways: Import reads KML/KMZ/GPX into routes, zones and
+ *     Locations after showing what is in the file; Export writes the map's
+ *     live routes and zones back out for ATAK or Google Earth.
+ * ------------------------------------------------------------------------ */
+
+const routeState = {
+  items: [],
+  layer: null,
+  layersById: {},        // record id -> polyline, for "Show on the map"
+  draw: null,            // { points: [[lat, lon]], markers, preview, redraw: entityId|null }
+};
+
+function formatLength(m) {
+  if (m === null || m === undefined || m === "") return "";
+  const n = Number(m);
+  if (n < 1000) return `${Math.round(n)} m`;
+  return n < 10000 ? `${(n / 1000).toFixed(2)} km` : `${(n / 1000).toFixed(1)} km`;
+}
+
+function routeColour(environment) {
+  return environment ? zoneColour(environment) : themeColor("--route", "#2563eb");
+}
+
+/** GeoJSON line(s) -> Leaflet [[lat, lon]] parts. */
+function lineLatLngs(geometry) {
+  if (!geometry) return [];
+  const parts = geometry.type === "LineString" ? [geometry.coordinates]
+    : geometry.type === "MultiLineString" ? geometry.coordinates : [];
+  return parts.map((part) => part.map((p) => [p[1], p[0]]));
+}
+
+function routePolyline(route, opts = {}) {
+  const colour = routeColour(route.environment);
+  return L.polyline(lineLatLngs(route.geometry), {
+    color: colour, weight: opts.weight || 4, opacity: 0.9,
+    // Planned (drawn) routes dashed, walked or imported ones solid: a plan
+    // and a track are different kinds of evidence and should not look alike.
+    dashArray: route.origin === "drawn" ? "8 6" : null,
+    className: "map-route",
+  });
+}
+
+function mapDrawActive() {
+  return zoneDrawActive() || !!routeState.draw;
+}
+
+async function loadRoutes() {
+  if (!leafletMap) return;
+  try {
+    routeState.items = (await api("/api/map/routes")).items || [];
+  } catch (err) {
+    showToast("Failed to load routes: " + err.message, true);
+    return;
+  }
+  renderRoutes();
+}
+
+function renderRoutes() {
+  if (!leafletMap) return;
+  if (!routeState.layer) routeState.layer = L.layerGroup().addTo(leafletMap);
+  routeState.layer.clearLayers();
+  routeState.layersById = {};
+  routeState.items.forEach((route) => {
+    const line = routePolyline(route);
+    const bits = [escapeHtml(route.name), formatLength(route.length_m)];
+    if (route.travel_mode) bits.push(escapeHtml(route.travel_mode));
+    if (route.environment) bits.push(escapeHtml(route.environment));
+    line.bindTooltip(bits.filter(Boolean).join(" · "), { sticky: true });
+    line.on("click", (e) => {
+      L.DomEvent.stop(e);
+      if (mapDrawActive()) return;
+      const ev = e.originalEvent;
+      openSummaryCard(route.id, ev.clientX + 8, ev.clientY + 8);
+    });
+    line.addTo(routeState.layer);
+    routeState.layersById[route.id] = line;
+  });
+}
+
+/* --- drawing a route ------------------------------------------------------ */
+
+function startRouteDraw(redrawEntityId) {
+  cancelZoneDraw();
+  cancelRouteDraw();
+  routeState.draw = { points: [], markers: [], preview: null, redraw: redrawEntityId || null };
+  leafletMap.getContainer().classList.add("zone-drawing");
+  const bar = document.getElementById("zone-draw-bar");
+  bar.hidden = false;
+  bar.innerHTML = `
+    <span>${redrawEntityId ? "Redraw the route" : "Draw a route"}: click along the way, in order. Double-click or Finish to end.</span>
+    <span class="route-draw-length" id="route-draw-length"></span>
+    <button type="button" class="btn-secondary btn-sm" id="route-undo">Undo point</button>
+    <button type="button" class="btn-primary btn-sm" id="route-finish">Finish</button>
+    <button type="button" class="btn-secondary btn-sm" id="route-cancel-draw">Cancel</button>`;
+  document.getElementById("route-finish").addEventListener("click", finishRouteDraw);
+  document.getElementById("route-cancel-draw").addEventListener("click", cancelRouteDraw);
+  document.getElementById("route-undo").addEventListener("click", () => {
+    const d = routeState.draw;
+    if (!d || !d.points.length) return;
+    d.points.pop();
+    leafletMap.removeLayer(d.markers.pop());
+    refreshRouteDrawPreview();
+  });
+}
+
+function refreshRouteDrawPreview() {
+  const d = routeState.draw;
+  if (!d) return;
+  if (d.preview) leafletMap.removeLayer(d.preview);
+  d.preview = d.points.length >= 2
+    ? L.polyline(d.points, { color: routeColour(null), weight: 3, dashArray: "8 6" }).addTo(leafletMap)
+    : null;
+  let metres = 0;
+  for (let i = 1; i < d.points.length; i++) {
+    metres += L.latLng(d.points[i - 1]).distanceTo(L.latLng(d.points[i]));
+  }
+  const el = document.getElementById("route-draw-length");
+  if (el) el.textContent = d.points.length ? `${d.points.length} points · ${formatLength(metres)}` : "";
+}
+
+function cancelRouteDraw() {
+  const d = routeState.draw;
+  if (d) {
+    if (d.preview) leafletMap.removeLayer(d.preview);
+    d.markers.forEach((m) => leafletMap.removeLayer(m));
+  }
+  routeState.draw = null;
+  if (leafletMap) leafletMap.getContainer().classList.remove("zone-drawing");
+  hideZoneDrawBar();
+}
+
+async function finishRouteDraw() {
+  const d = routeState.draw;
+  if (!d) return;
+  if (d.points.length < 2) {
+    showToast("A route needs at least two points", true);
+    return;
+  }
+  const points = d.points.slice();
+  const redraw = d.redraw;
+  cancelRouteDraw();
+  if (redraw) {
+    try {
+      await api(`/api/routes/${encodeURIComponent(redraw)}/geometry`, { method: "PUT", body: { points } });
+      showToast("Route redrawn");
+      await loadRoutes();
+    } catch (err) { showToast(err.message, true); }
+    return;
+  }
+  openRouteForm(points);
+}
+
+function wireRouteDrawing(map) {
+  map.on("click", (e) => {
+    const d = routeState.draw;
+    if (!d) return;
+    d.points.push([e.latlng.lat, e.latlng.lng]);
+    d.markers.push(L.circleMarker(e.latlng, {
+      radius: 4, color: routeColour(null), fillOpacity: 1,
+    }).addTo(map));
+    refreshRouteDrawPreview();
+  });
+  map.on("dblclick", (e) => {
+    if (!routeState.draw) return;
+    L.DomEvent.stop(e);
+    // A double-click is also two clicks; the second added a duplicate point.
+    const d = routeState.draw;
+    if (d.points.length >= 2) {
+      const [a, b] = d.points.slice(-2);
+      if (a[0] === b[0] && a[1] === b[1]) { d.points.pop(); map.removeLayer(d.markers.pop()); }
+    }
+    finishRouteDraw();
+  });
+}
+
+function routeOptionsHtml(options, selected) {
+  return options.map((v) => `<option value="${escapeHtml(v)}" ${v === (selected || "") ? "selected" : ""}>${escapeHtml(v || "—")}</option>`).join("");
+}
+
+function openRouteForm(points) {
+  openModal(`
+    <h2>New route</h2>
+    <form id="route-form">
+      <div class="form-row"><label>Name</label>
+        <input type="text" id="route-name" required maxlength="256" placeholder="e.g. Safe route to the north gate"></div>
+      <div class="form-row"><label>Why</label>
+        <textarea id="route-why" rows="3" placeholder="Why this route was recorded — what it avoids, when it is usable, who uses it"></textarea></div>
+      <div class="form-row"><label>How workable</label>
+        <select id="route-environment">${routeOptionsHtml(ENVIRONMENT_OPTIONS, "")}</select></div>
+      <div class="form-row"><label>Travelled by</label>
+        <select id="route-mode">${routeOptionsHtml(TRAVEL_MODE_OPTIONS, "")}</select></div>
+      <p class="field-hint">${points.length} points. A drawn route is shown dashed: it is a plan, not a track.</p>
+      <p class="form-error" id="route-error"></p>
+      <div class="modal-actions">
+        <button type="button" class="btn-secondary" id="route-cancel">Cancel</button>
+        <button type="submit" class="btn-primary">Create route</button>
+      </div>
+    </form>`);
+  document.getElementById("route-cancel").addEventListener("click", closeModal);
+  document.getElementById("route-form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const body = {
+      name: document.getElementById("route-name").value.trim(),
+      description: document.getElementById("route-why").value.trim() || null,
+      environment: document.getElementById("route-environment").value || null,
+      travel_mode: document.getElementById("route-mode").value || null,
+      points,
+    };
+    try {
+      const saved = await api("/api/routes", { method: "POST", body });
+      closeModal();
+      showToast(`Route created · ${formatLength(saved.length_m)}`);
+      await loadRoutes();
+    } catch (err) {
+      document.getElementById("route-error").textContent = err.message;
+    }
+  });
+}
+
+/* --- import --------------------------------------------------------------- */
+
+/** A tiny drawing of a feature, so a list of "Track 1, Track 2, Track 3"
+ * from a GPS can be told apart before importing. */
+function featureSketchSvg(feature) {
+  const g = feature.geometry || {};
+  let parts = [];
+  if (g.type === "LineString") parts = [g.coordinates];
+  else if (g.type === "MultiLineString") parts = g.coordinates;
+  else if (g.type === "Polygon") parts = [g.coordinates[0]];
+  else if (g.type === "Point") parts = [[g.coordinates]];
+  const all = parts.flat();
+  if (!all.length) return "";
+  const xs = all.map((p) => p[0] * Math.cos((p[1] * Math.PI) / 180));
+  const ys = all.map((p) => p[1]);
+  const minX = Math.min(...xs), maxX = Math.max(...xs), minY = Math.min(...ys), maxY = Math.max(...ys);
+  const span = Math.max(maxX - minX, maxY - minY) || 1;
+  const W = 56, pad = 4;
+  const pt = (p) => {
+    const x = pad + ((p[0] * Math.cos((p[1] * Math.PI) / 180) - minX) / span) * (W - 2 * pad);
+    const y = W - pad - ((p[1] - minY) / span) * (W - 2 * pad);
+    return `${x.toFixed(1)},${y.toFixed(1)}`;
+  };
+  const shapes = g.type === "Point"
+    ? `<circle cx="${W / 2}" cy="${W / 2}" r="4" fill="currentColor"/>`
+    : parts.map((part) => g.type === "Polygon"
+      ? `<polygon points="${part.map(pt).join(" ")}" fill="currentColor" fill-opacity=".2" stroke="currentColor" stroke-width="1.5"/>`
+      : `<polyline points="${part.map(pt).join(" ")}" fill="none" stroke="currentColor" stroke-width="1.8"/>`).join("");
+  return `<svg class="feature-sketch" viewBox="0 0 ${W} ${W}" width="${W}" height="${W}" aria-hidden="true">${shapes}</svg>`;
+}
+
+const IMPORT_KIND_LABEL = { route: "Route", zone: "Zone", location: "Location" };
+
+function openMapImport(prefilledFile) {
+  openModal(`
+    <h2>Import a map file</h2>
+    <p class="field-hint">KML, KMZ or GPX — from ATAK, Google Earth, CalTopo, a GPS. Lines become Routes,
+      areas become Zones, points become Locations. You choose which before anything is made.</p>
+    <form id="map-import-form">
+      <div class="form-row"><label>File</label>
+        <input type="file" id="map-import-file" accept=".kml,.kmz,.gpx" ${prefilledFile ? "" : "required"}></div>
+      <p class="form-error" id="map-import-error"></p>
+      <div class="modal-actions">
+        <button type="button" class="btn-secondary" id="map-import-cancel">Cancel</button>
+        <button type="submit" class="btn-primary">Read file</button>
+      </div>
+    </form>`);
+  document.getElementById("map-import-cancel").addEventListener("click", closeModal);
+  const read = async (file) => {
+    const fd = new FormData();
+    fd.append("file", file);
+    fd.append("mode", "preview");
+    try {
+      const preview = await apiUpload("/api/map/import", fd);
+      openMapImportPreview(file, preview);
+    } catch (err) {
+      const el = document.getElementById("map-import-error");
+      if (el) el.textContent = err.message; else showToast(err.message, true);
+    }
+  };
+  document.getElementById("map-import-form").addEventListener("submit", (e) => {
+    e.preventDefault();
+    const f = document.getElementById("map-import-file").files[0] || prefilledFile;
+    if (f) read(f);
+  });
+  if (prefilledFile) read(prefilledFile);
+}
+
+function openMapImportPreview(file, preview) {
+  const feats = preview.features || [];
+  const countLine = Object.entries(preview.counts || {})
+    .map(([k, n]) => `${n} ${IMPORT_KIND_LABEL[k] || k}${n === 1 ? "" : "s"}`).join(" · ");
+  const row = (f) => {
+    const meta = [
+      f.length_m ? formatLength(f.length_m) : "",
+      f.point_count > 1 ? `${f.point_count} points` : "",
+      f.has_times ? "timed" : "",
+    ].filter(Boolean).join(" · ");
+    const extra = f.kind === "zone"
+      ? `<select data-imp-env="${f.index}" title="Environment">${routeOptionsHtml(
+          ["Unknown", "Permissive", "Semi-permissive", "Non-permissive", "Denied"], "Unknown")}</select>`
+      : f.kind === "route"
+        ? `<select data-imp-mode="${f.index}" title="Travelled by">${routeOptionsHtml(TRAVEL_MODE_OPTIONS, "")}</select>`
+        : "";
+    return `
+      <li class="import-row${f.error ? " import-row-bad" : ""}">
+        <input type="checkbox" data-imp-pick="${f.index}" ${f.error ? "disabled" : "checked"}>
+        <span class="type-${f.kind}">${featureSketchSvg(f)}</span>
+        <div class="import-row-main">
+          <span class="type-pill type-${f.kind}">${IMPORT_KIND_LABEL[f.kind] || f.kind}</span>
+          <input type="text" data-imp-name="${f.index}" value="${escapeHtml(f.name)}" maxlength="256" ${f.error ? "disabled" : ""}>
+          <div class="card-meta">${escapeHtml(meta)}${f.error ? ` <span class="form-error">${escapeHtml(f.error)}</span>` : ""}</div>
+        </div>
+        ${extra}
+      </li>`;
+  };
+  openModal(`
+    <h2>Import ${escapeHtml(preview.filename || file.name)}</h2>
+    <p class="card-meta">${escapeHtml(countLine)}</p>
+    <ul class="import-list">${feats.map(row).join("")}</ul>
+    <p class="field-hint">The file is kept as an attachment on every record made from it.</p>
+    <p class="form-error" id="map-import-error"></p>
+    <div class="modal-actions">
+      <button type="button" class="btn-secondary" id="map-import-cancel">Cancel</button>
+      <button type="button" class="btn-primary" id="map-import-go">Import selected</button>
+    </div>`);
+  document.getElementById("modal-box").style.maxWidth = "760px";
+  document.getElementById("map-import-cancel").addEventListener("click", closeModal);
+  document.getElementById("map-import-go").addEventListener("click", async () => {
+    const box = document.getElementById("modal-box");
+    const choices = feats.filter((f) => {
+      const cb = box.querySelector(`[data-imp-pick="${f.index}"]`);
+      return cb && cb.checked;
+    }).map((f) => {
+      const c = { index: f.index, name: box.querySelector(`[data-imp-name="${f.index}"]`).value.trim() };
+      const env = box.querySelector(`[data-imp-env="${f.index}"]`);
+      const mode = box.querySelector(`[data-imp-mode="${f.index}"]`);
+      if (env) c.environment = env.value;
+      if (mode && mode.value) c.travel_mode = mode.value;
+      return c;
+    });
+    if (!choices.length) { document.getElementById("map-import-error").textContent = "Nothing is ticked."; return; }
+    const fd = new FormData();
+    fd.append("file", file);
+    fd.append("mode", "commit");
+    fd.append("choices", JSON.stringify(choices));
+    try {
+      const out = await apiUpload("/api/map/import", fd);
+      closeModal();
+      showToast(`Imported ${out.created.length} record${out.created.length === 1 ? "" : "s"}`);
+      if (document.getElementById("view-map").classList.contains("active")) {
+        await reloadMapLayers();
+        fitMapToFeatures(feats.filter((f) => choices.some((c) => c.index === f.index)));
+      }
+    } catch (err) {
+      document.getElementById("map-import-error").textContent = err.message;
+    }
+  });
+}
+
+function fitMapToFeatures(feats) {
+  if (!leafletMap) return;
+  const pts = [];
+  feats.forEach((f) => {
+    const g = f.geometry || {};
+    const coords = g.type === "Point" ? [g.coordinates]
+      : g.type === "Polygon" ? g.coordinates[0]
+      : g.type === "LineString" ? g.coordinates
+      : g.type === "MultiLineString" ? g.coordinates.flat() : [];
+    coords.forEach((p) => pts.push([p[1], p[0]]));
+  });
+  if (pts.length) leafletMap.fitBounds(pts, { padding: [30, 30], maxZoom: 16 });
+}
+
+async function reloadMapLayers() {
+  // The pins come with loadMap; zones and routes are cheap to fetch again.
+  await Promise.all([loadZones(), loadRoutes()]);
+  try {
+    const data = await api("/api/map/locations");
+    mapMarkersLayer.clearLayers();
+    mapState.markersById = {};
+    data.items.forEach((loc) => {
+      const marker = locationMarker(loc).addTo(mapMarkersLayer);
+      marker.bindPopup('<p class="empty-state">Loading…</p>');
+      marker.on("click", () => showLocationPopup(marker, loc));
+      mapState.markersById[loc.id] = marker;
+    });
+  } catch (err) { /* the layers that did load are still worth showing */ }
+}
+
+/* --- export --------------------------------------------------------------- */
+
+function downloadUrl(url) {
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = "";
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+}
+
+function wireMapFileControls() {
+  const importBtn = document.getElementById("map-import-btn");
+  if (importBtn) importBtn.addEventListener("click", () => openMapImport(null));
+  const exportSel = document.getElementById("map-export-select");
+  if (exportSel) {
+    exportSel.addEventListener("change", () => {
+      const fmt = exportSel.value;
+      exportSel.value = "";
+      if (!fmt) return;
+      const expired = document.getElementById("zone-show-expired");
+      downloadUrl(`/api/map/export?format=${fmt}&include_expired=${expired && expired.checked ? "true" : "false"}`);
+    });
+  }
+  const routeBtn = document.getElementById("route-draw-btn");
+  if (routeBtn) {
+    routeBtn.addEventListener("click", () => {
+      if (!leafletMap) { showToast("Open the map first", true); return; }
+      startRouteDraw(null);
+    });
+  }
+  const printBtn = document.getElementById("map-print-btn");
+  if (printBtn) printBtn.addEventListener("click", () => openMapPrintForm());
+}
+
+/* --- print the map -------------------------------------------------------- */
+
+/** One page of the current view, as a PDF: for a wall, a vehicle folder, or
+ * to attach to a report. Drawn on the server, so it uses downloaded tiles
+ * when there are any and works with no connection. */
+function openMapPrintForm() {
+  if (!leafletMap) { showToast("Open the map first", true); return; }
+  const remembered = (() => { try { return JSON.parse(localStorage.getItem("humint.mapPrint") || "{}"); } catch (e) { return {}; } })();
+  const checked = (k, def) => ((remembered[k] === undefined ? def : remembered[k]) ? "checked" : "");
+  openModal(`
+    <h2>Print the map</h2>
+    <form id="map-print-form">
+      <div class="form-row"><label>Title</label>
+        <input type="text" id="map-print-title" maxlength="200" required placeholder="e.g. Routes in to the north compound"></div>
+      <div class="form-row"><label>Note</label>
+        <input type="text" id="map-print-note" maxlength="300" placeholder="Printed under the title — e.g. Planning, 4 Oct. Not for release."
+               value="${escapeHtml(remembered.note || "")}"></div>
+      <div class="print-option-columns">
+      <fieldset class="radio-stack"><legend>Paper</legend>
+        <label><input type="radio" name="map-print-paper" value="letter" ${remembered.paper !== "a4" ? "checked" : ""}> Letter</label>
+        <label><input type="radio" name="map-print-paper" value="a4" ${remembered.paper === "a4" ? "checked" : ""}> A4</label>
+      </fieldset>
+      <fieldset class="radio-stack"><legend>Orientation</legend>
+        <label><input type="radio" name="map-print-orient" value="landscape" ${remembered.orientation !== "portrait" ? "checked" : ""}> Landscape</label>
+        <label><input type="radio" name="map-print-orient" value="portrait" ${remembered.orientation === "portrait" ? "checked" : ""}> Portrait</label>
+      </fieldset>
+      <fieldset class="radio-stack"><legend>Draw</legend>
+        <label><input type="checkbox" id="map-print-zones" ${checked("zones", true)}> Zones</label>
+        <label><input type="checkbox" id="map-print-routes" ${checked("routes", true)}> Routes</label>
+        <label><input type="checkbox" id="map-print-locations" ${checked("locations", true)}> Location pins</label>
+        <label><input type="checkbox" id="map-print-labels" ${checked("labels", true)}> Names</label>
+        <label><input type="checkbox" id="map-print-expired" ${checked("expired", zoneState.showExpired !== false)}> Ended zones</label>
+      </fieldset>
+      </div>
+      <p class="field-hint">Prints the area on screen now, on the basemap you have chosen. Pan and zoom first to frame it.</p>
+      <p class="form-error" id="map-print-error"></p>
+      <div class="modal-actions">
+        <button type="button" class="btn-secondary" id="map-print-cancel">Cancel</button>
+        <button type="submit" class="btn-primary">Build PDF</button>
+      </div>
+    </form>`);
+  document.getElementById("map-print-cancel").addEventListener("click", closeModal);
+  document.getElementById("map-print-form").addEventListener("submit", (e) => {
+    e.preventDefault();
+    const b = leafletMap.getBounds();
+    const val = (id) => document.getElementById(id).checked;
+    const paper = document.querySelector('input[name="map-print-paper"]:checked').value;
+    const orientation = document.querySelector('input[name="map-print-orient"]:checked').value;
+    const note = document.getElementById("map-print-note").value.trim();
+    const opts = { zones: val("map-print-zones"), routes: val("map-print-routes"),
+                   locations: val("map-print-locations"), labels: val("map-print-labels"),
+                   expired: val("map-print-expired"), paper, orientation, note };
+    try { localStorage.setItem("humint.mapPrint", JSON.stringify(opts)); } catch (err) { /* private mode */ }
+    const params = new URLSearchParams({
+      north: b.getNorth().toFixed(6), south: b.getSouth().toFixed(6),
+      east: Math.min(b.getEast(), 180).toFixed(6), west: Math.max(b.getWest(), -180).toFixed(6),
+      title: document.getElementById("map-print-title").value.trim() || "Map",
+      paper, orientation,
+      zones: opts.zones, routes: opts.routes, locations: opts.locations,
+      labels: opts.labels, include_expired: opts.expired,
+    });
+    if (note) params.set("note", note);
+    const src = currentMapSource();
+    if (src) params.set("source_id", src.id);
+    closeModal();
+    showToast("Building the map PDF…");
+    downloadUrl(`/api/exports/map.pdf?${params}`);
+  });
+}
+
+/* --- a zone or route on its own record page ------------------------------- */
+
+let entityGeoMap = null;
+
+function geometryDetailHtml(entity) {
+  const d = entity.details || {};
+  const rows = [];
+  const row = (k, v, mono) => { if (v) rows.push(`<div class="field-row"><span class="k">${escapeHtml(k)}</span><span class="${mono ? "v-mono" : ""}">${v}</span></div>`); };
+  let buttons = "";
+  if (entity.entity_type === "zone") {
+    const expired = d.valid_until && new Date(d.valid_until) <= new Date();
+    row("Environment", `<span class="zone-swatch" style="background:${zoneColour(d.environment)}"></span>${escapeHtml(d.environment || "")}`);
+    row("Shape", escapeHtml(d.shape === "circle" ? `circle, ${formatLength(d.radius_m)} radius` : d.shape || ""));
+    row("From", d.valid_from ? escapeHtml(new Date(d.valid_from).toLocaleString()) : "");
+    row("Until", d.valid_until ? `${escapeHtml(new Date(d.valid_until).toLocaleString())}${expired ? ' <span class="zone-expired-pill">expired</span>' : ""}` : "open-ended");
+    buttons = `
+      <button type="button" class="btn-secondary btn-sm" data-geo-edit-zone="${d.id}">Edit zone</button>
+      <button type="button" class="btn-secondary btn-sm" data-geo-timeline="${d.id}">Timeline &amp; what's inside</button>`;
+  } else {
+    row("Length", escapeHtml(formatLength(d.length_m)));
+    row("Points", d.point_count ? String(d.point_count) : "");
+    row("How workable", d.environment ? `<span class="zone-swatch" style="background:${zoneColour(d.environment)}"></span>${escapeHtml(d.environment)}` : "not assessed");
+    row("Travelled by", escapeHtml(d.travel_mode || ""));
+    row("Origin", escapeHtml({ drawn: "Drawn on the map (a plan)", imported: `Imported${d.source_file ? " from " + d.source_file : ""}`, field: "Walked with the field app" }[d.origin] || ""));
+    if (d.recorded_from) {
+      row("Recorded", escapeHtml(`${new Date(d.recorded_from).toLocaleString()}${d.recorded_until ? " – " + new Date(d.recorded_until).toLocaleTimeString() : ""}`));
+    }
+    buttons = `<button type="button" class="btn-secondary btn-sm" data-geo-redraw="${escapeHtml(entity.id)}">Redraw on the map</button>`;
+  }
+  const exportBase = entity.entity_type === "zone"
+    ? `/api/map/zones/${d.id}/export` : `/api/routes/${encodeURIComponent(entity.id)}/export`;
+  const formats = entity.entity_type === "zone" ? ["kml", "kmz"] : ["kml", "kmz", "gpx"];
+  return `
+    <div class="geo-detail">
+      <div class="geo-mini-map" id="entity-geo-map"></div>
+      <div class="geo-facts">
+        ${rows.join("")}
+        <div class="geo-actions">
+          <button type="button" class="btn-secondary btn-sm" data-geo-show="${escapeHtml(entity.id)}">Show on the map</button>
+          ${buttons}
+          <span class="geo-export">Download
+            ${formats.map((f) => `<a href="${exportBase}?format=${f}" download>${f.toUpperCase()}</a>`).join(" · ")}</span>
+        </div>
+      </div>
+    </div>`;
+}
+
+function renderEntityGeoMap(entity) {
+  const el = document.getElementById("entity-geo-map");
+  if (!el) return;
+  if (entityGeoMap) { entityGeoMap.remove(); entityGeoMap = null; }
+  if (typeof L === "undefined") { el.innerHTML = '<p class="empty-state">Map unavailable.</p>'; return; }
+  const d = entity.details || {};
+  entityGeoMap = L.map(el, { zoomControl: true, attributionControl: true, scrollWheelZoom: false });
+  addBasemap(entityGeoMap);
+  let shape;
+  if (entity.entity_type === "zone") {
+    shape = zoneShapeFor({ ...d, name: entity.name });
+  } else {
+    shape = routePolyline({ geometry: d.geometry, environment: d.environment, origin: d.origin }, { weight: 5 });
+    // Where it starts, so a line on its own is a direction as well as a path.
+    const first = lineLatLngs(d.geometry)[0];
+    if (first && first.length) {
+      L.circleMarker(first[0], { radius: 6, color: "#fff", weight: 2, fillColor: routeColour(d.environment), fillOpacity: 1 })
+        .bindTooltip("Start").addTo(entityGeoMap);
+    }
+  }
+  shape.addTo(entityGeoMap);
+  setTimeout(() => {
+    entityGeoMap.invalidateSize();
+    entityGeoMap.fitBounds(shape.getBounds(), { padding: [20, 20], maxZoom: 17 });
+  }, 30);
+}
+
+function wireGeometryDetail(el, entity) {
+  el.querySelectorAll("[data-geo-show]").forEach((b) => b.addEventListener("click", () => {
+    switchView("map");
+    focusMapOnEntity(entity.id);
+  }));
+  el.querySelectorAll("[data-geo-edit-zone]").forEach((b) => b.addEventListener("click", async () => {
+    try {
+      const zone = await api(`/api/map/zones/${b.dataset.geoEditZone}`);
+      openZoneForm(zone, null, () => openEntityDetail(entity.id));
+    } catch (err) { showToast(err.message, true); }
+  }));
+  el.querySelectorAll("[data-geo-timeline]").forEach((b) => b.addEventListener("click", () =>
+    openZonePanel(Number(b.dataset.geoTimeline))));
+  el.querySelectorAll("[data-geo-redraw]").forEach((b) => b.addEventListener("click", async () => {
+    switchView("map");
+    await waitForMap();
+    focusMapOnEntity(entity.id);
+    startRouteDraw(entity.id);
+    showToast("Click the new line in order; Finish replaces the old one.");
+  }));
+  renderEntityGeoMap(entity);
+}
+
+function waitForMap(tries = 0) {
+  return new Promise((resolve) => {
+    const check = (n) => (leafletMap || n > 25) ? resolve() : setTimeout(() => check(n + 1), 200);
+    check(tries);
+  });
+}
+
+
 let leafletMap = null;
 let mapMarkersLayer = null;
 
@@ -6148,13 +6824,14 @@ async function loadMap() {
     leafletMap.on("click", (e) => {
       // Drawing a zone clicks the map repeatedly; without this, every corner
       // would also open the lookup.
-      if (zoneDrawActive() || Date.now() < zoneState.suppressClickUntil) return;
+      if (mapDrawActive() || Date.now() < zoneState.suppressClickUntil) return;
       // Used to open a blank New Location form with the coordinates filled
       // in. It still can — "just the coordinates" is one of the options — but
       // asking what is actually there first is nearly always what you wanted.
       openWhatIsHere(e.latlng.lat, e.latlng.lng);
     });
     wireZoneDrawing(leafletMap);
+    wireRouteDrawing(leafletMap);
   } else {
     // The map's canvas is sized from its container at creation time; while
     // the Map view is `display:none` the container has zero size, so
@@ -6163,6 +6840,7 @@ async function loadMap() {
     setTimeout(() => leafletMap.invalidateSize(), 50);
   }
 
+  mapState.loading = true;
   try {
     const data = await api("/api/map/locations");
     mapMarkersLayer.clearLayers();
@@ -6179,8 +6857,11 @@ async function loadMap() {
       leafletMap.fitBounds(bounds, { maxZoom: 12, padding: [30, 30] });
     }
     await loadZones();
+    await loadRoutes();
   } catch (err) {
     showToast("Failed to load map locations: " + err.message, true);
+  } finally {
+    mapState.loading = false;
   }
 }
 
@@ -6348,7 +7029,7 @@ const DRAFT_STORAGE_KEY = "humint.report.draft";
 const AUTOSAVE_MS = 15000;
 
 const MENTIONABLE_TYPES = ["person", "organization", "location", "event", "source",
-                           "communication", "vehicle", "record"];
+                           "communication", "vehicle", "record", "zone", "route"];
 
 // Up to three words in the query. Entity names routinely have two ("John
 // Smith") and not rarely three ("Jean Luc Picard", "Acme Logistics Ltd"), so
@@ -12949,6 +13630,26 @@ function clipLength(ms) {
  * it would otherwise pull every one down the moment the tab opens, which on
  * the far end of a field deployment's uplink is the whole morning. The
  * browser fetches a clip when somebody presses play. */
+/** A route walked or an area marked on the phone: a sketch of the shape and
+ * what it measures, so the card says "2.2 km in 10 minutes" before anyone
+ * opens a map. */
+function fieldGeometryHtml(s) {
+  const g = s.geometry;
+  const sum = s.geometry_summary;
+  if (!g || !sum) return "";
+  const bits = sum.kind === "route"
+    ? [formatLength(sum.length_m), `${sum.points} points`,
+       sum.duration_s ? `${Math.round(sum.duration_s / 60)} min` : "",
+       sum.started_at ? `started ${new Date(sum.started_at).toLocaleString()}` : ""]
+    : [`${sum.points} corners`];
+  return `
+    <div class="field-sub-geometry">
+      <span class="type-${sum.kind === "route" ? "route" : "zone"}">${featureSketchSvg({ geometry: g })}</span>
+      <span><strong>${sum.kind === "route" ? "Route recorded" : "Area marked"}</strong>
+        <span class="card-meta">${escapeHtml(bits.filter(Boolean).join(" · "))}</span></span>
+    </div>`;
+}
+
 function fieldMediaHtml(s) {
   if (!s.files || !s.files.length) return "";
   const src = (f) => `/api/field/submissions/${s.id}/files/${f.id}`;
@@ -13009,6 +13710,7 @@ function fieldSubmissionHtml(s) {
              <button type="button" class="btn-link btn-sm" data-sub-map="${s.id}"
                  data-lat="${s.lat}" data-lng="${s.lng}">Look it up on the map</button>` : ""}
         </div>` : ""}
+      ${fieldGeometryHtml(s)}
       ${fieldMediaHtml(s)}
       ${s.status === "accepted" && s.report_id
         ? `<div class="field-sub-actions">

@@ -112,7 +112,7 @@ CREATE TABLE IF NOT EXISTS entities (
     id TEXT PRIMARY KEY,
     entity_type TEXT NOT NULL CHECK (entity_type IN
         ('person', 'organization', 'location', 'event', 'source', 'communication',
-         'vehicle', 'record')),
+         'vehicle', 'record', 'zone', 'route')),
     name TEXT NOT NULL,
     description TEXT,
     is_active BOOLEAN NOT NULL DEFAULT TRUE,  -- archive instead of hard-delete — relationships/reports/attachments may still reference this entity and that history should stay intact. Permanent deletion exists too, for noise that should never have been recorded, but it is an admin-only deliberate act: see api/destroy.py
@@ -202,7 +202,7 @@ CREATE INDEX IF NOT EXISTS idx_entities_retention_due
 CREATE TABLE IF NOT EXISTS retention_policy (
     entity_type TEXT PRIMARY KEY CHECK (entity_type IN
         ('person', 'organization', 'location', 'event', 'source', 'communication',
-         'vehicle', 'record')),
+         'vehicle', 'record', 'zone', 'route')),
     -- Days of no activity before the record is flagged. NULL means this type
     -- never ages out, and NULL is the default for every type: switching the
     -- feature on must not archive anything until somebody has said what the
@@ -1067,6 +1067,11 @@ CREATE TABLE IF NOT EXISTS field_submissions (
     -- would turn "somewhere in this car park" into a precise-looking point.
     location_accuracy_m DOUBLE PRECISION,
     location_note TEXT,
+    -- A route walked with the recorder, or the corners of an area dropped one
+    -- by one (v1.9): a GeoJSON LineString / Polygon, [lon, lat]. NULL for every
+    -- other kind of report. Point times for a route ride along as
+    -- {"type": "LineString", "coordinates": [...], "times": [...]}.
+    geometry JSONB,
 
     status TEXT NOT NULL DEFAULT 'new'
         CHECK (status IN ('new', 'accepted', 'rejected')),
@@ -1523,6 +1528,16 @@ CREATE TABLE IF NOT EXISTS map_zones (
     created_by INTEGER REFERENCES users(id),
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    -- The Zone record this area belongs to (v1.9). A zone is an entity like
+    -- any other so it can be linked -- the organisations holding it, the
+    -- events inside it, the reports about it -- and found by search, drawn on
+    -- the network and exported in a package. This table stays its detail
+    -- table: the geometry, the assessment and the timeline below. The name
+    -- and notes are kept in step with the entity's name and description.
+    --
+    -- Nullable only so a backup from before v1.9 can be restored; the API
+    -- gives any zone without one a record (zones.adopt_unlinked_zones).
+    entity_id TEXT UNIQUE REFERENCES entities(id) ON DELETE CASCADE,
     CHECK (max_lat >= min_lat AND max_lon >= min_lon),
     CHECK ((shape = 'circle') = (radius_m IS NOT NULL))
 );
@@ -1552,3 +1567,54 @@ CREATE TABLE IF NOT EXISTS map_zone_changes (
 );
 
 CREATE INDEX IF NOT EXISTS idx_map_zone_changes_zone ON map_zone_changes (zone_id, changed_at DESC, id DESC);
+
+-- ---------------------------------------------------------------------------
+-- Routes (v1.9)
+--
+-- A way through, recorded for a reason: the safe route across a contested
+-- city, the track in to a site in the woods, the path a vehicle was followed
+-- along. Drawn on the map, imported from a KML/KMZ/GPX file, or walked with
+-- the field app's route recorder.
+--
+-- The detail table of the Route entity type. Like a zone, the geometry is
+-- GeoJSON in JSONB with denormalised bounds beside it -- the map and the
+-- printed map ask "what is in this rectangle", and nothing here needs more
+-- geometry than that and a length.
+-- ---------------------------------------------------------------------------
+
+CREATE TABLE IF NOT EXISTS route_details (
+    entity_id TEXT PRIMARY KEY REFERENCES entities(id) ON DELETE CASCADE,
+    -- GeoJSON LineString or MultiLineString, [lon, lat] or [lon, lat, ele].
+    -- Multi because a recorded track has gaps (a tunnel, a lost fix) and a
+    -- KML route can be several pieces; joining them with a straight line
+    -- would draw a path nobody took.
+    geometry JSONB NOT NULL,
+    min_lat DOUBLE PRECISION NOT NULL,
+    min_lon DOUBLE PRECISION NOT NULL,
+    max_lat DOUBLE PRECISION NOT NULL,
+    max_lon DOUBLE PRECISION NOT NULL,
+    -- Metres along the line, computed by the API from the geometry.
+    length_m DOUBLE PRECISION,
+    point_count INTEGER,
+    -- The same scale as zones and Locations, optional: a route's colour on the
+    -- map is how workable the way is. Blank is "not assessed", not "fine".
+    environment TEXT,
+    -- On foot, by vehicle... Constrained at the API layer (TRAVEL_MODES).
+    travel_mode TEXT,
+    -- How it got here. 'field' routes were walked with the app; their times
+    -- are real. A 'drawn' one is somebody's plan.
+    origin TEXT NOT NULL DEFAULT 'drawn' CHECK (origin IN ('drawn', 'imported', 'field')),
+    -- The file it came from, for an imported route.
+    source_file TEXT,
+    recorded_from TIMESTAMPTZ,
+    recorded_until TIMESTAMPTZ,
+    -- Per-point times for a recorded track, epoch milliseconds, in the same
+    -- order as the flattened coordinates. NULL for drawn routes and for files
+    -- without timestamps. Kept so an export carries the timing back out
+    -- (GPX <time>, KML gx:Track), which is often what makes a track evidence.
+    point_times JSONB,
+    CHECK (max_lat >= min_lat AND max_lon >= min_lon)
+);
+
+CREATE INDEX IF NOT EXISTS idx_route_details_bounds
+    ON route_details (min_lat, max_lat, min_lon, max_lon);

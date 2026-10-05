@@ -74,6 +74,7 @@ from psycopg2.extras import execute_values
 from starlette.background import BackgroundTask
 
 import audit
+import zones as zones_module
 import auth
 from db import db_cursor
 
@@ -744,6 +745,10 @@ def restore_backup(
                     restored_counts[table] = len(rows)
 
                 _reset_sequences(cur, [(t, c) for t, c in serials if t in db_tables])
+                # A backup from before v1.9 has zones with no Zone record;
+                # give them one now, inside the same transaction, so a restored
+                # instance never has a zone that search and links cannot see.
+                zones_module.adopt_unlinked_zones(cur)
         except psycopg2.Error as exc:
             # The transaction has already rolled back by the time this runs
             # (db_cursor closes without committing when the body raises), so

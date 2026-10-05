@@ -1,4 +1,4 @@
-"""The seven shapes a field report can take, and what the console does with one.
+"""The shapes a field report can take, and what the console does with one.
 
 `field_templates.json` beside this file is the contract; this module is the
 console's half of it. The companion app ships a byte-identical copy of that
@@ -171,7 +171,20 @@ def entity_draft(template_key, fields: dict, *, lat=None, lng=None, observed_at=
         # but a report can arrive from an app that did not enforce that, and a
         # nameless entity is refused by the entities API.
         return None
-    return {"entity_type": mapping["type"], "name": name[:256], "details": details}
+    draft = {"entity_type": mapping["type"], "name": name[:256], "details": details}
+    # A route's "why" and an area's "what it is" are the record's description,
+    # not a detail field: it is the first thing anyone opening it reads.
+    if mapping.get("description"):
+        value = fields.get(mapping["description"])
+        if isinstance(value, str) and value.strip():
+            draft["description"] = value.strip()[:8000]
+    return draft
+
+
+def geometry_kind(template_key):
+    """'track', 'perimeter' or None: whether this template carries a shape."""
+    spec = TEMPLATES.get(template_key)
+    return spec.get("geometry") if spec else None
 
 
 def _fill(pattern: str, fields: dict) -> str:

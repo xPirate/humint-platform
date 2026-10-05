@@ -33,6 +33,7 @@ import os
 import re
 from datetime import datetime, timezone
 
+from geometry import format_length
 from PIL import Image as PILImage
 from PIL import ImageOps
 from reportlab.lib import colors
@@ -134,7 +135,11 @@ SKIP_DETAIL_FIELDS = {"geocode_status", "geocode_error", "geocoded_at",
                       # A Record's text is printed below its table: a table
                       # cell cannot break across pages, and a letter can be
                       # several pages long.
-                      "body", "source_attachment_id"}
+                      "body", "source_attachment_id",
+                      # A zone's or route's shape is printed as a map, not as
+                      # a page of coordinates; the rest are internal.
+                      "geometry", "min_lat", "min_lon", "max_lat", "max_lon",
+                      "id", "event_id", "point_count", "radius_m"}
 
 # Where the column name is not what an analyst would call the field. Only the
 # ones that genuinely read wrong — "Expires at" sounds like a subscription,
@@ -150,6 +155,13 @@ DETAIL_FIELD_LABELS = {
     "license_plate": "Licence plate",
     "plate_region": "Plate issued by",
     "color": "Colour",
+    "length_m": "Length",
+    "travel_mode": "Travelled by",
+    "valid_from": "From",
+    "valid_until": "Until",
+    "recorded_from": "Recorded from",
+    "recorded_until": "Recorded until",
+    "source_file": "Imported from",
 }
 
 
@@ -641,6 +653,11 @@ def _entity_section(entity: dict, s: dict, content_width: float, *,
         label = DETAIL_FIELD_LABELS.get(key, key.replace("_", " ").capitalize())
         if key == "reliability_rating" and formatted in RELIABILITY_LABELS:
             formatted = f"{formatted} — {RELIABILITY_LABELS[formatted]}"
+        if key == "length_m":
+            formatted = format_length(value)
+        if key == "origin":
+            formatted = {"drawn": "Drawn on the map (a plan)", "imported": "Imported from a file",
+                         "field": "Walked with the field app"}.get(value, formatted)
         if key == "expires_at" and entity.get("is_expired"):
             # A printed dossier has no badge to show, and a bare date leaves
             # the reader to work out today's date against it.

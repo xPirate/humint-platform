@@ -173,6 +173,8 @@ def action_context(entity_id: str, user: dict = Depends(auth.require_user)):
             cur.execute("SELECT lat, lng FROM location_details WHERE entity_id = %s", (entity_id,))
             row = cur.fetchone()
             has_coords = bool(row and row[0] is not None and row[1] is not None)
+        elif subject["entity_type"] in ("zone", "route"):
+            has_coords = True          # a shape is nothing but coordinates
     return {
         "id": subject["id"], "entity_type": subject["entity_type"], "name": subject["name"],
         "is_active": subject["is_active"],

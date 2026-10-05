@@ -57,7 +57,7 @@ import audit
 logger = logging.getLogger(__name__)
 
 ENTITY_TYPES = ("person", "organization", "location", "event", "source",
-                "communication", "vehicle", "record")
+                "communication", "vehicle", "record", "zone", "route")
 
 # The tables that carry an alignment column, for the Hostile exemption.
 # Locations have an environment instead and events have neither, so neither

@@ -46,7 +46,11 @@ from pydantic import BaseModel, Field
 
 import audit
 import auth
+import entities as entities_module
 import extraction as extraction_module
+import geometry as geo
+import routes as routes_module
+import zones as zones_module
 import field_templates as templates
 import reports as reports_module
 from db import db_cursor
@@ -208,6 +212,61 @@ class Submission(BaseModel):
     template: str | None = Field(default=None, max_length=64)
     template_version: int | None = None
     fields: dict | None = None
+    # A route walked with the recorder, or the corners of an area (v1.9).
+    # GeoJSON, [lon, lat]: {"type": "LineString", "coordinates": [...],
+    # "times": [epoch ms, ...]} or {"type": "Polygon", "coordinates": [[...]]}.
+    # Checked and trimmed by _clean_geometry, never a reason to refuse.
+    geometry: dict | None = None
+
+
+def _clean_geometry(raw) -> dict | None:
+    """A shape from the app, kept if it is usable and dropped if not.
+
+    Dropped rather than refused, like everything else in the intake: a report
+    whose track came through garbled is still a report, and the analyst can
+    still read what the sender wrote about the route.
+    """
+    if not isinstance(raw, dict):
+        return None
+    kind = raw.get("type")
+    try:
+        if kind == "LineString":
+            coords = [geo.clean_position(p) for p in (raw.get("coordinates") or [])]
+            if len(coords) < 2:
+                return None
+            coords = coords[:geo.MAX_ROUTE_POINTS]
+            out = {"type": "LineString", "coordinates": coords}
+            times = raw.get("times")
+            if isinstance(times, list) and len(times) == len(coords) and all(
+                    isinstance(t, (int, float)) for t in times):
+                out["times"] = [int(t) for t in times]
+            return out
+        if kind == "Polygon":
+            ring = [geo.clean_position(p) for p in ((raw.get("coordinates") or [[]])[0] or [])]
+            ring = ring[:zones_module.MAX_RING_POINTS + 1]
+            if len(ring) < 3:
+                return None
+            if ring[0][:2] != ring[-1][:2]:
+                ring.append(ring[0])
+            return {"type": "Polygon", "coordinates": [ring]}
+    except (ValueError, TypeError, IndexError):
+        return None
+    return None
+
+
+def geometry_summary(g: dict | None) -> dict | None:
+    """Length, points and duration, for the queue card and the report body."""
+    if not g:
+        return None
+    if g.get("type") == "LineString":
+        times = g.get("times") or []
+        return {"kind": "route", "points": len(g["coordinates"]),
+                "length_m": round(geo.line_length_m(g), 1),
+                "duration_s": int((times[-1] - times[0]) / 1000) if len(times) >= 2 else None,
+                "started_at": times[0] if times else None}
+    if g.get("type") == "Polygon":
+        return {"kind": "area", "points": len(g["coordinates"][0]) - 1}
+    return None
 
 
 @intake.post("/submissions", status_code=201)
@@ -229,6 +288,7 @@ def create_submission(payload: Submission, device: dict = Depends(require_device
     # could have.
     fields = templates.clean_fields(payload.fields)
     template = (payload.template or "").strip()[:64] or None
+    shape = _clean_geometry(payload.geometry)
 
     with db_cursor(commit=True) as cur:
         if payload.client_ref:
@@ -244,12 +304,13 @@ def create_submission(payload: Submission, device: dict = Depends(require_device
         cur.execute(
             "INSERT INTO field_submissions (device_id, device_label, user_id, title, body, "
             "        criticality, observed_at, lat, lng, location_accuracy_m, location_note, "
-            "        client_ref, template, template_version, fields) "
-            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING id",
+            "        client_ref, template, template_version, fields, geometry) "
+            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING id",
             (device["id"], device["label"], device["user_id"], payload.title.strip(),
              body or None, payload.criticality, payload.observed_at, payload.lat, payload.lng,
              payload.location_accuracy_m, payload.location_note, payload.client_ref,
-             template, payload.template_version, json.dumps(fields)))
+             template, payload.template_version, json.dumps(fields),
+             json.dumps(shape) if shape else None))
         submission_id = cur.fetchone()[0]
         cur.execute("UPDATE field_devices SET submission_count = submission_count + 1 "
                     " WHERE id = %s", (device["id"],))
@@ -259,6 +320,7 @@ def create_submission(payload: Submission, device: dict = Depends(require_device
                  object_id=submission_id, object_label=payload.title.strip(),
                  detail={"device": device["label"], "criticality": payload.criticality,
                          "has_position": payload.lat is not None, "template": template,
+                         "geometry": (shape or {}).get("type"),
                          "template_version": payload.template_version})
     return {"id": submission_id, "duplicate": False, "status": "new"}
 
@@ -610,7 +672,7 @@ def list_submissions(status: str = Query(default="new"),
             "       s.report_id, s.received_at, s.handled_at, s.handled_note, "
             "       u.username, h.username, "
             "       (SELECT count(*) FROM field_submission_files f WHERE f.submission_id = s.id), "
-            "       s.template, s.template_version, s.fields "
+            "       s.template, s.template_version, s.fields, s.geometry "
             "  FROM field_submissions s "
             "  LEFT JOIN users u ON u.id = s.user_id "
             "  LEFT JOIN users h ON h.id = s.handled_by "
@@ -642,9 +704,12 @@ def list_submissions(status: str = Query(default="new"),
                 # queue card does.
                 "layout": templates.render(r[18], r[20] or {}),
                 "app_ahead": bool(r[19] and r[19] > templates.VERSION),
-                "suggests": (templates.entity_draft(
-                    r[18], r[20] or {}, lat=r[6], lng=r[7], observed_at=r[5])
-                    if r[10] == "new" else None),
+                "suggests": (_suggestion(r[18], r[20] or {}, r[6], r[7], r[5], r[21])
+                             if r[10] == "new" else None),
+                # The shape, thinned for the card's sketch; the stored one is
+                # untouched until it becomes a record.
+                "geometry": _display_geometry(r[21]),
+                "geometry_summary": geometry_summary(r[21]),
             })
         if items:
             cur.execute(
@@ -660,6 +725,28 @@ def list_submissions(status: str = Query(default="new"),
                 i["files"] = by_sub.get(i["id"], [])
     return {"items": items, "total": total,
             "unhandled": total if status == "new" else None}
+
+
+def _iso_ms(ms):
+    return datetime.fromtimestamp(ms / 1000, tz=timezone.utc) if ms is not None else None
+
+
+def _suggestion(template, fields, lat, lng, observed_at, geometry):
+    """The record accepting would start, or None. A Route or a Zone needs its
+    shape: a route report whose track never arrived offers nothing rather
+    than a record with no line."""
+    draft = templates.entity_draft(template, fields, lat=lat, lng=lng, observed_at=observed_at)
+    if draft and draft["entity_type"] in entities_module.GEOMETRY_TYPES and not geometry:
+        return None
+    return draft
+
+
+def _display_geometry(g):
+    if not g:
+        return None
+    if g.get("type") == "LineString":
+        return geo.simplified_line({"type": "LineString", "coordinates": g["coordinates"]}, 0.00003)
+    return g
 
 
 def _media_kind(mime: str | None, filename: str | None) -> str:
@@ -772,7 +859,8 @@ def _copy_media_to_entity(cur, entity_id: str, files, device_label, user: dict) 
     return [i for i, _ in made]
 
 
-def _entity_from_draft(cur, draft: dict, device_label, user: dict) -> dict:
+def _entity_from_draft(cur, draft: dict, device_label, user: dict, *, shape=None,
+                       observed_at=None) -> dict:
     """Create the record a field report describes, inside the accept's own
     transaction.
 
@@ -785,9 +873,40 @@ def _entity_from_draft(cur, draft: dict, device_label, user: dict) -> dict:
     all — over a dropdown. Lenient drops that one field and keeps the record.
     """
     entity_type = draft["entity_type"]
-    description = ("Started from a field report"
-                   + (f" sent by {device_label}" if device_label else "")
-                   + ". Check it before relying on it.")
+    provenance = ("Started from a field report"
+                  + (f" sent by {device_label}" if device_label else "")
+                  + ". Check it before relying on it.")
+    description = (draft["description"] + "\n\n" + provenance
+                   if draft.get("description") else provenance)
+    if entity_type == "route":
+        times = shape.get("times")
+        env = draft["details"].get("environment")
+        mode = draft["details"].get("travel_mode")
+        entity_id = routes_module.insert_route(
+            cur, user, name=draft["name"], description=description,
+            geometry={"type": "LineString", "coordinates": shape["coordinates"]},
+            origin="field",
+            # The app's lists and the console's are the same words, but an app a
+            # version ahead may send one this console does not know; the record
+            # is still worth having without it.
+            environment=env if env in entities_module.ENVIRONMENT_VALUES else None,
+            travel_mode=mode if mode in entities_module.TRAVEL_MODES else None,
+            point_times=times,
+            recorded_from=_iso_ms(times[0]) if times else observed_at,
+            recorded_until=_iso_ms(times[-1]) if times else None)
+        return {"id": entity_id, "entity_type": "route", "name": draft["name"]}
+    if entity_type == "zone":
+        ring = [[p[1], p[0]] for p in shape["coordinates"][0][:-1]]
+        geojson, _radius, bounds = zones_module._geometry_from(
+            zones_module.ZoneGeometry(shape="polygon", points=ring))
+        env = draft["details"].get("environment")
+        zone = zones_module.insert_zone(
+            cur, user, name=draft["name"],
+            environment=env if env in entities_module.ENVIRONMENT_VALUES else "Unknown",
+            shape="polygon", geojson=geojson, radius_m=None, bounds=bounds,
+            valid_from=observed_at, notes=description,
+            change_note=f"Walked by {device_label or 'a field device'}")
+        return {"id": zone["entity_id"], "entity_type": "zone", "name": draft["name"]}
     entity_id = extraction_module._create_entity(
         cur, user, entity_type, draft["name"],
         description=description, raw_details=draft["details"])
@@ -807,13 +926,13 @@ def accept_submission(submission_id: int, payload: HandleRequest,
     with db_cursor(commit=True) as cur:
         cur.execute(
             "SELECT title, body, criticality, observed_at, lat, lng, location_accuracy_m, "
-            "       location_note, status, device_label, user_id, template, fields "
+            "       location_note, status, device_label, user_id, template, fields, geometry "
             "  FROM field_submissions WHERE id = %s", (submission_id,))
         row = cur.fetchone()
         if row is None:
             raise HTTPException(status_code=404, detail="No such submission.")
         (title, body, criticality, observed_at, lat, lng, accuracy,
-         loc_note, status, device_label, from_user, template, fields) = row
+         loc_note, status, device_label, from_user, template, fields, shape) = row
         fields = fields or {}
         if status != "new":
             raise HTTPException(status_code=409, detail="That submission is already handled.")
@@ -830,6 +949,14 @@ def accept_submission(submission_id: int, payload: HandleRequest,
             head.append(pos + ".*")
         if loc_note:
             head.append(f"*Place as described: {loc_note}.*")
+        summary = geometry_summary(shape)
+        if summary and summary["kind"] == "route":
+            bits = [geo.format_length(summary["length_m"]), f"{summary['points']} points"]
+            if summary.get("duration_s"):
+                bits.append(f"{round(summary['duration_s'] / 60)} min")
+            head.append("*Route recorded: " + ", ".join(bits) + ".*")
+        elif summary:
+            head.append(f"*Area marked: {summary['points']} corners.*")
 
         # The template's own fields, laid out, above whatever free text came
         # with it. A field nobody recognises is rendered under its raw key
@@ -876,10 +1003,10 @@ def accept_submission(submission_id: int, payload: HandleRequest,
         # to the draft so the analyst lands on both at once. Still theirs to
         # correct or delete — but nobody retypes a plate.
         created_entity = None
-        draft = templates.entity_draft(template, fields, lat=lat, lng=lng,
-                                       observed_at=observed_at)
+        draft = _suggestion(template, fields, lat, lng, observed_at, shape)
         if payload.create_entity and draft:
-            created_entity = _entity_from_draft(cur, draft, device_label, user)
+            created_entity = _entity_from_draft(cur, draft, device_label, user, shape=shape,
+                                                observed_at=observed_at)
             cur.execute("INSERT INTO report_entities (report_id, entity_id) VALUES (%s, %s) "
                         " ON CONFLICT DO NOTHING", (report_id, created_entity["id"]))
             # The photos are of the thing the entity is. Without this they

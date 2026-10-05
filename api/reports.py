@@ -54,7 +54,14 @@ CRITICALITY_LEVELS = ("Flash", "Immediate", "Priority", "Routine")
 SAFE_EXTENSIONS = {
     ".pdf", ".doc", ".docx", ".txt", ".rtf",
     ".jpg", ".jpeg", ".png", ".gif", ".webp", ".tiff", ".bmp",
+    # Map files (v1.9): kept so a route someone was sent can sit on a record
+    # and be opened on the map from there.
+    ".kml", ".kmz", ".gpx",
 }
+
+# Files the text pipeline has nothing to read in. Stored as 'skipped' rather
+# than queued, so they are not reported as failed extractions.
+MAP_FILE_EXTENSIONS = {".kml", ".kmz", ".gpx"}
 
 
 class ReportCreate(BaseModel):
@@ -484,14 +491,16 @@ async def upload_attachment(
                 """
                 INSERT INTO attachments
                     (report_id, entity_id, filename, title, source_note,
-                     storage_path, mime_type, file_size_bytes, uploaded_by)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                     storage_path, mime_type, file_size_bytes, uploaded_by,
+                     extraction_status)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 RETURNING id, uploaded_at
                 """,
                 (
                     report_id, entity_id, _display_filename(file.filename or "upload"),
                     (title or "").strip() or None, (source_note or "").strip() or None,
                     storage_path, file.content_type, len(content), user["id"],
+                    "skipped" if ext in MAP_FILE_EXTENSIONS else "pending",
                 ),
             )
             attachment_id, uploaded_at = cur.fetchone()

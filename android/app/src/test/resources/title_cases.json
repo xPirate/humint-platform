@@ -139,6 +139,22 @@
       "expected": "Gate open at the north compound"
     },
     {
+      "template": "route",
+      "fields": {
+        "route_name": "Safe way to the north gate",
+        "travel_mode": "On foot"
+      },
+      "expected": "Safe way to the north gate"
+    },
+    {
+      "template": "area",
+      "fields": {
+        "area_name": "Depot yard",
+        "assessment": "Denied"
+      },
+      "expected": "Depot yard"
+    },
+    {
       "template": "note",
       "fields": {
         "body": "no summary given"

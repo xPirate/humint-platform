@@ -1,6 +1,6 @@
 {
   "_comment": [
-    "The seven shapes a field report can take. This file is the contract",
+    "The shapes a field report can take. This file is the contract",
     "between the console and the companion app, and it is the only place",
     "either of them learns what a template's fields are called.",
     "",
@@ -33,7 +33,7 @@
     "Short beats precise."
   ],
 
-  "version": 1,
+  "version": 2,
 
   "criticality": ["Routine", "Priority", "Immediate", "Flash"],
 
@@ -226,6 +226,61 @@
          "hint": "what was actually here"},
         {"key": "access", "label": "Getting in and out", "type": "textarea",
          "hint": "gates, cameras, who is watching"}
+      ]
+    },
+
+    {
+      "key": "route",
+      "label": "Route",
+      "blurb": "Record the way you go. Start, put the phone away, stop when you arrive.",
+      "title": "{route_name}",
+      "geometry": "track",
+      "capture": ["photo", "audio"],
+      "entity": {
+        "type": "route",
+        "name": "{route_name}",
+        "description": "purpose",
+        "details": {
+          "travel_mode": "travel_mode",
+          "environment": "assessment"
+        }
+      },
+      "fields": [
+        {"key": "route_name", "label": "Call it", "type": "text", "required": true,
+         "hint": "safe way to the north gate", "autofocus": true},
+        {"key": "purpose", "label": "Why record it", "type": "textarea",
+         "hint": "what it avoids, when it works, who uses it"},
+        {"key": "travel_mode", "label": "Going by", "type": "select",
+         "options": ["On foot", "Vehicle", "Bicycle", "Boat", "Other"]},
+        {"key": "assessment", "label": "How workable", "type": "select",
+         "options": ["Permissive", "Semi-permissive", "Non-permissive", "Denied", "Unknown"]},
+        {"key": "notes", "label": "Along the way", "type": "textarea",
+         "hint": "checkpoints, crossings, where it gets tight"}
+      ]
+    },
+
+    {
+      "key": "area",
+      "label": "Area",
+      "blurb": "Walk the edge of something and drop a point at each corner.",
+      "title": "{area_name}",
+      "geometry": "perimeter",
+      "capture": ["photo", "audio"],
+      "entity": {
+        "type": "zone",
+        "name": "{area_name}",
+        "description": "description",
+        "details": {
+          "environment": "assessment"
+        }
+      },
+      "fields": [
+        {"key": "area_name", "label": "Call it", "type": "text", "required": true,
+         "hint": "the protest on the square, the depot yard", "autofocus": true},
+        {"key": "assessment", "label": "How workable", "type": "select", "required": true,
+         "options": ["Permissive", "Semi-permissive", "Non-permissive", "Denied", "Unknown"]},
+        {"key": "description", "label": "What it is", "type": "textarea",
+         "hint": "why the edge is where it is, who holds it"}
       ]
     },
 

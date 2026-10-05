@@ -81,7 +81,7 @@
    ------------------------------------------------------------------- */
 :root, :root[data-palette="terminal"]{
   --zone-permissive:#2ee66b; --zone-semi:#ffd21e; --zone-non:#ff4d3d;
-  --zone-denied:#c1121f; --zone-unknown:#8b98a5;
+  --zone-denied:#c1121f; --zone-unknown:#8b98a5; --route:#4f8dff;
 
   --bg:#030805; --panel:#081a10; --panel-2:#061309; --border:#173a24; --border-soft:#173a2499;
   --text:#d6ffe2; --text-bright:#baffcf; --muted:#5f9973; --muted-2:#589270;
@@ -104,7 +104,7 @@
 }
 :root[data-palette="terminal"][data-theme="light"]{
   --zone-permissive:#0f7a35; --zone-semi:#9a6b00; --zone-non:#c62410;
-  --zone-denied:#7d0a15; --zone-unknown:#5b6672;
+  --zone-denied:#7d0a15; --zone-unknown:#5b6672; --route:#1d4ed8;
 
   --bg:#f2f5f2; --panel:#ffffff; --panel-2:#e9ede9; --border:#b6c2b9; --border-soft:#b6c2b999;
   --text:#111a14; --text-bright:#000000; --muted:#44564b; --muted-2:#5d6f64;
@@ -121,7 +121,7 @@
 /* ---------- slate ---------- */
 :root[data-palette="slate"]{
   --zone-permissive:#2ee66b; --zone-semi:#ffd21e; --zone-non:#ff4d3d;
-  --zone-denied:#c1121f; --zone-unknown:#8b98a5;
+  --zone-denied:#c1121f; --zone-unknown:#8b98a5; --route:#4f8dff;
 
   --bg:#0f1419; --panel:#161c23; --panel-2:#10151b; --border:#2a3441; --border-soft:#2a344199;
   --text:#dfe5ec; --text-bright:#ffffff; --muted:#96a2b1; --muted-2:#828d99;
@@ -140,7 +140,7 @@
 }
 :root[data-palette="slate"][data-theme="light"]{
   --zone-permissive:#0f7a35; --zone-semi:#9a6b00; --zone-non:#c62410;
-  --zone-denied:#7d0a15; --zone-unknown:#5b6672;
+  --zone-denied:#7d0a15; --zone-unknown:#5b6672; --route:#1d4ed8;
 
   --bg:#f6f8fa; --panel:#ffffff; --panel-2:#eef1f5; --border:#d0d7de; --border-soft:#d0d7de99;
   --text:#1c2128; --text-bright:#000000; --muted:#57606a; --muted-2:#6e7781;
@@ -157,7 +157,7 @@
 /* ---------- graphite ---------- */
 :root[data-palette="graphite"]{
   --zone-permissive:#2ee66b; --zone-semi:#ffd21e; --zone-non:#ff4d3d;
-  --zone-denied:#c1121f; --zone-unknown:#8b98a5;
+  --zone-denied:#c1121f; --zone-unknown:#8b98a5; --route:#4f8dff;
 
   --bg:#16181a; --panel:#1e2124; --panel-2:#191c1f; --border:#34383d; --border-soft:#34383d99;
   --text:#e4e6e8; --text-bright:#ffffff; --muted:#9aa0a6; --muted-2:#858b91;
@@ -176,7 +176,7 @@
 }
 :root[data-palette="graphite"][data-theme="light"]{
   --zone-permissive:#0f7a35; --zone-semi:#9a6b00; --zone-non:#c62410;
-  --zone-denied:#7d0a15; --zone-unknown:#5b6672;
+  --zone-denied:#7d0a15; --zone-unknown:#5b6672; --route:#1d4ed8;
 
   --bg:#f4f3f1; --panel:#ffffff; --panel-2:#eceae6; --border:#c5c1bb; --border-soft:#c5c1bb99;
   --text:#1b1a18; --text-bright:#000000; --muted:#5a5650; --muted-2:#6e6a63;
@@ -193,7 +193,7 @@
 /* ---------- archive ---------- */
 :root[data-palette="archive"]{
   --zone-permissive:#2ee66b; --zone-semi:#ffd21e; --zone-non:#ff4d3d;
-  --zone-denied:#c1121f; --zone-unknown:#8b98a5;
+  --zone-denied:#c1121f; --zone-unknown:#8b98a5; --route:#4f8dff;
 
   --bg:#17150f; --panel:#201d16; --panel-2:#1a1812; --border:#3a352b; --border-soft:#3a352b99;
   --text:#ece7db; --text-bright:#ffffff; --muted:#a49b8c; --muted-2:#908879;
@@ -212,7 +212,7 @@
 }
 :root[data-palette="archive"][data-theme="light"]{
   --zone-permissive:#0f7a35; --zone-semi:#9a6b00; --zone-non:#c62410;
-  --zone-denied:#7d0a15; --zone-unknown:#5b6672;
+  --zone-denied:#7d0a15; --zone-unknown:#5b6672; --route:#1d4ed8;
 
   --bg:#faf8f4; --panel:#ffffff; --panel-2:#f2efe8; --border:#d5cec1; --border-soft:#d5cec199;
   --text:#1a1714; --text-bright:#000000; --muted:#5d564c; --muted-2:#736b5e;
@@ -543,6 +543,7 @@ input:focus,select:focus,textarea:focus{outline:2px solid var(--accent); outline
 .type-event{color:var(--event);} .type-source{color:var(--source);} .type-communication{color:var(--muted);}
 .type-record{color:var(--record);}
 .type-vehicle{color:var(--vehicle);}
+.type-zone{color:var(--zone-semi);} .type-route{color:var(--zone-permissive);}
 .status-pill{display:inline-block; font-size:10px; text-transform:uppercase; padding:.15em .5em; border-radius:3px; border:1px solid var(--border);}
 .status-draft{color:var(--amber);} .status-confirmed{color:var(--accent);}
 .geocode-status{font-size:12px; margin:.4em 0 .8em; padding:.4em .6em; border-radius:4px; border:1px solid var(--border);}
@@ -1508,6 +1509,29 @@ input:focus,select:focus,textarea:focus{outline:2px solid var(--accent); outline
 .zone-legend-label{text-transform:uppercase; letter-spacing:.05em;}
 .zone-legend i{display:inline-block; width:10px; height:10px; border-radius:2px;
                margin-right:.4em; vertical-align:middle;}
+.legend-line{display:inline-block; width:18px; height:0; border-top:3px solid var(--route);
+             margin-right:.4em; vertical-align:middle;}
+.legend-line-dashed{border-top-style:dashed;}
+
+/* --- Routes and map files (v1.9) ---------------------------------------- */
+.route-draw-length{color:var(--muted); font-variant-numeric:tabular-nums;}
+/* "Show on the map" finds a shape among many; a brief pulse says which. */
+.map-shape-flash{animation:map-shape-flash .6s ease-in-out 4;}
+@keyframes map-shape-flash{50%{stroke-width:9; stroke-opacity:1;}}
+@media (prefers-reduced-motion: reduce){ .map-shape-flash{animation:none; stroke-width:7;} }
+.geo-detail{display:grid; grid-template-columns:minmax(0,1.4fr) minmax(0,1fr); gap:1em; align-items:start;}
+@media (max-width: 900px){ .geo-detail{grid-template-columns:1fr;} }
+.geo-mini-map{height:280px; border:1px solid var(--border); border-radius:6px; background:var(--panel-2);}
+.geo-actions{display:flex; flex-wrap:wrap; gap:.5em; align-items:center; margin-top:.8em;}
+.geo-export{font-size:12px; color:var(--muted);}
+.geo-export a{font-weight:600;}
+.import-list{list-style:none; padding:0; margin:.6em 0; max-height:52vh; overflow:auto;}
+.import-row{display:grid; grid-template-columns:auto 56px minmax(0,1fr) auto; gap:.7em; align-items:center;
+            padding:.5em .2em; border-bottom:1px solid var(--border-soft);}
+.import-row-main input[type=text]{width:100%; min-width:0;}
+.import-row-main .type-pill{margin-bottom:.2em;}
+.import-row-bad{opacity:.6;}
+.feature-sketch{display:block; border:1px solid var(--border-soft); border-radius:4px; background:var(--panel-2);}
 
 /* A record assessed Hostile, wherever its name is shown. Bold as well as red:
    colour alone fails a colour-blind reader and a greyscale printout, and this
@@ -2161,3 +2185,9 @@ a .hostile-name,.hostile-name a{color:var(--red);}
 .profile-edit-contact input{min-width:0; width:100%; box-sizing:border-box;}
 .profile-form .field-hint{margin-top:.6em;}
 .admin-user-controls a.btn-secondary{text-decoration:none;}
+
+.print-option-columns{display:grid; grid-template-columns:repeat(3, minmax(0,1fr)); gap:1em; align-items:start;}
+@media (max-width: 640px){ .print-option-columns{grid-template-columns:1fr;} }
+.map-source-controls #map-export-select{width:auto; max-width:10em;}
+.field-sub-geometry{display:flex; gap:.7em; align-items:center; margin:.4em 0;}
+.field-sub-geometry strong{display:block;}

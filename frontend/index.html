@@ -293,6 +293,8 @@
           <option value="communication">Communication</option>
           <option value="vehicle">Vehicle</option>
           <option value="record">Record</option>
+          <option value="zone">Zone</option>
+          <option value="route">Route</option>
         </select>
         <label class="inline-check"><input type="checkbox" id="entity-show-archived"> Show archived</label>
         <label class="inline-check" title="Events past their relevant-until date"><input type="checkbox" id="entity-hide-expired"> Hide expired events</label>
@@ -787,6 +789,18 @@
             <input type="checkbox" id="zone-show-expired" checked>
             Show expired
           </label>
+          <button type="button" class="btn-secondary btn-sm" id="route-draw-btn"
+                  title="Click along a way on the map to record it as a Route">+ Route</button>
+          <button type="button" class="btn-secondary btn-sm" id="map-import-btn"
+                  title="Read routes, areas and points from a KML, KMZ or GPX file">Import…</button>
+          <select id="map-export-select" title="Download every route and zone on the map">
+            <option value="">Export…</option>
+            <option value="kmz">KMZ (Google Earth, ATAK)</option>
+            <option value="kml">KML</option>
+            <option value="gpx">GPX (routes only)</option>
+          </select>
+          <button type="button" class="btn-secondary btn-sm" id="map-print-btn"
+                  title="A PDF of this view, for printing or a package">Print map…</button>
           <label for="map-source-select">Basemap</label>
           <select id="map-source-select"></select>
           <label class="checkbox-row" id="map-offline-row" hidden>
@@ -807,6 +821,8 @@
         <span><i style="background:var(--zone-non)"></i>Non-permissive</span>
         <span><i style="background:var(--zone-denied)"></i>Denied</span>
         <span><i style="background:var(--zone-unknown)"></i>Unknown / not assessed</span>
+        <span class="legend-route"><b class="legend-line"></b>Route</span>
+        <span class="legend-route"><b class="legend-line legend-line-dashed"></b>Planned (drawn)</span>
       </div>
       <div id="map-container"></div>
     </section>

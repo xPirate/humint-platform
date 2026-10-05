@@ -117,6 +117,15 @@ LIST_DETAIL_FIELDS: dict[str, tuple[str, ...]] = {
 }
 
 
+def _refuse_geometry_type(entity_type: str) -> None:
+    """Zones and routes are shapes, and a CSV row has nowhere to put one. Their
+    import is a KML/KMZ/GPX file on the Map page (api/map_files.py)."""
+    if entity_type in entities.GEOMETRY_TYPES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"A {entity_type} is a shape, not a row. Import KML, KMZ or GPX on the Map page instead.")
+
+
 def build_template_csv(entity_type: str) -> str:
     # Deliberately the Pydantic model's declared fields, not
     # entities.DETAIL_TABLES[entity_type]'s column list directly — for most
@@ -206,6 +215,7 @@ def entity_import_template(
     user: dict = Depends(auth.require_user),
 ):
     entities._validate_entity_type(entity_type)
+    _refuse_geometry_type(entity_type)
     csv_text = build_template_csv(entity_type)
     filename = f"{entity_type}_import_template.csv"
     return Response(
@@ -222,6 +232,7 @@ async def import_entities(
     user: dict = Depends(auth.require_user),
 ):
     entities._validate_entity_type(entity_type)
+    _refuse_geometry_type(entity_type)
 
     # Bounded read, same reasoning as attachment upload in reports.py: check
     # the size limit as bytes arrive rather than buffering an unbounded body

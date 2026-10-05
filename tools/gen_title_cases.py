@@ -44,6 +44,8 @@ CASES = [
     ("place", {"place_name": "The north gate"}),
     ("salute", {"activity": "Loading crates into a panel van"}),
     ("note", {"summary": "Gate open at the north compound"}),
+    ("route", {"route_name": "Safe way to the north gate", "travel_mode": "On foot"}),
+    ("area", {"area_name": "Depot yard", "assessment": "Denied"}),
     ("note", {"body": "no summary given"}),
     # A verbatim flag is a boolean; it must not leak the word "False" into a
     # title if anyone ever puts one in a pattern.

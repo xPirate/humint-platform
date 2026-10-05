@@ -46,7 +46,7 @@ from db import db_cursor
 router = APIRouter(prefix="/api", tags=["graph"])
 
 ENTITY_TYPES = ("person", "organization", "location", "event", "source", "communication",
-                "vehicle", "record")
+                "vehicle", "record", "zone", "route")
 
 # Beyond this the simulation stops being interactive on modest hardware --
 # this app is meant to run on a Raspberry Pi and be used from a laptop.

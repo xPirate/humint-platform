@@ -31,7 +31,15 @@ from idgen import generate_id
 router = APIRouter(prefix="/api", tags=["entities"])
 
 ENTITY_TYPES = ("person", "organization", "location", "event", "source", "communication",
-                "vehicle", "record")
+                "vehicle", "record", "zone", "route")
+
+# The two kinds that are a shape on the map rather than a set of fields (v1.9).
+# Their geometry is drawn, imported or walked, never typed into a form, so they
+# are made through their own endpoints (api/zones.py, api/routes.py) and the
+# generic create and the CSV importer refuse them. Everything else -- links,
+# reports, attachments, search, the network, packages, archive -- treats them
+# like any other record.
+GEOMETRY_TYPES = ("zone", "route")
 
 # type -> (detail table name, ordered column list). Column names here are
 # never user input — they're read from this fixed dict to build parameterized
@@ -56,6 +64,17 @@ DETAIL_TABLES: dict[str, tuple[str, list[str]]] = {
     # absent from RecordDetails, so it cannot be pointed at a different file.
     "record": ("record_details", ["record_kind", "record_date", "issued_by", "body",
                                   "source_attachment_id"]),
+    # The zone's own table, keyed by entity_id since v1.9. `id` is the zone id
+    # the map's endpoints use. Written only by api/zones.py.
+    "zone": ("map_zones", ["id", "environment", "shape", "geometry", "radius_m",
+                           "min_lat", "min_lon", "max_lat", "max_lon", "event_id",
+                           "valid_from", "valid_until"]),
+    # point_times is left out on purpose: it can be a list as long as the track
+    # and nothing that reads a record's details needs it. api/routes.py reads it
+    # for exports.
+    "route": ("route_details", ["geometry", "min_lat", "min_lon", "max_lat", "max_lon",
+                                "length_m", "point_count", "environment", "travel_mode",
+                                "origin", "source_file", "recorded_from", "recorded_until"]),
 }
 
 # Not DB-enforced (see the relationships table comment in init.sql) — this is
@@ -180,6 +199,11 @@ LEGACY_ALIGNMENT_VALUES = ("Family",)
 # loses the distinction that decides whether a plan exists.
 ENVIRONMENT_VALUES = ("Permissive", "Semi-permissive", "Non-permissive",
                       "Denied", "Unknown")
+
+# How a route was travelled, or is meant to be. A short fixed list for the same
+# reason as vehicle style: "show me the walking routes" only works if everyone
+# writes it the same way.
+TRAVEL_MODES = ("On foot", "Vehicle", "Bicycle", "Boat", "Aircraft", "Other")
 
 # Is this person alive? Blank is not the same as "Unknown": blank means nobody
 # has assessed it, Unknown means someone tried and could not resolve it. An
@@ -309,6 +333,21 @@ class RecordDetails(BaseModel):
     body: Optional[str] = None
 
 
+class RouteDetails(BaseModel):
+    # The geometry is not here: it is changed by redrawing or re-importing,
+    # through api/routes.py, never typed. These two are the judgements an
+    # analyst adds to a line.
+    environment: Optional[str] = Field(default=None, pattern="^(" + "|".join(ENVIRONMENT_VALUES) + ")$")
+    travel_mode: Optional[str] = Field(default=None, pattern="^(" + "|".join(TRAVEL_MODES) + ")$")
+
+
+class ZoneDetails(BaseModel):
+    # Deliberately empty. A zone's assessment changes through the zone's own
+    # Edit (PATCH /api/map/zones/{id}), which writes the timeline row that
+    # explains the change; a generic details PATCH would skip it.
+    pass
+
+
 DETAIL_MODELS = {
     "person": PersonDetails,
     "organization": OrganizationDetails,
@@ -318,6 +357,8 @@ DETAIL_MODELS = {
     "communication": CommunicationDetails,
     "vehicle": VehicleDetails,
     "record": RecordDetails,
+    "zone": ZoneDetails,
+    "route": RouteDetails,
 }
 
 
@@ -563,6 +604,11 @@ def relationship_types(user: dict = Depends(auth.require_user)):
 @router.post("/entities", status_code=201)
 def create_entity(payload: EntityCreate, user: dict = Depends(auth.require_user)):
     _validate_entity_type(payload.entity_type)
+    if payload.entity_type in GEOMETRY_TYPES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"A {payload.entity_type} is made on the Map page: draw it, or import a "
+                   "KML, KMZ or GPX file.")
     details = _parsed_details(payload.entity_type, payload.details)
     entity_id = generate_id(payload.entity_type, payload.name)
 
@@ -876,7 +922,20 @@ def update_entity(entity_id: str, payload: EntityUpdate, user: dict = Depends(au
             cur.execute(f"UPDATE entities SET updated_at = now(){extra} WHERE id = %s",
                         (entity_id,))
 
-        if payload.details is not None:
+        if entity_type == "zone":
+            if payload.details:
+                raise HTTPException(
+                    status_code=400,
+                    detail="A zone's area, assessment and dates are changed with Edit zone, "
+                           "which keeps its timeline.")
+            # The zone row keeps a copy of the name and notes for the map's own
+            # queries; the record is where they are edited.
+            if "name" in core_updates or "description" in core_updates:
+                cur.execute(
+                    "UPDATE map_zones m SET name = e.name, notes = e.description, updated_at = now() "
+                    "FROM entities e WHERE m.entity_id = e.id AND e.id = %s", (entity_id,))
+
+        if payload.details is not None and entity_type != "zone":
             # Partial detail update: validate + type-coerce only the keys
             # actually provided (every field on every detail model is
             # Optional with a None default, so instantiating the model with

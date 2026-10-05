@@ -55,6 +55,8 @@ import reports
 import rss
 import settings
 import zones
+import routes as routes_module
+import map_files
 from db import db_cursor
 
 FRONTEND_DIR = "/app/frontend"
@@ -115,6 +117,20 @@ app.include_router(field_module.manage)
 app.include_router(map_module.router)
 app.include_router(maptiles.router)
 app.include_router(zones.router)
+app.include_router(routes_module.router)
+app.include_router(map_files.router)
+
+
+@app.on_event("startup")
+def _adopt_unlinked_zones():
+    """Zones from before v1.9 get their Zone record (see zones.py). A no-op on
+    every start after the first; quiet if the v1.9 migration has not been run
+    yet, because the map still works without it."""
+    try:
+        with db_cursor(commit=True) as cur:
+            zones.adopt_unlinked_zones(cur)
+    except Exception:
+        pass
 app.include_router(rss.router)
 app.include_router(settings.router)
 app.include_router(settings.public_router)

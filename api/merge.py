@@ -123,6 +123,7 @@ def merge_preview(entity_id: str, into: str, allow_type_change: bool = False,
         if loser["id"] == survivor["id"]:
             raise HTTPException(status_code=400, detail="An entity cannot be merged into itself")
         type_change = loser["entity_type"] != survivor["entity_type"]
+        _refuse_geometry_kind_change(loser, survivor)
         if type_change and not allow_type_change:
             raise HTTPException(
                 status_code=400,
@@ -187,12 +188,29 @@ def _dropped_details(cur, loser: dict) -> dict:
     return {col: value for col, value in zip(readable, row) if _has_value(value)}
 
 
+def _refuse_geometry_kind_change(loser: dict, survivor: dict) -> None:
+    """A zone or a route is a shape. Merged with another of its own kind, the
+    survivor keeps its own shape and the other's links, reports and documents
+    move across, as for any record. Turned into a Person, or a Person into a
+    route, there is nothing sensible to do with the geometry -- so it is refused
+    rather than silently thrown away."""
+    kinds = {loser["entity_type"], survivor["entity_type"]}
+    if len(kinds) > 1 and kinds & set(entities_module.GEOMETRY_TYPES):
+        raise HTTPException(
+            status_code=400,
+            detail="Zones and routes can only be merged with their own kind.")
+
+
 def _detail_fills(cur, entity_type: str, survivor_id: str, loser_ids: list[str]) -> dict:
     """Which blank fields on the survivor the losers can fill, and with what.
 
     Read-only: the merge itself recomputes this inside its own transaction.
     Returned by the preview so nobody has to guess what "blanks filled" means
     for the records actually in front of them."""
+    if entity_type in entities_module.GEOMETRY_TYPES:
+        # The survivor keeps its own shape and assessment; a second outline is
+        # not a blank to be filled.
+        return {}
     table, cols = entities_module.DETAIL_TABLES[entity_type]
     # Derived columns are the app's to maintain, never copied between records —
     # a Maidenhead grid belongs to a coordinate pair, not to a name.
@@ -254,6 +272,7 @@ def merge_entities(payload: MergeRequest, user: dict = Depends(auth.require_user
         dropped_details: dict = {}
         for loser_id in loser_ids:
             loser = _entity(cur, loser_id)
+            _refuse_geometry_kind_change(loser, survivor)
             if loser["entity_type"] != survivor["entity_type"]:
                 if not payload.allow_type_change:
                     raise HTTPException(

@@ -21,6 +21,14 @@ Three things make this more than a coloured shape:
     report written while it was running. "Where was the cordon that night" is
     asked weeks later.
 
+Since v1.9 every zone is also a **Zone record** (an entity of type 'zone'),
+so a contested area can be linked to the organisations holding it, the events
+inside it and the reports about it, and is found by search, drawn on the
+network and carried into packages like anything else. map_zones stays its
+detail table: the geometry, the assessment, the clock and the timeline. The
+record's name and description are the zone's name and notes; this module
+keeps the copy in map_zones in step.
+
 Geometry is GeoJSON in JSONB and point-in-polygon is done here, in Python,
 rather than by adding PostGIS. The ray-casting test below is twenty lines and
 runs against a bounding-box shortlist; an extension would put a migration
@@ -29,6 +37,7 @@ between a user and `docker compose up` for arithmetic this app can do itself.
 
 import json
 import math
+import os
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -36,6 +45,7 @@ from pydantic import BaseModel, Field
 
 import audit
 import auth
+import destroy
 import entities as entities_module
 from db import db_cursor
 from idgen import generate_id
@@ -58,7 +68,7 @@ MAX_RADIUS_M = 500_000.0
 _ZONE_COLS = ["id", "name", "environment", "shape", "geometry", "radius_m",
               "min_lat", "min_lon", "max_lat", "max_lon", "event_id",
               "valid_from", "valid_until", "notes", "created_by",
-              "created_at", "updated_at"]
+              "created_at", "updated_at", "entity_id"]
 
 
 # ---------------------------------------------------------------------------
@@ -254,7 +264,75 @@ def _fetch_zone(cur, zone_id: int, for_update: bool = False) -> dict:
     row = cur.fetchone()
     if row is None:
         raise HTTPException(status_code=404, detail="Zone not found")
-    return _row_to_zone(row)
+    zone = _row_to_zone(row)
+    _attach_record(cur, zone)
+    return zone
+
+
+def _attach_record(cur, zone: dict) -> None:
+    """The Zone record's name, description and state, which win over the copy
+    in map_zones -- the record is where they are edited (and where a merge
+    renames them)."""
+    if not zone.get("entity_id"):
+        zone["is_active"] = True
+        return
+    cur.execute("SELECT name, description, is_active FROM entities WHERE id = %s",
+                (zone["entity_id"],))
+    row = cur.fetchone()
+    if row:
+        zone["name"], zone["notes"], zone["is_active"] = row[0], row[1], row[2]
+
+
+def zone_id_for_entity(cur, entity_id: str) -> Optional[int]:
+    cur.execute("SELECT id FROM map_zones WHERE entity_id = %s", (entity_id,))
+    row = cur.fetchone()
+    return row[0] if row else None
+
+
+def _create_record(cur, user: dict, name: str, notes) -> str:
+    entity_id = generate_id("zone", name)
+    cur.execute(
+        "INSERT INTO entities (id, entity_type, name, description, created_by) "
+        "VALUES (%s, 'zone', %s, %s, %s)", (entity_id, name, notes, user["id"]))
+    return entity_id
+
+
+def _link_event(cur, user: dict, event_id: Optional[str], zone_entity_id: str) -> None:
+    """Event located_at Zone, so the event shows on the zone's record and the
+    zone on the event's, and the network draws the line between them. Once:
+    re-saving a zone does not stack up copies of the same link."""
+    if not event_id:
+        return
+    cur.execute(
+        "SELECT 1 FROM relationships WHERE from_entity_id = %s AND to_entity_id = %s "
+        "AND relationship_type = 'located_at'", (event_id, zone_entity_id))
+    if cur.fetchone():
+        return
+    cur.execute(
+        "INSERT INTO relationships (from_entity_id, to_entity_id, relationship_type, "
+        "confidence, notes, created_by) VALUES (%s, %s, 'located_at', '1', %s, %s)",
+        (event_id, zone_entity_id, "The zone drawn for this event.", user["id"] if user else None))
+
+
+def adopt_unlinked_zones(cur) -> int:
+    """Give every zone without a record one.
+
+    For zones restored from a backup taken before v1.9 (the migration does the
+    same for a live database). Run inside the restore's transaction and at
+    startup; costs one indexed query when there is nothing to do.
+    """
+    cur.execute("SELECT id, name, notes, created_by, created_at, updated_at, event_id "
+                "FROM map_zones WHERE entity_id IS NULL ORDER BY id")
+    rows = cur.fetchall()
+    for zone_id, name, notes, created_by, created_at, updated_at, event_id in rows:
+        entity_id = generate_id("zone", name)
+        cur.execute(
+            "INSERT INTO entities (id, entity_type, name, description, created_by, "
+            "created_at, updated_at) VALUES (%s, 'zone', %s, %s, %s, %s, %s)",
+            (entity_id, name, notes, created_by, created_at, updated_at))
+        cur.execute("UPDATE map_zones SET entity_id = %s WHERE id = %s", (entity_id, zone_id))
+        _link_event(cur, {"id": created_by} if created_by else None, event_id, entity_id)
+    return len(rows)
 
 
 def _event_label(cur, event_id):
@@ -331,10 +409,14 @@ def list_zones(include_expired: bool = True, user: dict = Depends(auth.require_u
             SELECT {', '.join('z.' + c for c in _ZONE_COLS)},
                    e.name,
                    (z.valid_until IS NOT NULL AND z.valid_until <= now()) AS expired,
-                   (SELECT COUNT(*) FROM map_zone_changes c WHERE c.zone_id = z.id)
+                   (SELECT COUNT(*) FROM map_zone_changes c WHERE c.zone_id = z.id),
+                   ze.name, ze.description
             FROM map_zones z
             LEFT JOIN entities e ON e.id = z.event_id
-            {"" if include_expired else "WHERE z.valid_until IS NULL OR z.valid_until > now()"}
+            LEFT JOIN entities ze ON ze.id = z.entity_id
+            -- An archived Zone record is off the map, like an archived pin.
+            WHERE (ze.id IS NULL OR (ze.is_active AND ze.merged_into IS NULL))
+            {"" if include_expired else "AND (z.valid_until IS NULL OR z.valid_until > now())"}
             ORDER BY z.created_at DESC, z.id DESC
             """
         )
@@ -345,6 +427,9 @@ def list_zones(include_expired: bool = True, user: dict = Depends(auth.require_u
         zone["event_name"] = r[len(_ZONE_COLS)]
         zone["expired"] = bool(r[len(_ZONE_COLS) + 1])
         zone["change_count"] = r[len(_ZONE_COLS) + 2]
+        if r[len(_ZONE_COLS) + 3]:
+            zone["name"] = r[len(_ZONE_COLS) + 3]
+            zone["notes"] = r[len(_ZONE_COLS) + 4]
         items.append(zone)
     return {"items": items}
 
@@ -367,9 +452,12 @@ def zones_containing(entity_id: str, user: dict = Depends(auth.require_user)):
         cur.execute(
             f"""
             SELECT {', '.join('z.' + c for c in _ZONE_COLS)}, e.name,
-                   (z.valid_until IS NOT NULL AND z.valid_until <= now()) AS expired
+                   (z.valid_until IS NOT NULL AND z.valid_until <= now()) AS expired,
+                   ze.name
             FROM map_zones z LEFT JOIN entities e ON e.id = z.event_id
-            WHERE %s BETWEEN z.min_lat AND z.max_lat
+            LEFT JOIN entities ze ON ze.id = z.entity_id
+            WHERE (ze.id IS NULL OR (ze.is_active AND ze.merged_into IS NULL))
+              AND %s BETWEEN z.min_lat AND z.max_lat
               AND %s BETWEEN z.min_lon AND z.max_lon
             ORDER BY z.created_at DESC, z.id DESC
             """, (lat, lng))
@@ -382,6 +470,8 @@ def zones_containing(entity_id: str, user: dict = Depends(auth.require_user)):
             continue
         zone["event_name"] = r[len(_ZONE_COLS)]
         zone["expired"] = bool(r[len(_ZONE_COLS) + 1])
+        if r[len(_ZONE_COLS) + 2]:
+            zone["name"] = r[len(_ZONE_COLS) + 2]
         items.append(zone)
     return {"items": items}
 
@@ -429,6 +519,37 @@ def get_zone(zone_id: int, user: dict = Depends(auth.require_user)):
     return zone
 
 
+def insert_zone(cur, user: dict, *, name: str, environment: str, shape: str,
+                geojson: dict, radius_m, bounds: tuple, event_id=None,
+                valid_from=None, valid_until=None, notes=None,
+                change_note: str = "Zone created") -> dict:
+    """A zone and its record, in the caller's transaction.
+
+    Shared by drawing on the map, importing a KML/KMZ/GPX file and accepting an
+    area walked with the field app, so all three make exactly the same thing.
+    """
+    _validate_environment(environment)
+    entity_id = _create_record(cur, user, name, notes)
+    cur.execute(
+        f"""
+        INSERT INTO map_zones (name, environment, shape, geometry, radius_m,
+                               min_lat, min_lon, max_lat, max_lon, event_id,
+                               valid_from, valid_until, notes, created_by, entity_id)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        RETURNING {', '.join(_ZONE_COLS)}
+        """,
+        (name, environment, shape, json.dumps(geojson), radius_m,
+         bounds[0], bounds[1], bounds[2], bounds[3], event_id,
+         valid_from or None, valid_until or None, notes, user["id"], entity_id))
+    zone = _row_to_zone(cur.fetchone())
+    # The opening row of the timeline, so the history is complete rather
+    # than starting at the first edit.
+    _record_change(cur, zone["id"], environment, None, change_note, user)
+    _link_event(cur, user, event_id, entity_id)
+    zone["is_active"] = True
+    return zone
+
+
 @router.post("/map/zones", status_code=201)
 def create_zone(payload: ZoneCreate, user: dict = Depends(auth.require_user)):
     _validate_environment(payload.environment)
@@ -439,23 +560,12 @@ def create_zone(payload: ZoneCreate, user: dict = Depends(auth.require_user)):
             cur, user, payload.event_id, payload.create_event,
             payload.valid_from, payload.valid_until)
 
-        cur.execute(
-            f"""
-            INSERT INTO map_zones (name, environment, shape, geometry, radius_m,
-                                   min_lat, min_lon, max_lat, max_lon, event_id,
-                                   valid_from, valid_until, notes, created_by)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-            RETURNING {', '.join(_ZONE_COLS)}
-            """,
-            (payload.name.strip(), payload.environment, payload.geometry.shape,
-             json.dumps(geojson), radius_m, bounds[0], bounds[1], bounds[2], bounds[3],
-             event_id, payload.valid_from or None, payload.valid_until or None,
-             (payload.notes or "").strip() or None, user["id"]))
-        zone = _row_to_zone(cur.fetchone())
-        # The opening row of the timeline, so the history is complete rather
-        # than starting at the first edit.
-        _record_change(cur, zone["id"], payload.environment, None,
-                       "Zone created", user)
+        zone = insert_zone(cur, user, name=payload.name.strip(),
+                           environment=payload.environment, shape=payload.geometry.shape,
+                           geojson=geojson, radius_m=radius_m, bounds=bounds,
+                           event_id=event_id, valid_from=payload.valid_from,
+                           valid_until=payload.valid_until,
+                           notes=(payload.notes or "").strip() or None)
         zone["event_name"] = _event_label(cur, event_id)
 
     audit.record("map_zone.create", user=user, object_type="map_zone",
@@ -511,6 +621,19 @@ def update_zone(zone_id: int, payload: ZoneUpdate, user: dict = Depends(auth.req
         cur.execute(f"UPDATE map_zones SET {', '.join(sets)} WHERE id = %s "
                     f"RETURNING {', '.join(_ZONE_COLS)}", values)
         zone = _row_to_zone(cur.fetchone())
+        if zone.get("entity_id"):
+            if "name" in fields or "notes" in fields:
+                cur.execute(
+                    "UPDATE entities SET name = %s, description = %s, updated_at = now(), "
+                    "retention_due_at = NULL WHERE id = %s",
+                    (zone["name"], zone["notes"], zone["entity_id"]))
+            else:
+                # Any edit is activity on the record (see api/retention.py).
+                cur.execute("UPDATE entities SET updated_at = now(), retention_due_at = NULL "
+                            "WHERE id = %s", (zone["entity_id"],))
+            if "event_id" in fields:
+                _link_event(cur, user, zone["event_id"], zone["entity_id"])
+        _attach_record(cur, zone)
 
         changed_env = ("environment" in fields
                        and fields["environment"] != current["environment"])
@@ -538,7 +661,26 @@ def delete_zone(zone_id: int, user: dict = Depends(auth.require_admin)):
     """
     with db_cursor(commit=True) as cur:
         zone = _fetch_zone(cur, zone_id, for_update=True)
+        if zone.get("entity_id"):
+            # The same rules as deleting any record: refused while a confirmed
+            # report cites it, and the record's links and documents go too.
+            cost = destroy._entity_cost(cur, zone["entity_id"])
+            if cost["blocked_by"]:
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"'{zone['name']}' is cited by a confirmed report "
+                           f"('{cost['blocked_by'][0]['title']}'). Archive it instead.")
+            cur.execute("SELECT storage_path FROM attachments WHERE entity_id = %s",
+                        (zone["entity_id"],))
+            files = [r[0] for r in cur.fetchall() if r[0]]
+            destroy._delete_entity(cur, zone["entity_id"])
         cur.execute("DELETE FROM map_zones WHERE id = %s", (zone_id,))
+
+    for rel_path in locals().get("files", []):
+        try:
+            os.remove(os.path.join(destroy.UPLOAD_DIR, rel_path))
+        except OSError:
+            pass
 
     audit.record("map_zone.delete", user=user, object_type="map_zone",
                  object_id=zone_id, object_label=zone["name"],

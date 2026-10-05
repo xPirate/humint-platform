@@ -40,6 +40,8 @@ import auth
 import contacts
 import entities
 import insights
+import map_pdf
+import map_render
 import package_pdf
 import report_pdf
 from db import db_cursor
@@ -277,6 +279,7 @@ def gather_dossier(entity_id: str, shape: str, user: dict, *,
         full_reports = _full_reports(cur, [r["id"] for r in linked_reports])
         boards_on = _board_entries(cur, entity_id)
         _attach_storage_paths(cur, entity["attachments"])
+        package_map = _package_map(cur, entity, neighbours)
         # Contacts for the neighbours too: in an organisation report, "how do I
         # reach this person" is most of the value, and it lives one table over.
         neighbour_contacts = {}
@@ -302,7 +305,75 @@ def gather_dossier(entity_id: str, shape: str, user: dict, *,
         "prepared_for": (prepared_for or "").strip() or None,
         "purpose": (purpose or "").strip() or None,
         "contacts_scope": contacts_scope,
+        "map": package_map,
     }
+
+
+# The kinds a package's map can draw.
+_MAPPABLE = ("location", "zone", "route")
+
+
+def _package_map(cur, entity: dict, neighbours: dict):
+    """(image, meta) for the package's map page, or None when nothing in it
+    has a place.
+
+    The record itself if it is a place, a zone or a route, and every directly
+    linked one that is -- the same one-hop rule as the rest of the package. A
+    person's package shows the places, zones and routes they are linked to,
+    which is usually the most useful page in it for whoever reads it next.
+    Only those records are drawn, not everything else that happens to be in
+    the same rectangle of the case file.
+    """
+    ids = [nid for nid, n in neighbours.items() if n.get("entity_type") in _MAPPABLE]
+    if entity["entity_type"] in _MAPPABLE:
+        ids.append(entity["id"])
+    bbox = map_render.bounds_of_entities(cur, ids)
+    if bbox is None:
+        return None
+    width, height = 1200, 840
+    try:
+        return map_render.render(cur, map_render.pad_bbox(bbox), width, height,
+                                 entity_ids=set(ids), highlight={entity["id"]})
+    except Exception:
+        # A map that cannot be drawn must not cost anyone the package.
+        return None
+
+
+@router.get("/map.pdf")
+def export_map_pdf(
+    north: float = Query(..., ge=-90, le=90), south: float = Query(..., ge=-90, le=90),
+    east: float = Query(..., ge=-180, le=180), west: float = Query(..., ge=-180, le=180),
+    source_id: Optional[int] = Query(default=None),
+    title: str = Query(default="Map", max_length=200),
+    note: Optional[str] = Query(default=None, max_length=300),
+    paper: str = Query(default="letter"),
+    orientation: str = Query(default="landscape"),
+    zones: bool = Query(default=True), routes: bool = Query(default=True),
+    locations: bool = Query(default=True), labels: bool = Query(default=True),
+    include_expired: bool = Query(default=True),
+    user: dict = Depends(auth.require_user),
+):
+    """The Map page's current view, as a one-page PDF to print or attach."""
+    if north <= south or east <= west:
+        raise HTTPException(status_code=400, detail="That view has no area.")
+    if paper not in map_pdf.PAPERS or orientation not in ("landscape", "portrait"):
+        raise HTTPException(status_code=400, detail="paper is letter or a4; orientation landscape or portrait")
+    width, height = map_pdf.image_px_for(paper, orientation)
+    with db_cursor() as cur:
+        img, meta = map_render.render(
+            cur, (south, west, north, east), width, height, source_id=source_id,
+            zones=zones, routes=routes, locations=locations, labels=labels,
+            include_expired=include_expired, fit_exact=True)
+    pdf_bytes = map_pdf.build_map_pdf(img, meta, title=title.strip() or "Map",
+                                      note=(note or "").strip() or None, paper=paper,
+                                      orientation=orientation, generated_by=user["username"])
+    audit.record("export.map", user=user, object_type="map", object_label=title,
+                 detail={"bbox": [south, west, north, east], "zoom": meta["zoom"],
+                         "counts": meta["counts"], "tiles_missing": meta["tiles_missing"],
+                         "note": note})
+    filename = _header_safe_filename(f"map-{title.strip() or 'view'}-{datetime.now(timezone.utc):%Y%m%d}.pdf")
+    return Response(content=pdf_bytes, media_type="application/pdf",
+                    headers={"Content-Disposition": f'attachment; filename="{filename}"'})
 
 
 def _attach_storage_paths(cur, attachments: list) -> None:

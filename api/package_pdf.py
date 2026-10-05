@@ -26,6 +26,7 @@ from reportlab.lib.units import inch
 from reportlab.platypus import (
     HRFlowable,
     KeepTogether,
+    CondPageBreak,
     PageBreak,
     Paragraph,
     Spacer,
@@ -33,6 +34,7 @@ from reportlab.platypus import (
     TableStyle,
 )
 
+import map_pdf
 import report_pdf
 from report_pdf import (
     CREDIBILITY_LABELS,
@@ -315,14 +317,21 @@ def _cover(story, data, s, content_width, generated_by, generated_at):
     images = [a for a in entity.get("attachments") or [] if (a.get("mime_type") or "").startswith("image/")]
     report_images = sum(1 for r in data["full_reports"] for a in r["attachments"]
                         if (a.get("mime_type") or "").startswith("image/"))
-    contents = [
-        ("1", "The record", "details and contact points"),
-        ("2", "Connections", f"{len(rels)} directly connected record{'s' if len(rels) != 1 else ''}"),
-        ("3", "Timeline", f"{len(data['timeline'])} dated item{'s' if len(data['timeline']) != 1 else ''}"),
-        ("4", "Reporting in full", f"{len(data['full_reports'])} report{'s' if len(data['full_reports']) != 1 else ''}"
-              + (f", {report_images} photograph{'s' if report_images != 1 else ''}" if report_images else "")),
-        ("5", "Photographs and documents", f"{len(entity.get('attachments') or [])} on this record"),
+    titles = [
+        ("The record", "details and contact points"),
     ]
+    if data.get("map"):
+        counts = data["map"][1].get("counts") or {}
+        titles.append(("Map", ", ".join(f"{n} {k}" for k, n in counts.items() if n)
+                       or "where this record is"))
+    titles += [
+        ("Connections", f"{len(rels)} directly connected record{'s' if len(rels) != 1 else ''}"),
+        ("Timeline", f"{len(data['timeline'])} dated item{'s' if len(data['timeline']) != 1 else ''}"),
+        ("Reporting in full", f"{len(data['full_reports'])} report{'s' if len(data['full_reports']) != 1 else ''}"
+              + (f", {report_images} photograph{'s' if report_images != 1 else ''}" if report_images else "")),
+        ("Photographs and documents", f"{len(entity.get('attachments') or [])} on this record"),
+    ]
+    contents = [(str(i + 1), t_, note) for i, (t_, note) in enumerate(titles)]
     story.append(Paragraph("Contents", s["section"]))
     t = Table([[_plain(n, s["cell_label"]), _plain(t_, s["cell"]), _plain(note, s["meta"])]
                for n, t_, note in contents],
@@ -471,20 +480,36 @@ def build_dossier(data: dict, generated_by: str) -> bytes:
     _cover(story, data, s, content_width, generated_by, generated_at)
     story.append(PageBreak())
 
-    story.append(Paragraph("1. The record", s["section"]))
+    # Numbered as they come: the map section is only there when something in
+    # the package has a place, and the contents on the cover count the same way.
+    number = iter(range(1, 20))
+    story.append(Paragraph(f"{next(number)}. The record", s["section"]))
     story.extend(_entity_section(entity, s, content_width,
                                  contacts_scope=data.get("contacts_scope", "all"),
                                  include_relationships=False, include_images=False))
 
-    story.append(Paragraph("2. Connections", s["section"]))
+    if data.get("map"):
+        img, meta = data["map"]
+        # Its own page only when it would not fit under the record: a short
+        # record should not leave most of a page blank above the map.
+        story.append(CondPageBreak(7.3 * inch))
+        story.append(Paragraph(f"{next(number)}. Map", s["section"]))
+        story.append(_plain(
+            "This record and the places, zones and routes directly linked to it. "
+            "Nothing else in the case file is drawn.", s["meta"]))
+        story.append(Spacer(1, 6))
+        story.extend(map_pdf.map_flowables(img, meta, content_width, s))
+        story.append(Spacer(1, 12))
+
+    story.append(Paragraph(f"{next(number)}. Connections", s["section"]))
     _connections(story, data, s)
     story.append(Spacer(1, 12))
 
-    story.append(Paragraph("3. Timeline", s["section"]))
+    story.append(Paragraph(f"{next(number)}. Timeline", s["section"]))
     _timeline_table(story, data.get("timeline") or [], s, content_width)
 
     story.append(PageBreak())
-    story.append(Paragraph("4. Reporting in full", s["section"]))
+    story.append(Paragraph(f"{next(number)}. Reporting in full", s["section"]))
     _reports_in_full(story, data.get("full_reports") or [], s, content_width)
 
     attachments = entity.get("attachments") or []
@@ -495,7 +520,7 @@ def build_dossier(data: dict, generated_by: str) -> bytes:
         images.insert(0, portrait)
     others = [a for a in attachments if a not in images]
     story.append(Spacer(1, 12))
-    story.append(Paragraph("5. Photographs and documents", s["section"]))
+    story.append(Paragraph(f"{next(number)}. Photographs and documents", s["section"]))
     if not attachments:
         story.append(_plain("Nothing is attached to this record.", s["meta"]))
     for att in images:
