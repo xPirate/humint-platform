@@ -39,6 +39,8 @@ leaves nothing behind. Download the area's map tiles beforehand.
 | Everything about one record, for someone outside the platform | **Export** on the record's page — see below. |
 | The last N days for a briefing | **Executive summary** on the dashboard. |
 | A printable most-wanted sheet | **Print sheet** on the BOLO board — see below. |
+| A map of an area, for a wall or a folder | **Print map…** on the Map page — [how](maps-and-zones.md#print-the-map). |
+| Routes and zones for ATAK or Google Earth | **Export…** on the Map page — [how](maps-and-zones.md#export-routes-and-zones). |
 | The whole instance | Not an export — [take a backup](backup-and-restore.md). |
 
 Set `PDF_HEADER_LABEL` and `PDF_FOOTER_NOTE` in `.env` before sending anything
@@ -66,13 +68,19 @@ What's in it:
 
 - **Cover** — portrait, identifying details, a BOLO band if it's on the board,
   prepared-for and purpose, and a contents list.
-- **1 · The record** in full, with contact points.
-- **2 · Connections** — every directly linked record, with grades; expired
+- **The record** in full, with contact points.
+- **Map** — when the record or anything linked to it has a place: the record
+  itself, its linked Locations, Zones and Routes on a basemap, with corner
+  coordinates. Nothing else in the case file is drawn.
+- **Connections** — every directly linked record, with grades; expired
   links marked.
-- **3 · Timeline** of reports, events and links.
-- **4 · Reporting in full** — every report that mentions it, oldest first,
+- **Timeline** of reports, events and links.
+- **Reporting in full** — every report that mentions it, oldest first,
   with their photographs.
-- **5 · Photographs and documents** on the record.
+- **Photographs and documents** on the record.
+
+Sections are numbered in the PDF; the Map section only appears when there is
+something to draw.
 
 It does **not** go more than one step out. **Read it before handing it over**
 — it carries everything in those reports.

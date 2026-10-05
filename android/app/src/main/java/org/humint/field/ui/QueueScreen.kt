@@ -71,6 +71,7 @@ fun QueueScreen(
 ) {
     val queue by vm.queue.collectAsStateWithLifecycle()
     val ready by vm.readyCount.collectAsStateWithLifecycle()
+    val recorder by vm.recorder.collectAsStateWithLifecycle()
     var filter by rememberSaveable { mutableStateOf("all") }
     val drafts = queue.count { it.status == "draft" }
     val shown = when (filter) {
@@ -124,7 +125,9 @@ fun QueueScreen(
                      modifier = Modifier.padding(vertical = 24.dp))
             }
         } else {
-            items(shown, key = { it.id }) { row -> QueueCard(row) { onOpen(row.id) } }
+            items(shown, key = { it.id }) { row ->
+                QueueCard(row, recording = recorder.running && recorder.reportId == row.id) { onOpen(row.id) }
+            }
         }
     }
 }
@@ -205,7 +208,7 @@ private fun EmptyQueue(onNew: () -> Unit) {
 }
 
 @Composable
-private fun QueueCard(row: ReportRow, onClick: () -> Unit) {
+private fun QueueCard(row: ReportRow, recording: Boolean = false, onClick: () -> Unit) {
     val template = Templates.byKey(row.template)
     Row(
         Modifier
@@ -226,7 +229,7 @@ private fun QueueCard(row: ReportRow, onClick: () -> Unit) {
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.weight(1f),
                 )
-                StatusPill(row.status)
+                StatusPill(if (recording) "recording" else row.status)
             }
             Spacer(Modifier.height(2.dp))
             Text(row.title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold,
@@ -264,6 +267,7 @@ private fun StatusPill(status: String) {
     val (label, colour) = when (status) {
         "ready" -> "Ready" to MaterialTheme.colorScheme.primary
         "sent" -> "Sent" to MaterialTheme.colorScheme.onSurfaceVariant
+        "recording" -> "Recording" to MaterialTheme.colorScheme.error
         else -> "Draft" to FieldAmber
     }
     Row(

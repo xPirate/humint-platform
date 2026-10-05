@@ -169,10 +169,9 @@ fun ReportScreen(vm: FieldViewModel, reportId: String, onDone: () -> Unit) {
             Column(Modifier.padding(16.dp)) {
                 Button(
                     onClick = {
-                        vm.markReady(report) { why ->
-                            scope.launch { snackbar.showSnackbar(why) }
-                        }
-                        if (template.whatIsMissing(values) == null) onDone()
+                        vm.markReady(report,
+                            onRefused = { why -> scope.launch { snackbar.showSnackbar(why) } },
+                            onReady = onDone)
                     },
                     modifier = Modifier.fillMaxWidth().heightIn(min = TapTarget),
                 ) {
@@ -209,6 +208,14 @@ fun ReportScreen(vm: FieldViewModel, reportId: String, onDone: () -> Unit) {
 
             template.fields.forEach { field ->
                 FormField(field, values[field.key]) { put(field.key, it) }
+            }
+
+            // A Route records a track; an Area collects corners. Every other
+            // form has neither.
+            template.geometry?.let { kind ->
+                ShapeCard(vm, report, kind, fix) { message ->
+                    scope.launch { snackbar.showSnackbar(message) }
+                }
             }
 
             // Every template takes free text on top of its own fields. The

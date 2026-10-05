@@ -29,7 +29,7 @@ by the job you are trying to do.
 | [Work with records and links](records-and-links.md) | Grading links 1–6, expiring them, alignment, the network, right-click actions, retention holds. |
 | [Handle field reports](field-reports.md) | Writing and sending a report on the phone, then reviewing it on the console. |
 | [Write reports and export packages](reports-and-exports.md) | Reports, the guided debrief, target packages and dossiers, the BOLO sheet, the executive summary. |
-| [Use the map and zones](maps-and-zones.md) | Basemaps, dropping a pin, zones, bulk reference data. |
+| [Use the map, zones and routes](maps-and-zones.md) | Basemaps, dropping a pin, zones as records, routes, KML/KMZ/GPX import and export, printing a map. |
 | [Use the team pages](team-pages.md) | Your profile, searching by analyst, the Roster, BOLO and Priorities boards, feeds. |
 
 ## New here?

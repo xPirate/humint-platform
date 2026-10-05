@@ -51,6 +51,11 @@ data class ReportRow(
     @ColumnInfo(name = "updated_at") val updatedAt: Long = System.currentTimeMillis(),
     /** What the console said when it last refused or failed. Shown, not hidden. */
     @ColumnInfo(name = "last_error") val lastError: String? = null,
+    /**
+     * A route walked with the recorder or the corners of an area, as GeoJSON
+     * ([lon, lat]). Null for every other kind of report. See track/Track.kt.
+     */
+    val geometry: String? = null,
 )
 
 @Entity(tableName = "attachments")
@@ -119,7 +124,7 @@ interface FieldDao {
     suspend fun noteError(id: String, message: String?, now: Long = System.currentTimeMillis())
 }
 
-@Database(entities = [ReportRow::class, AttachmentRow::class], version = 1, exportSchema = false)
+@Database(entities = [ReportRow::class, AttachmentRow::class], version = 2, exportSchema = false)
 abstract class FieldDatabase : RoomDatabase() {
     abstract fun dao(): FieldDao
 
@@ -155,12 +160,21 @@ abstract class FieldDatabase : RoomDatabase() {
             val factory = SupportOpenHelperFactory(key.copyOf())
             return Room.databaseBuilder(context, FieldDatabase::class.java, "field.db")
                 .openHelperFactory(factory)
+                .addMigrations(MIGRATION_1_2)
                 // No fallbackToDestructiveMigration. A migration this app
                 // cannot perform must not silently throw away a queue of
                 // reports nobody has uploaded yet; crashing is louder and
                 // recoverable, wiping is neither.
                 .build()
         }
+    }
+}
+
+/** 1.5 -> 1.6: routes and areas. One nullable column; every queued report
+ *  keeps everything it had. */
+val MIGRATION_1_2 = object : androidx.room.migration.Migration(1, 2) {
+    override fun migrate(db: androidx.sqlite.db.SupportSQLiteDatabase) {
+        db.execSQL("ALTER TABLE reports ADD COLUMN geometry TEXT")
     }
 }
 

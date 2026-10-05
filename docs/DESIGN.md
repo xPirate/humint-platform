@@ -784,6 +784,25 @@ link-signal pass stays off until somebody switches it on in **Admin → Link
 signals** — see "Suggested links" below before you do, because switching it on
 for an established case file produces a burst of proposals all at once.
 
+**Zones as records, routes, and route/area field reports** (v1.9):
+
+```
+docker compose exec -T db psql -U <POSTGRES_USER> -d <POSTGRES_DB> \
+    < db/migrate-v1.9-zones-routes.sql
+```
+
+Run it after v1.8 and before starting the new API. It adds `zone` and
+`route` to the entity types, gives every existing map zone a Zone record
+(`map_zones.entity_id`), turns a zone's Event into an `Event located_at Zone`
+relationship, adds `route_details`, and lets a field submission carry a
+`geometry`. The API also adopts any zone without a record at startup and
+during a restore, so a backup from before v1.9 restores into a v1.9 instance
+with its zones intact and linkable. Field 1.6 sends Route and Area reports;
+older apps keep working, and a 1.6 app against an older console sends them
+as ordinary reports without the shape.
+
+See "Zones are records; routes are records too" below for why.
+
 **Analyst profiles** (v1.8) add one table, `user_profiles`:
 
 ```
@@ -4659,3 +4678,60 @@ including the camera and the QR scan. Two things catch people out and both
 are written up in `android/README.md`: the JDK that Android Studio bundles is
 newer than the Gradle in this project can run on, and an emulator reaches the
 host at `10.0.2.2`, not `localhost`.
+
+
+## Zones are records; routes are records too (v1.9)
+
+A zone used to be a coloured shape on the map with an optional Event. That
+was enough to say "the square is non-permissive tonight" and not enough to say
+*who* holds it, *which* events happened inside it, or to hand it to someone in
+a package. The CHAZ case is the clear one: a contested area is an object of
+interest in its own right, with organisations, people, events and reports
+attached to it, and none of that can hang off something that is not a record.
+
+So `zone` is an entity type. `map_zones` stays as its detail table — the
+geometry, the environment, the clock and the change timeline are unchanged —
+and gains `entity_id`. The record's name and description are the zone's name
+and notes; the copy in `map_zones` is kept in step for the map's own queries,
+and the record wins wherever the two are read together, because a merge or a
+rename edits the record.
+
+`route` is the same idea for a line: a way through, recorded for a reason. It
+can be drawn (shown dashed: a plan), imported from KML/KMZ/GPX, or walked with
+the field app (solid, with a time on every point). The record's description
+is the *why*, because that is the first question anyone opening a route asks.
+
+**What does not change.** Neither type is made from the New Entity form or a
+CSV: a shape is drawn, imported or walked. The model never proposes either.
+Merging works within a kind (the survivor keeps its own shape and the other's
+links move across) and is refused across kinds, because there is nothing
+honest to do with a polygon on a Person.
+
+**Geometry stays in JSONB.** Routes add length, a bounding box and simplified
+display copies; nothing here needs PostGIS (see the note at the top of
+`api/zones.py`). `api/geometry.py` holds the arithmetic.
+
+**Files.** KML, KMZ and GPX are read with the standard library's XML parser,
+which does not fetch external entities, after a size cap, with a cap on what a
+KMZ may expand to. Import is preview-then-commit with the file sent twice, so
+an abandoned import leaves nothing on the server; the original file is kept on
+every record made from it. Exports write the environment as KML styles and
+recorded times as `gx:Track` / GPX `<time>`.
+
+**The printed map** is drawn on the server (`api/map_render.py`) from the same
+tile sources and downloaded packs the Map page uses, because a package is
+built where there is no browser, and a browser cannot hand back a canvas
+painted with another site's tiles. A live tile fetch is skipped when
+`MAP_DOWNLOAD_ENABLED=false`, and stops at the first connection failure so an
+offline machine prints a grid in a second rather than timing out tile by
+tile. A package's map draws only the record and its one-hop places, zones and
+routes — the same boundary as the rest of the package.
+
+**The field app's recorder** is the first thing in the app that uses
+position with the screen off. It is a foreground service of type `location`,
+started only by a person pressing Start, with a notification for every
+second it runs. The queue is locked for most of a walk, so points are sealed
+one by one under a keystore key into a buffer and moved under the PIN when the
+vault next opens — weaker than the queue for as long as a track sits unmerged,
+and documented as such in `track/TrackBuffer.kt` and the app's README.
+

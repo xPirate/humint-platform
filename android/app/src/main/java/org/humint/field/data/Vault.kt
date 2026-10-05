@@ -429,6 +429,9 @@ object Vault {
             Crypto.shred(File(context.filesDir, it))
         }
         mediaDir(context).listFiles()?.forEach { Crypto.shred(it) }
+        // A route recording in progress, and the points waiting to be merged.
+        org.humint.field.track.RouteRecorder.stop(context)
+        org.humint.field.track.TrackBuffer.destroyAll(context)
         listOf("field.db", "field.db-wal", "field.db-shm").forEach {
             Crypto.shred(context.getDatabasePath(it))
         }

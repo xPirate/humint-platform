@@ -230,16 +230,32 @@ def _clean_geometry(raw) -> dict | None:
         return None
     kind = raw.get("type")
     try:
-        if kind == "LineString":
-            coords = [geo.clean_position(p) for p in (raw.get("coordinates") or [])]
-            if len(coords) < 2:
+        if kind in ("LineString", "MultiLineString"):
+            # A recording stopped and continued arrives as a MultiLineString,
+            # so the gap between the runs is not drawn as a line.
+            parts = [raw.get("coordinates") or []] if kind == "LineString" \
+                else [p for p in (raw.get("coordinates") or []) if isinstance(p, list)]
+            parts = [[geo.clean_position(p) for p in part] for part in parts]
+            total = sum(len(p) for p in parts)
+            if total > geo.MAX_ROUTE_POINTS:
                 return None
-            coords = coords[:geo.MAX_ROUTE_POINTS]
-            out = {"type": "LineString", "coordinates": coords}
             times = raw.get("times")
-            if isinstance(times, list) and len(times) == len(coords) and all(
-                    isinstance(t, (int, float)) for t in times):
-                out["times"] = [int(t) for t in times]
+            timed = (isinstance(times, list) and len(times) == total
+                     and all(isinstance(t, (int, float)) for t in times))
+            keep = [i for i, p in enumerate(parts) if len(p) >= 2]
+            if not keep:
+                return None
+            if timed:
+                flat_times, offset = [], 0
+                for i, part in enumerate(parts):
+                    if i in keep:
+                        flat_times += [int(t) for t in times[offset:offset + len(part)]]
+                    offset += len(part)
+            parts = [parts[i] for i in keep]
+            out = ({"type": "LineString", "coordinates": parts[0]} if len(parts) == 1
+                   else {"type": "MultiLineString", "coordinates": parts})
+            if timed:
+                out["times"] = flat_times
             return out
         if kind == "Polygon":
             ring = [geo.clean_position(p) for p in ((raw.get("coordinates") or [[]])[0] or [])]
@@ -258,9 +274,9 @@ def geometry_summary(g: dict | None) -> dict | None:
     """Length, points and duration, for the queue card and the report body."""
     if not g:
         return None
-    if g.get("type") == "LineString":
+    if g.get("type") in ("LineString", "MultiLineString"):
         times = g.get("times") or []
-        return {"kind": "route", "points": len(g["coordinates"]),
+        return {"kind": "route", "points": geo.point_count(g),
                 "length_m": round(geo.line_length_m(g), 1),
                 "duration_s": int((times[-1] - times[0]) / 1000) if len(times) >= 2 else None,
                 "started_at": times[0] if times else None}
@@ -744,8 +760,8 @@ def _suggestion(template, fields, lat, lng, observed_at, geometry):
 def _display_geometry(g):
     if not g:
         return None
-    if g.get("type") == "LineString":
-        return geo.simplified_line({"type": "LineString", "coordinates": g["coordinates"]}, 0.00003)
+    if g.get("type") in ("LineString", "MultiLineString"):
+        return geo.simplified_line({"type": g["type"], "coordinates": g["coordinates"]}, 0.00003)
     return g
 
 
@@ -884,7 +900,7 @@ def _entity_from_draft(cur, draft: dict, device_label, user: dict, *, shape=None
         mode = draft["details"].get("travel_mode")
         entity_id = routes_module.insert_route(
             cur, user, name=draft["name"], description=description,
-            geometry={"type": "LineString", "coordinates": shape["coordinates"]},
+            geometry={"type": shape["type"], "coordinates": shape["coordinates"]},
             origin="field",
             # The app's lists and the console's are the same words, but an app a
             # version ahead may send one this console does not know; the record

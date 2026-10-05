@@ -1,7 +1,7 @@
 # HUMINT Field — privacy policy
 
 *Applies to the Android app **HUMINT Field** (`org.humint.field`).
-Last updated: 3 October 2026.*
+Last updated: 5 October 2026.*
 
 HUMINT Field is a reporting tool for teams that run their own HUMINT Platform
 console. It is open source: everything below can be checked in the code at
@@ -22,7 +22,9 @@ Only what you put into a report:
 | Data | When | Why |
 |---|---|---|
 | Report text (the form you fill in) | When you type it | It is the report. |
-| Precise location | Only while a report is open on screen, if you allow it | To record where the observation was made. No background location. |
+| Precise location | While a report is open on screen, if you allow it | To record where the observation was made. |
+| A route's track (location over time) | Only while you are recording a route you started yourself — a notification shows the whole time, and it stops when you press Stop | To record the way you went, for a Route report. |
+| An area's corners | When you press "Drop a corner here" | To mark the edge of an area, for an Area report. |
 | Photos and video | When you take them with the app's camera | Attached to the report. |
 | Voice recordings | When you press record | Attached to the report. |
 | Images you pick ("Add image") | When you choose them in Android's photo picker | Attached to the report. The app sees only the images you pick, once; it cannot browse your gallery. |
@@ -31,7 +33,9 @@ Only what you put into a report:
 
 - **On your phone**, in the app's private storage, encrypted with a key that
   needs both your PIN and the phone's hardware keystore. The app excludes this
-  data from Android cloud backups.
+  data from Android cloud backups. While a route is being recorded with the
+  app locked, its points are encrypted under the phone's hardware keystore
+  alone, and moved under your PIN the next time you open the app.
 - **On your team's console**, once you send it. The console is a server your
   own team or organisation runs; it is not operated by the app's developer.
   Your team decides how long it keeps reports and who can see them. Ask your
@@ -66,7 +70,9 @@ administrator which yours uses.
 |---|---|
 | Camera | Taking photos and video for a report, and scanning the console's QR code. |
 | Microphone | Voice memos and video sound. |
-| Location (precise) | Recording where an observation was made, while a report is open. |
+| Location (precise) | Recording where an observation was made, while a report is open; recording a route you start. |
+| Foreground service (location) | Keeping a route recording running with the screen off, with a notification. |
+| Notifications | Showing that a route is being recorded, with a Stop button. |
 | Internet | Sending reports to your team's console. |
 
 ## Children

@@ -188,7 +188,7 @@ anyway — Play counts any transfer off the device:
 
 | Question | Answer |
 |---|---|
-| Data collected | **Location** (precise), **Photos and videos**, **Audio** (voice recordings), **Other user-generated content** (report text). |
+| Data collected | **Location** (precise — including a route's track, while the user is recording one), **Photos and videos**, **Audio** (voice recordings), **Other user-generated content** (report text). |
 | Shared with third parties | No. |
 | Purpose | App functionality. |
 | Required or optional | Optional — the user decides what goes in each report. |
@@ -198,8 +198,29 @@ anyway — Play counts any transfer off the device:
 No crash reporting, analytics or Google Play Services are included.
 
 Permissions to expect questions about: camera, microphone, precise location
-(foreground only — **no** background location, so no extra declaration). The
-photo picker needs no media permission.
+(no `ACCESS_BACKGROUND_LOCATION`), and notifications. The photo picker needs
+no media permission.
+
+#### Foreground service declaration (1.6 and later)
+
+The route recorder (1.6) is a **foreground service of type location**, so Play
+Console asks for a declaration under **App content → Foreground service
+permissions**:
+
+- **Task:** "Records a route the user is walking or driving, which they start
+  and stop themselves, so it can be sent to their team's console as part of a
+  field report. Recording continues with the screen off; a notification is
+  shown the whole time and has a Stop button."
+- **Type:** Location.
+- **Video:** a short screen recording on a phone: open a Route report, press
+  **Start recording**, show the notification, lock the phone, unlock, press
+  **Stop**, show the recorded track. Upload it as an unlisted video and paste
+  the link. A debug build allows the screen recording (release builds block
+  it).
+
+Because recording only ever starts from a button the user presses with the app
+on screen, it counts as while-in-use location; there is no background-location
+declaration.
 
 ### 5. Release to testers
 

@@ -409,12 +409,40 @@ quietly undo the entire point of the app.
 
 ## The permissions, and the ones that are missing
 
-`INTERNET`, `CAMERA`, `RECORD_AUDIO`, `ACCESS_FINE_LOCATION`.
+`INTERNET`, `CAMERA`, `RECORD_AUDIO`, `ACCESS_FINE_LOCATION`, and from 1.6
+`FOREGROUND_SERVICE`, `FOREGROUND_SERVICE_LOCATION` and `POST_NOTIFICATIONS`
+for the route recorder.
 
-Not `ACCESS_BACKGROUND_LOCATION`: position is read while a report is open on
-screen and not otherwise. A reporting tool that also tracks the analyst is a
-different product, and a worse one to have on a phone that might be
-searched.
+Not `ACCESS_BACKGROUND_LOCATION`. Position is read while a report is open on
+screen, and while a route the analyst started by hand is recording — by a
+foreground service that shows a notification for every second it runs and
+stops when they press Stop. A reporting tool that tracks the analyst without
+them asking is a different product, and a worse one to have on a phone that
+might be searched; one that records the walk they asked it to record, and
+says so on the lock screen, is this one.
+
+### The route recorder (1.6)
+
+`track/RouteRecorderService.kt` asks GPS (never the network provider — a
+network fix is hundreds of metres wide) for a fix every two seconds, keeps
+fixes within 35 m that have moved at least 5 m (`TrackFilter`), and writes
+each kept point straight to disk.
+
+Not to the queue: the queue is locked for most of a walk. Points go to
+`track/TrackBuffer.kt`, sealed one by one under a keystore key that needs this
+handset but **not** the PIN, and are moved into the report under the PIN the
+next time the vault is open. So for as long as a recording is running or
+waiting to be merged, its track is protected by the hardware keystore alone —
+a copy of the app's files is useless, the phone itself in the hands of
+someone with root is not. Stopping and opening the app closes that window.
+Erase and start again deletes the buffer and its key with everything else.
+
+Stop and continue makes a MultiLineString: the gap is kept, not drawn as a
+line nobody walked. The service is not sticky; if Android kills it, the points
+so far are safe and **Continue recording** carries on.
+
+An **Area** report collects corners from the same on-screen position the rest
+of the form uses, so it needs no service at all.
 
 Not `READ_MEDIA_IMAGES`: the app captures its own photos into its own
 sandbox and cannot read the gallery, so a seized phone's gallery is not

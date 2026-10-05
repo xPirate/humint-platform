@@ -35,6 +35,8 @@ import androidx.compose.material.icons.filled.Explore
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Place
+import androidx.compose.material.icons.filled.Route
+import androidx.compose.material.icons.filled.Pentagon
 import androidx.compose.material.icons.filled.SettingsInputAntenna
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.outlined.CloudUpload
@@ -209,6 +211,8 @@ fun templateIcon(key: String): ImageVector = when (key) {
     "salute" -> Icons.Filled.Visibility
     "df" -> Icons.Filled.Explore
     "place" -> Icons.Filled.Place
+    "route" -> Icons.Filled.Route
+    "area" -> Icons.Filled.Pentagon
     "note" -> Icons.Filled.EditNote
     else -> Icons.Filled.Description
 }
@@ -223,6 +227,8 @@ fun templateTint(key: String): Color = when (key) {
     "salute" -> Color(0xFFFF7A6B)
     "df" -> Color(0xFF5FD4C8)
     "place" -> Color(0xFF8BD17C)
+    "route" -> Color(0xFF7FA7FF)
+    "area" -> Color(0xFFE6C15A)
     else -> MaterialTheme.colorScheme.onSurfaceVariant
 }
 

@@ -136,6 +136,18 @@ install the right one. See
 Choose **More details → Install anyway**, or install from the Play listing
 instead.
 
+### A route didn't record, or has gaps
+- **Nothing recorded:** location must be allowed and GPS switched on. The
+  report says why if the recorder could not start.
+- **Gaps or a short track:** fixes worse than about 35 m are dropped. Under
+  trees, in canyons between buildings or inside vehicles GPS can stay worse
+  than that for minutes. Keep the phone near a window or on top of a bag.
+- **Stopped by itself:** some phones kill background apps aggressively. In
+  Android's settings, set HUMINT Field's battery use to *Unrestricted*. The
+  points recorded so far are kept; press **Continue recording**.
+- **No notification visible:** notifications were refused. The recording
+  still runs; allow notifications for the app to see and stop it from there.
+
 ### Forgotten PIN
 Unrecoverable by design. **Erase and start again** on the lock screen; unsent
 reports are lost, sent ones are safe on the console.

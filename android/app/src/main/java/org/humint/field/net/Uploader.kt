@@ -158,6 +158,8 @@ class Uploader(
             report.accuracyM?.let { put("location_accuracy_m", it.toDouble()) }
             report.locationNote?.let { put("location_note", it) }
             put("client_ref", report.clientRef)
+            // A route or an area, stored as the GeoJSON the console reads.
+            report.geometry?.let { runCatching { put("geometry", JSONObject(it)) } }
         }
 
         val request = Request.Builder()

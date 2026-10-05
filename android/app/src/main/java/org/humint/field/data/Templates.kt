@@ -22,6 +22,12 @@ class Template(
     val capture: List<String>,
     val requireAny: List<String>,
     val fields: List<TemplateField>,
+    /**
+     * "track" for a route walked with the recorder, "perimeter" for an area
+     * marked corner by corner, null for every other form. Optional in the
+     * registry, so an older registry without it still parses.
+     */
+    val geometry: String? = null,
 ) {
     fun captures(kind: String) = capture.contains(kind)
 
@@ -154,6 +160,7 @@ object Templates {
                 titlePattern = t.getString("title"),
                 capture = t.optJSONArray("capture").orEmpty().strings(),
                 requireAny = t.optJSONArray("require_any").orEmpty().strings(),
+                geometry = t.optString("geometry").ifBlank { null },
                 fields = t.getJSONArray("fields").objects().map { f ->
                     TemplateField(
                         key = f.getString("key"),

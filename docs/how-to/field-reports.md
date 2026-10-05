@@ -25,6 +25,8 @@ The bottom bar: **Reports** · **Send** · **+** (new report) · **Lock** ·
    | Activity | A SALUTE report: Size, Activity, Location, Unit, Time, Equipment. |
    | Bearing | A DF cut. |
    | Place | Somewhere worth recording. |
+   | Route | A way you walk or drive, recorded as you go (1.6). |
+   | Area | The edge of something, marked corner by corner (1.6). |
    | Note | Anything else. |
 
 3. Fill it in. Everything saves as you type — there's no Save button. Set the
@@ -44,6 +46,39 @@ The bottom bar: **Reports** · **Send** · **+** (new report) · **Lock** ·
 
 Reports stay on the phone, encrypted, until sent. Back out and it stays a
 draft. To throw one away, use the discard option on the report.
+
+### Record a route
+
+1. **+** → **Route**. Give it a name and say **why** you are recording it —
+   what it avoids, when it works, who uses it.
+2. Press **Start recording**. Allow notifications if asked; a **Recording a
+   route** notification stays up the whole time.
+3. Put the phone away and walk (or drive). It keeps recording with the screen
+   off and the app locked.
+4. When you arrive, press **Stop** — in the notification, or on the report.
+5. Check the sketch, length and time. **Continue recording** adds another leg
+   (the gap is kept, not drawn as a straight line); **Clear** starts again.
+6. **Mark ready to send.**
+
+Only GPS fixes within about 35 m are kept, and standing still adds nothing,
+so a pause at a checkpoint does not scribble on the track. Under heavy cover
+the track may have gaps.
+
+**Security:** while a route is recording, and until you next open the app,
+its points are held under a key on the phone but not under your PIN. Stop and
+open the app to put them under the PIN with the rest of the report.
+
+### Mark an area
+
+1. **+** → **Area**. Name it and set **How workable**.
+2. Walk to the first corner and press **Drop a corner here**. Wait for a GPS
+   accuracy of 25 m or better if you can — the screen tells you.
+3. Walk the edge, dropping a corner at each turn, in order. **Undo last** if
+   you misplace one.
+4. Three corners at least. **Mark ready to send.**
+
+Keep the app open while you walk the edge: it reads position only while it is
+on screen. (The fingerprint shortcut saves retyping the PIN if it locks.)
 
 ### Camera tips
 
@@ -87,6 +122,9 @@ the top.
 
 ### Review one
 
+A Route or Area report shows a drawing of the shape and its length, points
+and time on the card.
+
 Each card shows the device, whose account it belongs to, when the sender saw
 it, and — if the phone had a fix — position, accuracy and their own words
 about where they were. It's laid out by form: a Vehicle sighting shows plate,
@@ -111,7 +149,9 @@ admin to upgrade the console.
 2. Press **Accept as a draft report**. The report opens with a provenance block
    (device, time, place, accuracy) and the photos attached.
 3. If a record was created, **all photos and video go onto it too**, and the
-   first photo becomes its portrait if it hasn't one.
+   first photo becomes its portrait if it hasn't one. A **Route** report
+   makes a Route record with the walked line and its times; an **Area** report
+   makes a Zone with the corners as its edge.
 4. Finish the report: add what you know, link the records it touches, and
    confirm it the normal way ([Write reports](reports-and-exports.md)).
 

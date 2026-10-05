@@ -51,12 +51,13 @@ const { chromium } = require('playwright');
     HUMINT Field is the reporting app for teams that run their own HUMINT
     Platform console — a self-hosted, open-source case-management server.
 
-    Write it down where you are, with or without signal. Pick a form — signal,
-    person, vehicle, activity (SALUTE), bearing, place, or a quick note — fill
-    it in, and attach photos, video, voice memos, or screenshots. Everything
-    is saved as you type and stays on the phone, encrypted, until you're back
-    in range of your team's console. Then scan the console's QR code and the
-    queue empties.
+    Write it down where you are, with or without signal. Pick a form —
+    signal, person, vehicle, activity (SALUTE), bearing, place, route, area,
+    or a quick note — fill it in, and attach photos, video, voice memos, or
+    screenshots. Record a route as you walk or drive it, with the screen off,
+    or mark the edge of an area corner by corner. Everything is saved as you
+    type and stays on the phone, encrypted, until you're back in range of your
+    team's console. Then scan the console's QR code and the queue empties.
 
     Built for phones that might be lost or handed over:
     • Reports are encrypted with a key that needs both your PIN and the
@@ -69,7 +70,8 @@ const { chromium } = require('playwright');
     • Sent reports are erased from the phone.
 
     No accounts, no ads, no analytics, no crash reporting, and no Google Play
-    Services. Location is read only while a report is open on screen.
+    Services. Location is read only while a report is open on screen, or while
+    you are recording a route you started — with a notification the whole time.
 
     You need a HUMINT Platform console to send reports to. The console and
     this app are open source: github.com/xPirate/humint-platform

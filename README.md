@@ -101,8 +101,10 @@ hold the console's address or its token: those are scanned off a QR at the
 moment of upload and wiped when it finishes, so a phone that is lost or seized
 gives up the reports still on it and no route to anything else. No Google Play
 Services anywhere in it, so it runs on a de-Googled handset. Pinch and
-double-tap zoom, tap to focus, flash off unless you ask for it, and **Add
-image** for a screenshot of something seen on a screen. A signed APK (about
+double-tap zoom, tap to focus, flash off unless you ask for it, **Add image**
+for a screenshot of something seen on a screen, and from 1.6 a **Route**
+recorder that runs with the screen off and an **Area** form that marks an edge
+corner by corner. A signed APK (about
 18 MB, Android 10 or later) is on the
 [Releases page](https://github.com/xPirate/humint-platform/releases/latest)
 with its SHA-256 in the notes, and a Google Play listing is on the way so
@@ -207,6 +209,15 @@ box over the ground you care about, and download it while you still have a
 connection. After that the map is served from your own machine. ATAK map
 source files import directly, satellite imagery included. Leaflet is served by
 the app, not a CDN, so the map always loads.
+
+**Routes and zones you can hand to ATAK.** A Route is a record with a line:
+drawn on the map as a plan, walked with the field app's recorder (with the
+time at every point), or imported from KML, KMZ or GPX alongside areas and
+waypoints. Every zone is a record too, so a contested area can be linked to
+the organisations holding it and the events inside it. Export any of it back
+out as KML, KMZ or GPX, print the map view as a one-page PDF with scale and
+coordinates, and target packages carry a map of the record and its linked
+places.
 
 **Zones, like a NOTAM.** Draw an area, say how workable it is, and put a clock
 on it. A protest that turns from semi-permissive to non-permissive is one edit

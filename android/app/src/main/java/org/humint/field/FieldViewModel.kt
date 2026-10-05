@@ -25,6 +25,12 @@ import org.humint.field.media.Capture
 import org.humint.field.net.SessionHolder
 import org.humint.field.net.UploadSession
 import org.humint.field.net.Uploader
+import org.humint.field.track.RouteRecorder
+import org.humint.field.track.Shape
+import org.humint.field.track.TrackBuffer
+import org.humint.field.track.TrackPoint
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.collectLatest
 import org.json.JSONObject
 import java.io.File
 
@@ -69,6 +75,66 @@ class FieldViewModel(app: Application) : AndroidViewModel(app) {
     val notice: StateFlow<String?> = _notice
 
     fun clearNotice() { _notice.value = null }
+
+    // ------------------------------------------------------- routes and areas
+
+    val recorder = RouteRecorder.state
+
+    /** Start recording this report's route. Returns why not, or null. */
+    fun startRecording(reportId: String): String? =
+        RouteRecorder.start(getApplication(), reportId)
+
+    fun stopRecording() = RouteRecorder.stop(getApplication())
+
+    /**
+     * Move buffered points into their reports, under the vault's key.
+     *
+     * Each run of the recorder becomes one more segment of the report's
+     * track: a route stopped at a checkpoint and continued on the far side
+     * keeps the gap rather than drawing a line through it. A buffer whose
+     * report no longer exists (discarded mid-walk) is shredded.
+     */
+    private val mergeLock = Mutex()
+
+    suspend fun mergePendingTracks() = mergeLock.withLock {
+        val context = getApplication<Application>()
+        val busy = RouteRecorder.state.value.takeIf { it.running }?.reportId
+        for (reportId in TrackBuffer.pending(context)) {
+            if (reportId == busy) continue
+            val points = runCatching { TrackBuffer.read(context, reportId) }.getOrDefault(emptyList())
+            val row = runCatching { dao().report(reportId) }.getOrNull()
+            if (row == null) { TrackBuffer.discard(context, reportId); continue }
+            if (points.isNotEmpty()) {
+                editLock.withLock {
+                    val current = dao().report(reportId) ?: return@withLock
+                    val shape = Shape.parse(current.geometry, "track").plusSegment(points)
+                    dao().update(current.copy(geometry = shape.toJson(),
+                                              updatedAt = System.currentTimeMillis()))
+                }
+            }
+            TrackBuffer.discard(context, reportId)
+        }
+    }
+
+    /** Drop a corner of an area at the phone's current position. */
+    fun addCorner(reportId: String, fix: Position.Fix) = edit(reportId) { row ->
+        val shape = Shape.parse(row.geometry, "perimeter")
+        val ring = shape.segments.firstOrNull().orEmpty() + TrackPoint(
+            fix.lat, fix.lng, System.currentTimeMillis(), fix.accuracyM)
+        row.copy(geometry = Shape("perimeter", listOf(ring)).toJson())
+    }
+
+    fun undoCorner(reportId: String) = edit(reportId) { row ->
+        val ring = Shape.parse(row.geometry, "perimeter").segments.firstOrNull().orEmpty().dropLast(1)
+        row.copy(geometry = if (ring.isEmpty()) null else Shape("perimeter", listOf(ring)).toJson())
+    }
+
+    /** Throw away a route or an area and start again. */
+    fun clearShape(reportId: String) = viewModelScope.launch {
+        if (RouteRecorder.isRecording(reportId)) RouteRecorder.stop(getApplication())
+        TrackBuffer.discard(getApplication(), reportId)
+        edit(reportId) { it.copy(geometry = null) }
+    }
 
     // ---------------------------------------------------------------- drafts
 
@@ -131,7 +197,7 @@ class FieldViewModel(app: Application) : AndroidViewModel(app) {
     fun save(row: ReportRow) = edit(row.id) { row }
 
     /** Mark a report finished and ready to go out with the next upload. */
-    fun markReady(row: ReportRow, onRefused: (String) -> Unit) = viewModelScope.launch {
+    fun markReady(row: ReportRow, onRefused: (String) -> Unit, onReady: () -> Unit = {}) = viewModelScope.launch {
         val values = row.fields.toMap()
         // A report whose template this build has never heard of can still be
         // sent — it came from somewhere, and refusing to send it would be the
@@ -141,7 +207,23 @@ class FieldViewModel(app: Application) : AndroidViewModel(app) {
             val missing = template.whatIsMissing(values)
             if (missing != null) { onRefused("Still needs $missing."); return@launch }
         }
-        dao().update(row.copy(status = "ready", lastError = null,
+        // Re-read: the track may have been merged since the screen last drew.
+        val latest = dao().report(row.id) ?: row
+        when (template?.geometry) {
+            "track" -> {
+                if (RouteRecorder.isRecording(row.id)) {
+                    onRefused("Stop recording first."); return@launch
+                }
+                if (Shape.parse(latest.geometry, "track").points < 2) {
+                    onRefused("Still needs the route — press Start and walk it."); return@launch
+                }
+            }
+            "perimeter" -> if (Shape.parse(latest.geometry, "perimeter").points < 3) {
+                onRefused("Still needs at least three corners."); return@launch
+            }
+        }
+        onReady()
+        dao().update(latest.copy(status = "ready", lastError = null,
                             title = template?.composeTitle(values) ?: row.title,
                             updatedAt = System.currentTimeMillis()))
     }
@@ -154,6 +236,9 @@ class FieldViewModel(app: Application) : AndroidViewModel(app) {
     fun discard(row: ReportRow) = viewModelScope.launch { erase(row) }
 
     private suspend fun erase(row: ReportRow) {
+        // A recording for this report stops, and its unmerged points go too.
+        if (RouteRecorder.isRecording(row.id)) RouteRecorder.stop(getApplication())
+        TrackBuffer.discard(getApplication(), row.id)
         // Files first: once the rows are gone there is nothing left saying
         // which encrypted blobs in the sandbox belonged to this report.
         dao().attachments(row.id).forEach { Crypto.shred(File(it.path)) }
@@ -239,6 +324,24 @@ class FieldViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun dismissUpload() { _upload.value = null }
+
+    // Last in the class on purpose: viewModelScope runs these immediately, and
+    // everything they touch (the locks above) has to exist by then.
+    init {
+        // Points recorded while the vault was shut are moved under the PIN
+        // the moment it opens, and again whenever a recording stops.
+        viewModelScope.launch {
+            Vault.state.collectLatest { st -> if (st is Vault.State.Open) mergePendingTracks() }
+        }
+        viewModelScope.launch {
+            RouteRecorder.state.collectLatest { st ->
+                if (!st.running && Vault.state.value is Vault.State.Open) {
+                    delay(800)        // let the service write its last point
+                    mergePendingTracks()
+                }
+            }
+        }
+    }
 }
 
 /** The stored field bag, as a plain map. org.json rather than a serialization
