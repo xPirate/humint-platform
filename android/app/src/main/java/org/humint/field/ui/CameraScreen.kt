@@ -112,6 +112,9 @@ fun PhotoCaptureScreen(
             .setFlashMode(ImageCapture.FLASH_MODE_OFF)
             .build()
     }
+    // Landscape when the phone is held landscape. See DeviceRotation.kt.
+    val rotation = rememberDeviceRotation()
+    LaunchedEffect(rotation) { capture.targetRotation = rotation }
     var camera by remember { mutableStateOf<Camera?>(null) }
     var flash by remember { mutableStateOf(FlashChoice.Off) }
     var busy by remember { mutableStateOf(false) }

@@ -1007,10 +1007,13 @@ def accept_submission(submission_id: int, payload: HandleRequest,
         for name, path, mime, size in files:
             cur.execute(
                 "INSERT INTO attachments (report_id, filename, title, source_note, "
-                "        storage_path, mime_type, file_size_bytes, uploaded_by) "
-                "VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
+                "        storage_path, mime_type, file_size_bytes, uploaded_by, extraction_status) "
+                "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)",
                 (report_id, name, name, f"Field submission from {device_label or 'a device'}",
-                 path, mime, size, user["id"]))
+                 path, mime, size, user["id"],
+                 # A clip or a voice memo has no text to read; queued, it would
+                 # only come back "failed" and look like something broke.
+                 "skipped" if (mime or "").startswith(("audio/", "video/")) else "pending"))
 
         cur.execute("DELETE FROM field_submission_files WHERE submission_id = %s",
                     (submission_id,))

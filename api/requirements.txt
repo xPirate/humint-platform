@@ -1,4 +1,7 @@
 fastapi>=0.115.0
+# 0.39+ answers Range requests from FileResponse, which is what lets a video
+# or a voice memo seek in the browser (Safari will not play one without it).
+starlette>=0.39.0
 uvicorn[standard]>=0.30.0
 psycopg2-binary>=2.9.9
 pydantic>=2.8.0

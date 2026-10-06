@@ -23,7 +23,7 @@ import uuid
 from datetime import datetime
 from typing import Optional
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Response, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, Response, UploadFile
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
@@ -57,6 +57,10 @@ SAFE_EXTENSIONS = {
     # Map files (v1.9): kept so a route someone was sent can sit on a record
     # and be opened on the map from there.
     ".kml", ".kmz", ".gpx",
+    # Audio and video, so a clip uploaded by hand keeps an extension and
+    # plays in the preview like one accepted from the field.
+    ".mp4", ".m4v", ".mov", ".webm", ".3gp",
+    ".m4a", ".mp3", ".aac", ".wav", ".ogg", ".opus",
 }
 
 # Files the text pipeline has nothing to read in. Stored as 'skipped' rather
@@ -500,7 +504,9 @@ async def upload_attachment(
                     report_id, entity_id, _display_filename(file.filename or "upload"),
                     (title or "").strip() or None, (source_note or "").strip() or None,
                     storage_path, file.content_type, len(content), user["id"],
-                    "skipped" if ext in MAP_FILE_EXTENSIONS else "pending",
+                    "skipped" if ext in MAP_FILE_EXTENSIONS
+                    or (file.content_type or "").startswith(("audio/", "video/"))
+                    else "pending",
                 ),
             )
             attachment_id, uploaded_at = cur.fetchone()
@@ -553,6 +559,7 @@ def get_attachment(attachment_id: int, user: dict = Depends(auth.require_user)):
 @router.get("/attachments/{attachment_id}/file")
 def download_attachment(
     attachment_id: int,
+    request: Request,
     # The in-app preview (see the attachment lightbox in frontend/app.js)
     # needs the browser to RENDER the file rather than save it. An <img> would
     # display it either way, but a PDF in an <iframe> obeys
@@ -579,9 +586,14 @@ def download_attachment(
     # Logged for both dispositions: an inline preview delivers exactly the
     # same bytes to the same person as a download does, so treating only the
     # download as "data leaving" would be a distinction without a difference.
-    audit.record("attachment.download", user=user, object_type="attachment",
-                 object_id=attachment_id, object_label=filename,
-                 detail={"inline": bool(inline), "mime_type": mime_type})
+    # Once per opening, not once per seek: a <video> or <audio> element asks
+    # for the file in byte ranges as it plays and scrubs, and FileResponse
+    # answers those with 206s. The request without a Range header is the one
+    # that means somebody opened it.
+    if not request.headers.get("range"):
+        audit.record("attachment.download", user=user, object_type="attachment",
+                     object_id=attachment_id, object_label=filename,
+                     detail={"inline": bool(inline), "mime_type": mime_type})
 
     media_type = mime_type or "application/octet-stream"
     if not inline:

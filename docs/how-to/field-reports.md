@@ -41,6 +41,11 @@ The bottom bar: **Reports** · **Send** · **+** (new report) · **Lock** ·
      screen. Pick up to 10 from Android's photo picker (25 MB each). The app
      only sees the images you pick; the originals stay in your gallery —
      delete them yourself if they shouldn't stay there.
+
+   Tap any attachment on the report to check it before you send: a photo
+   opens full screen, a clip or voice memo opens a player (it pauses if you
+   leave the app). The recording is decrypted into memory to play — no
+   unencrypted copy is ever written to the phone.
 6. Press **Mark ready to send**. If something required is missing, it tells
    you what.
 
@@ -88,6 +93,10 @@ on screen. (The fingerprint shortcut saves retyping the PIN if it locks.)
 - **Zoom:** pinch, double-tap for 2×, or tap the **1 / 2 / 5 / 10** chips
   (whatever the camera can reach).
 - **Focus:** tap where you want it sharp.
+- **Landscape:** turn the phone sideways and shoot. The buttons stay where
+  they are, but the photo or clip is saved the way you held the phone — a
+  wide building comes out wide. For video, turn the phone *before* you press
+  record; the orientation is fixed when recording starts.
 
 ### Send what's ready
 
@@ -131,7 +140,9 @@ about where they were. It's laid out by form: a Vehicle sighting shows plate,
 colour, make; a Signal shows frequency, band and mode above what was heard.
 
 - **Photos** — click a thumbnail for the full frame.
-- **Clips** — play in the card; nothing downloads until you press play.
+- **Clips and voice memos** — play in the card, or open them full size from
+  the attachment preview; nothing downloads until you press play, and you
+  can skip around a long clip without downloading all of it.
 - **Look it up on the map** — jumps to the spot with the address and nearby
   businesses, usually how coordinates become a Location.
 

@@ -169,6 +169,16 @@ dependencies {
     implementation("androidx.camera:camera-view:1.4.0")
     implementation("androidx.camera:camera-video:1.4.0")
 
+    // Playing back a clip or a voice memo before it is sent (1.6). Media3 is
+    // AndroidX with no Play Services in it, and it plays straight from the
+    // decrypted bytes in memory -- there is never a plaintext file to hand a
+    // player. ExoPlayer for the decoding, the UI module for the controls.
+    implementation("androidx.media3:media3-exoplayer:1.4.1")
+    implementation("androidx.media3:media3-ui:1.4.1")
+    // Reading a photo's EXIF orientation, so the in-app viewer shows it the
+    // right way up (BitmapFactory ignores the tag).
+    implementation("androidx.exifinterface:exifinterface:1.3.7")
+
     implementation("com.google.zxing:core:3.5.3")
     implementation("com.google.android.material:material:1.12.0")
 

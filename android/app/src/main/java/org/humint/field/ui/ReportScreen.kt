@@ -451,7 +451,10 @@ private fun CaptureRow(
     onRemove: (AttachmentRow) -> Unit,
 ) {
     var full by remember { mutableStateOf<AttachmentRow?>(null) }
-    full?.let { FullImage(it, onClose = { full = null }) }
+    full?.let {
+        if (it.kind == "image") FullImage(it, onClose = { full = null })
+        else FullMedia(it, onClose = { full = null })
+    }
 
     Column {
         FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -482,10 +485,13 @@ private fun CaptureRow(
                     // Before this, the first chance to find out you had
                     // photographed your own thumb was after the upload, back
                     // in range, hours later and nowhere near the subject.
-                    if (a.kind == "image") {
-                        AttachmentThumb(a, onOpen = { full = a })
-                        Spacer(Modifier.width(10.dp))
+                    when (a.kind) {
+                        "image" -> AttachmentThumb(a, onOpen = { full = a })
+                        // A clip or a voice memo plays back here before it is
+                        // sent, for the same reason a photo can be checked.
+                        "video", "audio" -> MediaThumb(a, onOpen = { full = a })
                     }
+                    Spacer(Modifier.width(10.dp))
                     Column(Modifier.weight(1f)) {
                         Text(
                             a.filename,
@@ -496,6 +502,7 @@ private fun CaptureRow(
                                 a.durationMs?.let { append("${it / 1000}s · ") }
                                 append("${a.sizeBytes / 1024} KB")
                                 if (a.kind == "image") append(" · tap to check it")
+                                if (a.kind == "video" || a.kind == "audio") append(" · tap to play")
                             },
                             style = MaterialTheme.typography.labelMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,

@@ -68,7 +68,8 @@ fun AttachmentThumb(row: AttachmentRow, onOpen: () -> Unit, size: Int = 56) {
                 // full size to fill a 56dp square is how a phone with four
                 // photos attached runs out of memory.
                 val small = Capture.jpegThumbnail(plain, maxEdge = size * 4) ?: plain
-                BitmapFactory.decodeByteArray(small, 0, small.size)?.asImageBitmap()
+                BitmapFactory.decodeByteArray(small, 0, small.size)
+                    ?.rotatedBy(exifRotation(plain))?.asImageBitmap()
             }.getOrNull()
         }
     }
@@ -102,7 +103,8 @@ fun FullImage(row: AttachmentRow, onClose: () -> Unit) {
             runCatching {
                 val plain = Capture.open(context, row.path) ?: return@runCatching null
                 val opts = BitmapFactory.Options().apply { inSampleSize = 2 }
-                BitmapFactory.decodeByteArray(plain, 0, plain.size, opts)?.asImageBitmap()
+                BitmapFactory.decodeByteArray(plain, 0, plain.size, opts)
+                    ?.rotatedBy(exifRotation(plain))?.asImageBitmap()
             }.getOrNull()
         }
         bitmap = decoded
@@ -150,3 +152,20 @@ fun FullImage(row: AttachmentRow, onClose: () -> Unit) {
         }
     }
 }
+
+/**
+ * How far the camera says to turn this JPEG to stand it up. The camera
+ * usually records which way up a photo was taken in its EXIF tag rather than
+ * turning the pixels; the console honours the tag, and BitmapFactory does not,
+ * so without this the phone showed a portrait shot on its side.
+ */
+internal fun exifRotation(jpeg: ByteArray): Int = runCatching {
+    androidx.exifinterface.media.ExifInterface(java.io.ByteArrayInputStream(jpeg)).rotationDegrees
+}.getOrDefault(0)
+
+internal fun android.graphics.Bitmap.rotatedBy(degrees: Int): android.graphics.Bitmap =
+    if (degrees % 360 == 0) this
+    else android.graphics.Bitmap.createBitmap(
+        this, 0, 0, width, height,
+        android.graphics.Matrix().apply { postRotate(degrees.toFloat()) }, true)
+

@@ -126,6 +126,13 @@ private fun VideoPane(onDone: (Capture.Captured?) -> Unit) {
     }
     val videoCapture = remember { VideoCapture.withOutput(recorder) }
     var recording by remember { mutableStateOf<Recording?>(null) }
+    // A clip filmed with the phone sideways plays back the right way up. Only
+    // read when a recording starts, so turning the phone mid-clip does not
+    // flip it halfway through.
+    val rotation = rememberDeviceRotation()
+    LaunchedEffect(rotation, recording) {
+        if (recording == null) videoCapture.targetRotation = rotation
+    }
     var startedAt by remember { mutableStateOf(0L) }
     var elapsed by remember { mutableStateOf(0) }
     var plainFile by remember { mutableStateOf<File?>(null) }
