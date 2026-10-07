@@ -27,6 +27,15 @@ object RouteRecorder {
         val lastAccuracyM: Float? = null,
         /** Set when the service could not start or lost the GPS. */
         val problem: String? = null,
+        /** Fixes the GPS delivered this run, kept or not. */
+        val fixes: Int = 0,
+        /** Fixes dropped as too inaccurate to draw. */
+        val tooRough: Int = 0,
+        /** The longest stretch this run with no fix arriving at all. */
+        val longestGapMs: Long = 0L,
+        /** Something about the phone's settings likely to stop GPS with the
+         *  screen off (battery saver, battery optimisation). Not an error. */
+        val warning: String? = null,
     )
 
     private val _state = MutableStateFlow(State())

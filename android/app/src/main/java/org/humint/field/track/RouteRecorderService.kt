@@ -15,7 +15,9 @@ import android.location.LocationListener
 import android.location.LocationManager
 import android.os.Build
 import android.os.IBinder
+import android.os.Handler
 import android.os.Looper
+import android.os.PowerManager
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
 import androidx.core.content.ContextCompat
@@ -51,12 +53,42 @@ class RouteRecorderService : Service(), LocationListener {
         private const val NOTIFICATION_ID = 41
         /** Ask GPS for a fix this often. Two seconds walks at about 3 m a step. */
         private const val INTERVAL_MS = 2_000L
+        /** No fix for this long and the notification says so. */
+        private const val GAP_WARN_MS = 60_000L
+        /** A walk is not twelve hours; the lock is released at Stop anyway,
+         *  this is only the backstop if something goes wrong. */
+        private const val WAKE_LOCK_MAX_MS = 12 * 60 * 60 * 1000L
     }
 
     private var reportId: String? = null
     private val filter = TrackFilter()
     private var lastKept: TrackPoint? = null
     private var lastNotified = 0L
+    private var lastFixAt = 0L
+    private var wakeLock: PowerManager.WakeLock? = null
+    private val handler = Handler(Looper.getMainLooper())
+
+    /**
+     * Checks every half minute that fixes are still arriving. Several phones
+     * stop handing GPS to an app once the screen is off -- battery saver,
+     * the maker's own battery manager -- and the first anybody knew of it was
+     * a straight line on the console. Now the notification says so while
+     * there is still time to do something, and the report says so after.
+     */
+    private val watchdog = object : Runnable {
+        override fun run() {
+            if (reportId == null) return
+            val now = System.currentTimeMillis()
+            val gap = now - lastFixAt
+            RouteRecorder.update { it.copy(longestGapMs = maxOf(it.longestGapMs, gap)) }
+            if (gap >= GAP_WARN_MS) {
+                getSystemService(NotificationManager::class.java)?.notify(
+                    NOTIFICATION_ID, notification(RouteRecorder.state.value.points, RouteRecorder.state.value.lengthM,
+                                                  "No GPS for ${formatDuration(gap)}"))
+            }
+            handler.postDelayed(this, 30_000L)
+        }
+    }
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -83,6 +115,7 @@ class RouteRecorderService : Service(), LocationListener {
         reportId = id
         filter.reset()
         lastKept = null
+        lastFixAt = System.currentTimeMillis()
         ensureChannel()
         try {
             ServiceCompat.startForeground(
@@ -105,6 +138,18 @@ class RouteRecorderService : Service(), LocationListener {
         if (!runCatching { manager.isProviderEnabled(LocationManager.GPS_PROVIDER) }.getOrDefault(false)) {
             RouteRecorder.update { it.copy(problem = "GPS is switched off. Turn on location to record.") }
         }
+        RouteRecorder.update { it.copy(warning = batteryWarning(this)) }
+        // Keeps the processor awake so fixes are delivered as they come
+        // rather than batched up -- or never -- while the phone sleeps. A
+        // partial lock: the screen stays off. Location recorders that work
+        // with the screen off all do this.
+        runCatching {
+            wakeLock = getSystemService(PowerManager::class.java)
+                ?.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "HUMINTField:route")
+                ?.apply { setReferenceCounted(false); acquire(WAKE_LOCK_MAX_MS) }
+        }
+        handler.removeCallbacks(watchdog)
+        handler.postDelayed(watchdog, 30_000L)
         // GPS only. A network fix is hundreds of metres wide and would draw a
         // route through somebody's house.
         runCatching {
@@ -121,9 +166,13 @@ class RouteRecorderService : Service(), LocationListener {
             altitudeM = if (location.hasAltitude()) location.altitude else null,
         )
         val now = System.currentTimeMillis()
+        val gap = now - lastFixAt
+        lastFixAt = now
+        val kept = filter.accept(p)
         RouteRecorder.update { it.copy(lastFixAt = now, lastAccuracyM = p.accuracyM.takeUnless { a -> a.isNaN() },
-                                       problem = null) }
-        if (!filter.accept(p)) return
+                                       problem = null, fixes = filter.seen, tooRough = filter.tooRough,
+                                       longestGapMs = maxOf(it.longestGapMs, gap)) }
+        if (!kept) return
         runCatching { TrackBuffer.append(this, id, p) }.onFailure {
             RouteRecorder.update { s -> s.copy(problem = "Could not save a point: ${it.message}") }
             return
@@ -141,7 +190,15 @@ class RouteRecorderService : Service(), LocationListener {
         }
     }
 
+    private fun releaseWakeLock() {
+        handler.removeCallbacks(watchdog)
+        runCatching { wakeLock?.takeIf { it.isHeld }?.release() }
+        wakeLock = null
+    }
+
     private fun finish() {
+        releaseWakeLock()
+        reportId = null
         runCatching { getSystemService(LocationManager::class.java)?.removeUpdates(this) }
         RouteRecorder.update { it.copy(running = false) }
         ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
@@ -149,6 +206,7 @@ class RouteRecorderService : Service(), LocationListener {
     }
 
     override fun onDestroy() {
+        releaseWakeLock()
         runCatching { getSystemService(LocationManager::class.java)?.removeUpdates(this) }
         RouteRecorder.update { it.copy(running = false) }
         super.onDestroy()
@@ -169,7 +227,7 @@ class RouteRecorderService : Service(), LocationListener {
      * Says that a route is being recorded and nothing about which. It shows
      * on the lock screen, and the route's name is case material.
      */
-    private fun notification(points: Int, lengthM: Double): Notification {
+    private fun notification(points: Int, lengthM: Double, alert: String? = null): Notification {
         val open = PendingIntent.getActivity(
             this, 0, Intent(this, MainActivity::class.java)
                 .addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP),
@@ -180,7 +238,8 @@ class RouteRecorderService : Service(), LocationListener {
         return NotificationCompat.Builder(this, CHANNEL)
             .setSmallIcon(R.drawable.ic_launcher_foreground)
             .setContentTitle("Recording a route")
-            .setContentText(if (points == 0) "Waiting for GPS…"
+            .setContentText(alert?.let { if (points == 0) it else "$it · ${formatLength(lengthM)} · $points points" }
+                            ?: if (points == 0) "Waiting for GPS…"
                             else "${formatLength(lengthM)} · $points points")
             .setOngoing(true)
             .setOnlyAlertOnce(true)
@@ -190,4 +249,26 @@ class RouteRecorderService : Service(), LocationListener {
             .addAction(0, "Stop", stop)
             .build()
     }
+}
+
+/**
+ * Why GPS is likely to stop when the screen goes off, in words for the
+ * report screen, or null when nothing on the phone points that way.
+ *
+ * Battery saver on most phones has a "location mode" that turns GPS off for
+ * anything not on screen; and an app left under battery optimisation can be
+ * put to sleep by the maker's own battery manager however it asks. The app
+ * cannot change either -- Android leaves both to the person holding the
+ * phone -- so it says so before a walk, not after.
+ */
+fun batteryWarning(context: android.content.Context): String? {
+    val pm = context.getSystemService(PowerManager::class.java) ?: return null
+    if (pm.isPowerSaveMode && Build.VERSION.SDK_INT >= Build.VERSION_CODES.P &&
+        pm.locationPowerSaveMode != PowerManager.LOCATION_MODE_NO_CHANGE) {
+        return "Battery Saver is on, and it turns GPS off when the screen is off. Turn Battery Saver off for the walk."
+    }
+    if (!pm.isIgnoringBatteryOptimizations(context.packageName)) {
+        return "Battery use for HUMINT Field is optimised, so the phone may stop GPS with the screen off. Set it to Unrestricted."
+    }
+    return null
 }

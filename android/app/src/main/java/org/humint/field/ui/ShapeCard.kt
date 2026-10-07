@@ -1,7 +1,10 @@
 package org.humint.field.ui
 
 import android.Manifest
+import android.content.Intent
+import android.net.Uri
 import android.os.Build
+import android.provider.Settings
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Canvas
@@ -45,14 +48,17 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.Fill
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlinx.coroutines.delay
 import org.humint.field.FieldViewModel
 import org.humint.field.data.Position
 import org.humint.field.data.ReportRow
 import org.humint.field.track.Shape
+import org.humint.field.track.batteryWarning
 import org.humint.field.track.formatDuration
 import org.humint.field.track.formatLength
 import kotlin.math.cos
@@ -95,6 +101,15 @@ private fun RouteRecorderPanel(vm: FieldViewModel, report: ReportRow, onMessage:
     val stored = remember(report.geometry) { Shape.parse(report.geometry, "track") }
     val recording = rec.running && rec.reportId == report.id
     var confirmClear by remember { mutableStateOf(false) }
+    val context = LocalContext.current
+
+    // Re-checked every time the screen comes back, so changing the setting
+    // and pressing Back clears the warning straight away.
+    var battery by remember { mutableStateOf<String?>(null) }
+    LifecycleResumeEffect(Unit) {
+        battery = runCatching { batteryWarning(context) }.getOrNull()
+        onPauseOrDispose { }
+    }
 
     // A clock for the elapsed time while recording; nothing ticks otherwise.
     var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
@@ -149,6 +164,41 @@ private fun RouteRecorderPanel(vm: FieldViewModel, report: ReportRow, onMessage:
     }
     rec.problem?.takeIf { rec.reportId == null || rec.reportId == report.id }?.let {
         Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyMedium)
+    }
+
+    // After a run: what the GPS actually did, so a thin track explains
+    // itself -- "no fixes for 20 minutes" is a phone setting, "most fixes
+    // too rough" is the sky, and they are fixed in different ways.
+    if (!recording && rec.reportId == report.id && rec.startedAt > 0L) {
+        val gapLong = rec.longestGapMs >= 60_000L
+        val mostlyRough = rec.fixes >= 10 && rec.tooRough * 2 > rec.fixes
+        Text(
+            buildString {
+                append("Last run: ${rec.fixes} GPS fixes, ${rec.points} kept")
+                if (rec.tooRough > 0) append(", ${rec.tooRough} too inaccurate")
+                append(".")
+                if (gapLong) append(" No GPS at all for ${formatDuration(rec.longestGapMs)} — the phone stopped location, usually with the screen off.")
+                else if (mostlyRough) append(" Most fixes were too rough to draw — a phone deep in a pocket or bag, or heavy cover.")
+            },
+            style = MaterialTheme.typography.labelMedium,
+            color = if (gapLong || mostlyRough) FieldAmber else MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+
+    battery?.let { why ->
+        Text(why, style = MaterialTheme.typography.bodyMedium, color = FieldAmber)
+        OutlinedButton(
+            onClick = {
+                // The app's own page in Settings: Battery → Unrestricted. The
+                // direct "ignore optimisations" request needs a permission
+                // Play restricts, and this is one tap further.
+                val intent = if (why.startsWith("Battery Saver")) Intent(Settings.ACTION_BATTERY_SAVER_SETTINGS)
+                    else Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                                Uri.fromParts("package", context.packageName, null))
+                runCatching { context.startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
+            },
+            modifier = Modifier.heightIn(min = TapTarget),
+        ) { Text("Open battery settings") }
     }
 
     FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {

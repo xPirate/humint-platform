@@ -139,30 +139,59 @@ data class Shape(
  * track that zig-zags on the spot; keeping too few cuts corners off the
  * route somebody actually walked. So:
  *
- *   * a fix worse than [maxAccuracyM] is dropped -- under trees or between
- *     buildings GPS will report 80 m and be honest about it, and a route
- *     drawn through that would go through walls;
+ *   * a fix of [maxAccuracyM] or better is good enough to keep;
+ *   * a rougher fix, up to [fallbackAccuracyM], is kept only once nothing
+ *     has been kept for [fallbackAfterMs] **and** it is further from the last
+ *     kept point than its own error -- so a phone in a pocket, where GPS
+ *     often sits at 40-60 m, still draws the way somebody went rather than a
+ *     straight line from start to finish, but a rough fix never scribbles
+ *     around a point somebody is standing at;
+ *   * anything worse than [fallbackAccuracyM] is dropped -- a route drawn
+ *     through an 80 m fix goes through walls;
  *   * a fix closer to the last kept one than the larger of [minSpacingM] and
- *     half its own accuracy is dropped as standing still;
- *   * the first fix of a recording is kept if it is usable at all, so a short
- *     route does not lose its start waiting for a perfect fix.
+ *     half its own accuracy is dropped as standing still.
+ *
+ * It also counts what it saw and why it dropped it, so a thin track can be
+ * explained on the phone instead of guessed at afterwards.
  */
 class TrackFilter(
     private val maxAccuracyM: Float = 35f,
     private val minSpacingM: Double = 5.0,
+    private val fallbackAccuracyM: Float = 100f,
+    private val fallbackAfterMs: Long = 20_000L,
 ) {
     private var last: TrackPoint? = null
+    /** When the filter started waiting -- the first fix seen, or the last kept. */
+    private var waitingSince: Long? = null
 
-    fun reset(lastKept: TrackPoint? = null) { last = lastKept }
+    var seen = 0; private set
+    var tooRough = 0; private set
+    var standingStill = 0; private set
+    var keptRough = 0; private set
+
+    fun reset(lastKept: TrackPoint? = null) {
+        last = lastKept; waitingSince = lastKept?.timeMs
+        seen = 0; tooRough = 0; standingStill = 0; keptRough = 0
+    }
 
     fun accept(p: TrackPoint): Boolean {
-        if (!p.accuracyM.isNaN() && p.accuracyM > maxAccuracyM) return false
+        seen++
+        val since = waitingSince ?: p.timeMs.also { waitingSince = it }
+        val acc = if (p.accuracyM.isNaN()) 0f else p.accuracyM
         val prev = last
-        if (prev != null) {
-            val spacing = maxOf(minSpacingM, if (p.accuracyM.isNaN()) 0.0 else p.accuracyM / 2.0)
-            if (Shape.metres(prev, p) < spacing) return false
+        val good = acc <= maxAccuracyM
+        if (!good) {
+            val overdue = p.timeMs - since >= fallbackAfterMs
+            val clearOfLast = prev == null || Shape.metres(prev, p) > acc
+            if (acc > fallbackAccuracyM || !overdue || !clearOfLast) { tooRough++; return false }
         }
+        if (prev != null) {
+            val spacing = maxOf(minSpacingM, acc / 2.0)
+            if (Shape.metres(prev, p) < spacing) { standingStill++; return false }
+        }
+        if (!good) keptRough++
         last = p
+        waitingSince = p.timeMs
         return true
     }
 }

@@ -28,6 +28,9 @@
     <!-- The route recorder (track/RouteRecorderService.kt). -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
+    <!-- Keeps the processor awake while a route records with the screen off,
+         so GPS fixes are delivered rather than held until the phone wakes. -->
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
     <!-- So the "Recording a route" notification can be seen. Asked for when
          a recording starts; refused, the recording still runs. -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />

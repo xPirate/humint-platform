@@ -56,7 +56,10 @@ draft. To throw one away, use the discard option on the report.
 
 1. **+** → **Route**. Give it a name and say **why** you are recording it —
    what it avoids, when it works, who uses it.
-2. Press **Start recording**. Allow notifications if asked; a **Recording a
+2. If the screen shows an amber battery warning, fix it first with
+   **Open battery settings** — otherwise many phones stop GPS once the
+   screen is off and the route comes out as a straight line.
+   Press **Start recording**. Allow notifications if asked; a **Recording a
    route** notification stays up the whole time.
 3. Put the phone away and walk (or drive). It keeps recording with the screen
    off and the app locked.
@@ -65,9 +68,13 @@ draft. To throw one away, use the discard option on the report.
    (the gap is kept, not drawn as a straight line); **Clear** starts again.
 6. **Mark ready to send.**
 
-Only GPS fixes within about 35 m are kept, and standing still adds nothing,
-so a pause at a checkpoint does not scribble on the track. Under heavy cover
-the track may have gaps.
+The app asks GPS for a fix every two seconds and keeps one whenever you
+have moved at least 5 m (more when the fix is rough), so standing at a
+checkpoint does not scribble on the track. Fixes within about 35 m are kept
+as they come; rougher ones, up to 100 m, are used only when nothing better
+has come for 20 seconds and you have clearly moved. After **Stop**, the
+report says how many fixes arrived and were kept, and warns if GPS stopped —
+see [troubleshooting](troubleshooting.md#a-route-didnt-record-or-is-a-straight-line).
 
 **Security:** while a route is recording, and until you next open the app,
 its points are held under a key on the phone but not under your PIN. Stop and

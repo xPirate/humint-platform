@@ -73,6 +73,7 @@ administrator which yours uses.
 | Location (precise) | Recording where an observation was made, while a report is open; recording a route you start. |
 | Foreground service (location) | Keeping a route recording running with the screen off, with a notification. |
 | Notifications | Showing that a route is being recorded, with a Stop button. |
+| Prevent phone from sleeping | Keeping GPS readings arriving while a route records with the screen off. Released when you press Stop. |
 | Internet | Sending reports to your team's console. |
 
 ## Children

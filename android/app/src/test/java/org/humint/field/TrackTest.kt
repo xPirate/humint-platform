@@ -67,4 +67,34 @@ class TrackTest {
         assertFalse("2 m step", f.accept(p(36.00002, -95.0, 3)))
         assertTrue("11 m step", f.accept(p(36.0001, -95.0, 4)))
     }
+
+    @Test fun aPocketedPhoneStillDrawsTheWayItWent() {
+        // GPS at ±50 m the whole walk, a fix every 2 s, walking north ~1.4 m/s.
+        val f = TrackFilter()
+        assertTrue("good first fix", f.accept(p(36.0, -95.0, 0)))
+        var kept = 0
+        for (i in 1..300) {   // ten minutes
+            val lat = 36.0 + i * 2 * 1.4 / 111_000.0
+            if (f.accept(p(lat, -95.0, i * 2_000L, acc = 50f))) kept++
+        }
+        assertTrue("kept $kept rough points over ten minutes", kept >= 10)
+        assertEquals(kept, f.keptRough)
+    }
+
+    @Test fun roughFixesAroundAStandingPhoneAreNotKept() {
+        val f = TrackFilter()
+        assertTrue(f.accept(p(36.0, -95.0, 0)))
+        // Five minutes standing still, the fixes wandering 20 m at ±50 m.
+        for (i in 1..150) {
+            val jitter = if (i % 2 == 0) 0.00018 else -0.00018
+            assertFalse(f.accept(p(36.0 + jitter, -95.0, i * 2_000L, acc = 50f)))
+        }
+        assertEquals(150, f.tooRough)
+    }
+
+    @Test fun nothingWorseThanAHundredMetresIsEverKept() {
+        val f = TrackFilter()
+        assertTrue(f.accept(p(36.0, -95.0, 0)))
+        assertFalse(f.accept(p(36.01, -95.0, 600_000L, acc = 150f)))
+    }
 }

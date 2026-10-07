@@ -136,15 +136,30 @@ install the right one. See
 Choose **More details → Install anyway**, or install from the Play listing
 instead.
 
-### A route didn't record, or has gaps
+### A route didn't record, or is a straight line
+After you press **Stop**, the report says what the GPS did on that run —
+how many fixes arrived, how many were kept, and the longest stretch with
+none. That tells you which of these it was:
+
+- **"No GPS at all for … minutes":** the phone stopped giving the app
+  location with the screen off. Two settings do this, and the report screen
+  warns about both before you start, with a button to fix them:
+  - **Battery Saver** (its location mode turns GPS off with the screen off).
+    Turn it off for the walk.
+  - **Battery use** for HUMINT Field set to *Optimised*. Set it to
+    *Unrestricted* (App info → Battery).
+  The notification also says **No GPS for …** during the walk, so a tester
+  can check it at any time.
+- **"Most fixes were too rough to draw":** GPS was worse than about 35 m.
+  The app still keeps a rougher fix (up to 100 m) every so often once you
+  have clearly moved, so the track follows you, just less closely. Carry the
+  phone higher — a chest pocket or the top of a bag rather than a trouser
+  pocket.
 - **Nothing recorded:** location must be allowed and GPS switched on. The
   report says why if the recorder could not start.
-- **Gaps or a short track:** fixes worse than about 35 m are dropped. Under
-  trees, in canyons between buildings or inside vehicles GPS can stay worse
-  than that for minutes. Keep the phone near a window or on top of a bag.
-- **Stopped by itself:** some phones kill background apps aggressively. In
-  Android's settings, set HUMINT Field's battery use to *Unrestricted*. The
-  points recorded so far are kept; press **Continue recording**.
+- **Stopped by itself:** the phone killed the app. Set battery use to
+  *Unrestricted* as above. The points recorded so far are kept; press
+  **Continue recording**.
 - **No notification visible:** notifications were refused. The recording
   still runs; allow notifications for the app to see and stop it from there.
 
