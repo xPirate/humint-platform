@@ -11475,7 +11475,7 @@ const ADMIN_LOADERS = {
   brand: () => loadBrandingForm(),
   model: () => { loadOllamaSettings(); loadOllamaUsage(); },
   boards: () => loadBoardsAdmin(),
-  devices: () => loadFieldDevices(),
+  devices: () => { loadFieldDevices(); loadRelays(); },
   signals: () => loadSignals(),
   retention: () => loadRetention(),
   audit: () => {},
@@ -13636,7 +13636,174 @@ function printDeviceCard(d) {
 (function wireDeviceAdmin() {
   const btn = document.getElementById("device-enroll-btn");
   if (btn) btn.addEventListener("click", openEnrollDeviceForm);
+  const relayBtn = document.getElementById("relay-new-btn");
+  if (relayBtn) relayBtn.addEventListener("click", () => openRelayForm(null));
 })();
+
+/* ==========================================================================
+ * Team relays (v1.10)
+ *
+ * A tablet that carries a team's reports home. Registered here with a team,
+ * a keep-alive and the addresses it should look for this console at; the
+ * tablet scans a one-time provisioning code to fetch its key. See
+ * api/relays.py and docs/how-to/field-relay.md.
+ * ========================================================================== */
+
+const RELAY_STATUS = {
+  pending: ["waiting to be provisioned", "status-pending"],
+  active: ["active", "status-confirmed"],
+  expired: ["key expired", "status-draft"],
+  revoked: ["revoked", "status-draft"],
+};
+
+function relayTimeLeft(iso) {
+  if (!iso) return "";
+  const ms = new Date(iso).getTime() - Date.now();
+  if (ms <= 0) return "due now";
+  const h = Math.round(ms / 3600000);
+  return h >= 48 ? `${Math.round(h / 24)} days left` : `${h} h left`;
+}
+
+async function loadRelays() {
+  const el = document.getElementById("relay-list");
+  if (!el) return;
+  el.innerHTML = '<p class="empty-state">Loading…</p>';
+  try {
+    const data = await api("/api/field/relays");
+    const fp = document.getElementById("relay-fingerprint");
+    if (fp) fp.innerHTML = `This console's fingerprint: <span class="v-mono">${escapeHtml(data.fingerprint)}</span> &mdash; a provisioned tablet shows the same.`;
+    if (!data.items.length) {
+      el.innerHTML = '<p class="empty-state">No relays yet. Register one before a team deploys.</p>';
+      return;
+    }
+    el.innerHTML = data.items.map((r) => {
+      const [word, cls] = RELAY_STATUS[r.status] || [r.status, ""];
+      const team = r.members.map((m) => escapeHtml(m.name)).join(", ") || "no team set";
+      const clock = r.status === "active"
+        ? `checked in ${escapeHtml(relativeTime(r.last_checkin_at))} · key ${escapeHtml(relayTimeLeft(r.expires_at))}`
+        : r.status === "expired"
+          ? `last check-in ${escapeHtml(relativeTime(r.last_checkin_at))} · key dropped ${escapeHtml(relativeTime(r.revoked_at))}`
+          : r.status === "revoked" ? `revoked ${escapeHtml(relativeTime(r.revoked_at))}` : "scan its code on the tablet";
+      return `
+      <div class="card device-row${r.status === "revoked" || r.status === "expired" ? " device-revoked" : ""}">
+        <div class="device-main">
+          <div class="card-title">${escapeHtml(r.label)}
+            <span class="status-pill ${cls}">${escapeHtml(word)}</span></div>
+          <div class="card-meta">Team: ${team}</div>
+          <div class="card-meta">Keep-alive ${r.keepalive_days} day${r.keepalive_days === 1 ? "" : "s"} · ${clock} · ${r.submission_count} delivered</div>
+          <div class="card-meta">Looks for this console at: ${r.addresses.map((a) => `<span class="v-mono">${escapeHtml(a)}</span>`).join(", ") || "no addresses set"}</div>
+        </div>
+        <div class="device-actions">
+          ${r.status === "active" ? `<button type="button" class="btn-secondary btn-sm" data-relay-extend="${r.id}" title="Restart the keep-alive from now">Extend</button>` : ""}
+          <button type="button" class="btn-secondary btn-sm" data-relay-provision="${r.id}">${r.status === "pending" ? "Show code" : "Re-provision"}</button>
+          <button type="button" class="btn-secondary btn-sm" data-relay-edit="${r.id}">Edit</button>
+          ${r.status === "active" || r.status === "pending" ? `<button type="button" class="btn-secondary btn-sm" data-relay-revoke="${r.id}">Revoke</button>` : ""}
+          <button type="button" class="btn-link btn-sm" data-relay-delete="${r.id}">Remove</button>
+        </div>
+      </div>`;
+    }).join("");
+    const byId = (id) => data.items.find((x) => String(x.id) === String(id));
+    el.querySelectorAll("[data-relay-extend]").forEach((b) => b.addEventListener("click", async () => {
+      try { await api(`/api/field/relays/${b.dataset.relayExtend}/extend`, { method: "POST" }); showToast("Keep-alive restarted"); loadRelays(); }
+      catch (e) { showToast(e.message, true); }
+    }));
+    el.querySelectorAll("[data-relay-provision]").forEach((b) => b.addEventListener("click", () => {
+      const r = byId(b.dataset.relayProvision);
+      const again = r.status !== "pending";
+      if (again && !confirm("Issue a new provisioning code? When the tablet scans it, it gets a new key and the old one stops working. Do this with the tablet and its team in front of you.")) return;
+      api(`/api/field/relays/${r.id}/provision`, { method: "POST", body: { provision_url: window.location.origin } })
+        .then((d) => { showRelayProvision(d); loadRelays(); })
+        .catch((e) => showToast(e.message, true));
+    }));
+    el.querySelectorAll("[data-relay-edit]").forEach((b) => b.addEventListener("click", () => openRelayForm(byId(b.dataset.relayEdit))));
+    el.querySelectorAll("[data-relay-revoke]").forEach((b) => b.addEventListener("click", async () => {
+      if (!confirm("Revoke this relay now? It can no longer sync. Its reports stay on the tablet until it is re-provisioned.")) return;
+      try { await api(`/api/field/relays/${b.dataset.relayRevoke}/revoke`, { method: "POST" }); showToast("Relay revoked"); loadRelays(); }
+      catch (e) { showToast(e.message, true); }
+    }));
+    el.querySelectorAll("[data-relay-delete]").forEach((b) => b.addEventListener("click", async () => {
+      if (!confirm("Remove this relay from the list? Reports it delivered are kept.")) return;
+      try { await api(`/api/field/relays/${b.dataset.relayDelete}`, { method: "DELETE" }); loadRelays(); }
+      catch (e) { showToast(e.message, true); }
+    }));
+  } catch (e) {
+    el.innerHTML = `<p class="empty-state">${escapeHtml(e.message)}</p>`;
+  }
+}
+
+async function openRelayForm(relay) {
+  let users = [];
+  try { users = (await api("/api/users")).items.filter((u) => u.is_active); } catch (e) { /* admin only */ }
+  const editing = !!relay;
+  const members = new Set((relay ? relay.members : []).map((m) => m.id));
+  const addrs = relay ? relay.addresses.join("\n") : "";
+  const days = relay ? relay.keepalive_days : 3;
+  openModal(`
+    <h2>${editing ? "Edit " + escapeHtml(relay.label) : "Register a relay"}</h2>
+    <form id="relay-form">
+      <div class="form-row">
+        <label for="relay-label">What to call it</label>
+        <input type="text" id="relay-label" required maxlength="200" value="${escapeHtml(relay ? relay.label : "")}" placeholder="Team Alpha tablet">
+      </div>
+      <div class="form-row">
+        <label for="relay-keepalive">Keep-alive</label>
+        <select id="relay-keepalive">
+          ${Array.from({ length: 14 }, (_, i) => i + 1).map((d) => `<option value="${d}"${d === days ? " selected" : ""}>${d} day${d === 1 ? "" : "s"}${d === 3 ? " (default)" : ""}</option>`).join("")}
+        </select>
+        <p class="field-hint">If the tablet does not sync within this long, its key is dropped automatically. A 2-day event: 3 days. A long, quiet engagement: keep it short and plan to re-provision on return.</p>
+      </div>
+      <div class="form-row">
+        <label>Team</label>
+        <div class="relay-team">${users.map((u) => `
+          <label class="checkbox-row"><input type="checkbox" value="${u.id}"${members.has(u.id) ? " checked" : ""}> ${escapeHtml(u.username)}</label>`).join("")}</div>
+        <p class="field-hint">Reports are credited to these accounts when the lead matches each phone to its analyst. Nobody else can be named by this relay.</p>
+      </div>
+      <div class="form-row">
+        <label for="relay-addresses">Where the tablet looks for this console</label>
+        <textarea id="relay-addresses" rows="3" placeholder="http://10.8.0.1:8080&#10;${escapeHtml(window.location.origin)}">${escapeHtml(addrs)}</textarea>
+        <p class="field-hint">One per line, tried in order when the lead presses Sync. The VPN address first, the office address second.</p>
+      </div>
+      <p class="form-error" id="relay-error"></p>
+      <div class="modal-actions">
+        <button type="button" class="btn-secondary" id="relay-cancel">Cancel</button>
+        <button type="submit" class="btn-primary">${editing ? "Save" : "Register and show its code"}</button>
+      </div>
+    </form>`);
+  document.getElementById("relay-cancel").addEventListener("click", requestModalClose);
+  document.getElementById("relay-form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const err = document.getElementById("relay-error");
+    err.textContent = "";
+    const body = {
+      label: document.getElementById("relay-label").value.trim(),
+      keepalive_days: Number(document.getElementById("relay-keepalive").value),
+      member_ids: [...document.querySelectorAll(".relay-team input:checked")].map((x) => Number(x.value)),
+      addresses: document.getElementById("relay-addresses").value.split(/\s+/).map((x) => x.trim()).filter(Boolean),
+    };
+    try {
+      if (editing) {
+        await api(`/api/field/relays/${relay.id}`, { method: "PATCH", body });
+        closeModal(); showToast("Relay saved");
+      } else {
+        const d = await api("/api/field/relays", { method: "POST", body: { ...body, provision_url: window.location.origin } });
+        showRelayProvision(d);
+      }
+      loadRelays();
+    } catch (e2) { err.textContent = e2.message; }
+  });
+}
+
+function showRelayProvision(d) {
+  openModal(`
+    <h2>Provision ${escapeHtml(d.relay.label)}</h2>
+    <p class="field-hint">On the tablet: <strong>Relay → Provision from the console</strong>, and scan this.
+      The tablet must be on this network now. The code works once, for ${d.provision_minutes} minutes.</p>
+    ${d.provision_qr ? `<div class="enroll-qr">${d.provision_qr}</div>` : '<p class="field-hint">No QR could be rendered on this server.</p>'}
+    <p class="field-hint">Once provisioned, the tablet shows this console's fingerprint:
+      <span class="v-mono">${escapeHtml(d.fingerprint)}</span>. If it shows anything else, stop.</p>
+    <div class="modal-actions"><button type="button" class="btn-primary" id="relay-prov-done">Done</button></div>`);
+  document.getElementById("relay-prov-done").addEventListener("click", () => { closeModal(); loadRelays(); });
+}
 
 /* ---------- The intake queue ---------- */
 

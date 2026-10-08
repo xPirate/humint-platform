@@ -45,6 +45,7 @@ import preferences
 import boards as boards_module
 import entity_actions
 import field as field_module
+import relays as relays_module
 import place_lookup
 import feeds as feeds_module
 import link_signals_api
@@ -114,6 +115,8 @@ app.include_router(place_lookup.router)
 # the session-authenticated management and queue.
 app.include_router(field_module.intake)
 app.include_router(field_module.manage)
+app.include_router(relays_module.tablet)
+app.include_router(relays_module.manage)
 app.include_router(map_module.router)
 app.include_router(maptiles.router)
 app.include_router(zones.router)

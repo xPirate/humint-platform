@@ -1976,6 +1976,7 @@ a .hostile-name,.hostile-name a{color:var(--red);}
 /* The one time the token is visible. It is wide, monospace and selectable,
    because the fallback to the QR is someone typing it into a phone. */
 .enroll-qr{display:flex; justify-content:center; margin:.8em 0 1.1em;}
+.relay-team{display:flex; flex-wrap:wrap; gap:.3em 1.2em; max-height:12em; overflow:auto;}
 .enroll-qr svg{width:210px; height:210px; background:#fff; padding:10px;
   border-radius:6px;}
 #enroll-token{font-family:var(--font-mono); font-size:12px;}

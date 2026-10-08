@@ -11,3 +11,7 @@ requests>=2.32.0
 reportlab>=4.2.0
 pillow>=10.4.0
 segno>=1.6.0
+# Team relays (relays.py): the console signs a relay's challenge with an
+# ECDSA P-256 key so a tablet syncing over a hotel network can tell the real
+# console from anything else answering at its address. Wheels for arm64.
+cryptography>=42.0

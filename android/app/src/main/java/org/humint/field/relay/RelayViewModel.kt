@@ -87,10 +87,11 @@ class RelayViewModel(app: Application) : AndroidViewModel(app) {
 
     /** A new phone and its first code. The token is shown once and kept
      *  nowhere: only its hash is stored, as on the console. */
-    suspend fun addPhone(label: String, analyst: String): Code = withContext(Dispatchers.IO) {
+    suspend fun addPhone(label: String, analyst: String, consoleUserId: Int? = null): Code = withContext(Dispatchers.IO) {
         val token = RelayLanding.newToken()
         val id = Relay.landing(context).addDevice(token)
-        dao().insert(RelayDeviceRow(id, label.trim(), analyst.trim(), System.currentTimeMillis()))
+        dao().insert(RelayDeviceRow(id, label.trim(), analyst.trim(), System.currentTimeMillis(),
+                                    consoleUserId = consoleUserId))
         refreshNames()
         Code(id, label.trim(), analyst.trim(), token)
     }
@@ -112,6 +113,40 @@ class RelayViewModel(app: Application) : AndroidViewModel(app) {
         Relay.names.value = dao().allDevices().filterNot { it.revoked }
             .associate { it.id to (it.label to it.analyst) }
     }
+
+    // ------------------------------------------------- provisioning, sync
+
+    private val link = RelayLink(app)
+
+    /** The provisioning bundle, re-read whenever it may have changed. */
+    private val _bundle = MutableStateFlow<RelayLink.Bundle?>(null)
+    val bundle: StateFlow<RelayLink.Bundle?> = _bundle
+    fun refreshBundle() { _bundle.value = if (Vault.state.value is Vault.State.Open) link.bundle() else null }
+
+    /** For the provisioning scanner: true if the code worked. */
+    fun provision(payload: String, onResult: (Boolean) -> Unit) = viewModelScope.launch {
+        val r = withContext(Dispatchers.IO) { link.provision(payload) }
+        r.onSuccess { _bundle.value = it; _provisionError.value = null }
+         .onFailure { _provisionError.value = it.message ?: "That did not work." }
+        onResult(r.isSuccess)
+    }
+
+    private val _provisionError = MutableStateFlow<String?>(null)
+    val provisionError: StateFlow<String?> = _provisionError
+    fun clearProvisionError() { _provisionError.value = null }
+
+    private val _sync = MutableStateFlow<RelayLink.Progress?>(null)
+    val sync: StateFlow<RelayLink.Progress?> = _sync
+
+    fun sync(videoLater: Boolean) = viewModelScope.launch(Dispatchers.IO) {
+        // Anything still sealed is opened first, so it goes home too.
+        ingest().join()
+        _sync.value = RelayLink.Progress.Finding("…")
+        _sync.value = link.sync(dao(), videoLater) { _sync.value = it }
+        refreshBundle()
+    }
+
+    fun dismissSync() { _sync.value = null }
 
     // ------------------------------------------------------- moving it in
 
@@ -192,9 +227,9 @@ class RelayViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             Vault.state.collectLatest { st ->
                 if (st is Vault.State.Open && Relay.isSetUp(context)) {
-                    withContext(Dispatchers.IO) { runCatching { refreshNames() } }
+                    withContext(Dispatchers.IO) { runCatching { refreshNames() }; refreshBundle() }
                     ingest()
-                }
+                } else if (st !is Vault.State.Open) _bundle.value = null
                 _waiting.value = runCatching { Relay.landing(context).pendingCount() }.getOrDefault(0)
             }
         }

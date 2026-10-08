@@ -373,13 +373,34 @@ async def attach_file(submission_id: int,
             # Same answer for "no such submission" and "not yours": a device
             # must not be able to probe for other devices' ids.
             raise HTTPException(status_code=404, detail="No such submission.")
-        if row[1] != "new":
+    return await save_submission_file(submission_id, file, client_ref, duration_ms)
+
+
+async def save_submission_file(submission_id: int, file: UploadFile,
+                               client_ref: str | None, duration_ms: int | None) -> dict:
+    """Limits, dedupe and the write, for a file on a submission whose
+    ownership the caller has already checked. Shared by the phone intake and
+    a relay's sync (relays.py), so the two cannot drift apart on what they
+    accept or how they store it."""
+    with db_cursor() as cur:
+        cur.execute("SELECT status FROM field_submissions WHERE id = %s", (submission_id,))
+        row = cur.fetchone()
+        if row is None:
+            raise HTTPException(status_code=404, detail="No such submission.")
+        if row[0] != "new":
             raise HTTPException(status_code=409,
                                 detail="That submission has already been dealt with.")
         cur.execute("SELECT count(*), coalesce(sum(file_size_bytes), 0) "
                     "  FROM field_submission_files WHERE submission_id = %s",
                     (submission_id,))
         file_count, bytes_so_far = cur.fetchone()
+        if client_ref:
+            cur.execute("SELECT id FROM field_submission_files "
+                        " WHERE submission_id = %s AND client_ref = %s",
+                        (submission_id, client_ref))
+            dup = cur.fetchone()
+            if dup:
+                return {"id": dup[0], "duplicate": True}
         if file_count >= MAX_FILES_PER_SUBMISSION:
             raise HTTPException(status_code=409,
                                 detail=f"A submission may carry {MAX_FILES_PER_SUBMISSION} files.")
@@ -388,13 +409,6 @@ async def attach_file(submission_id: int,
                 status_code=413,
                 detail=f"That submission already carries "
                        f"{MAX_SUBMISSION_BYTES // (1024 * 1024)} MB of media.")
-        if client_ref:
-            cur.execute("SELECT id FROM field_submission_files "
-                        " WHERE submission_id = %s AND client_ref = %s",
-                        (submission_id, client_ref))
-            dup = cur.fetchone()
-            if dup:
-                return {"id": dup[0], "duplicate": True}
 
     # Read in bounded chunks: awaiting the whole body first would buffer an
     # oversized upload into memory before the size check could reject it.

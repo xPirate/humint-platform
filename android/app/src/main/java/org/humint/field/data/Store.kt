@@ -207,6 +207,12 @@ interface RelayDao {
     @Query("DELETE FROM relay_files")
     suspend fun clearFiles()
 
+    @Query("DELETE FROM relay_files WHERE submission_id = :id")
+    suspend fun deleteFiles(id: Int)
+
+    @Query("DELETE FROM relay_submissions WHERE id = :id")
+    suspend fun deleteSubmission(id: Int)
+
     @Query("DELETE FROM relay_submissions")
     suspend fun clearSubmissions()
 

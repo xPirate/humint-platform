@@ -1121,6 +1121,14 @@
       </div>
       <div id="device-list" class="stack"></div>
       <p class="form-error" id="device-error"></p>
+
+      <div class="section-title" style="margin-top:1.6em">Team relays</div>
+      <p class="view-hint">A tablet a team takes on deployment. The team's phones send to it each night over its own hotspot; the lead presses <strong>Sync</strong> over the VPN or back at the office and the reports land here, under the phone and analyst that wrote them. A relay that does not check in within its <strong>keep-alive</strong> loses its key on its own &mdash; its reports stay safe on the tablet until it is re-provisioned in person.</p>
+      <div class="view-toolbar">
+        <p class="view-hint" id="relay-fingerprint"></p>
+        <button type="button" class="btn-primary" id="relay-new-btn">+ Register a relay</button>
+      </div>
+      <div id="relay-list" class="stack"></div>
         </div>
 
         <div class="admin-section" data-admin-panel="signals" hidden>

@@ -420,6 +420,7 @@ private fun RelayFileRow.asAttachment() = AttachmentRow(
 @Composable
 fun RelayPhonesScreen(vm: RelayViewModel, padding: PaddingValues) {
     val devices by vm.devices.collectAsStateWithLifecycle()
+    val bundle by vm.bundle.collectAsStateWithLifecycle()
     val scope = rememberCoroutineScope()
     var adding by remember { mutableStateOf(false) }
     var code by remember { mutableStateOf<RelayViewModel.Code?>(null) }
@@ -471,9 +472,10 @@ fun RelayPhonesScreen(vm: RelayViewModel, padding: PaddingValues) {
 
     if (adding) {
         AddPhoneDialog(
-            onAdd = { label, analyst ->
+            roster = bundle?.roster.orEmpty(),
+            onAdd = { label, analyst, userId ->
                 adding = false
-                scope.launch { code = vm.addPhone(label, analyst) }
+                scope.launch { code = vm.addPhone(label, analyst, userId) }
             },
             onDismiss = { adding = false },
         )
@@ -494,22 +496,41 @@ fun RelayPhonesScreen(vm: RelayViewModel, padding: PaddingValues) {
     }
 }
 
+/** Whose phone. With a provisioned roster, the analyst is picked from the
+ *  team — which is what lets the console credit their reports to them. */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun AddPhoneDialog(onAdd: (String, String) -> Unit, onDismiss: () -> Unit) {
+private fun AddPhoneDialog(roster: List<org.humint.field.relay.RelayLink.Member>,
+                           onAdd: (String, String, Int?) -> Unit, onDismiss: () -> Unit) {
     var analyst by remember { mutableStateOf("") }
+    var userId by remember { mutableStateOf<Int?>(null) }
     var label by remember { mutableStateOf("") }
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("Add a phone") },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                OutlinedTextField(analyst, { analyst = it }, label = { Text("Analyst") }, singleLine = true)
+                if (roster.isNotEmpty()) {
+                    Text("Whose phone", style = MaterialTheme.typography.labelLarge)
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        roster.forEach { m ->
+                            androidx.compose.material3.FilterChip(
+                                selected = userId == m.id,
+                                onClick = { userId = m.id; analyst = m.name },
+                                label = { Text(m.name) },
+                            )
+                        }
+                    }
+                } else {
+                    OutlinedTextField(analyst, { analyst = it; userId = null },
+                                      label = { Text("Analyst") }, singleLine = true)
+                }
                 OutlinedTextField(label, { label = it }, label = { Text("Phone (e.g. Sonim 3)") }, singleLine = true)
             }
         },
         confirmButton = {
             TextButton(enabled = analyst.isNotBlank(),
-                       onClick = { onAdd(label.ifBlank { "${analyst.trim()}'s phone" }, analyst) }) {
+                       onClick = { onAdd(label.ifBlank { "${analyst.trim()}'s phone" }, analyst, userId) }) {
                 Text("Add and show code")
             }
         },
@@ -581,13 +602,108 @@ private fun qrBitmap(text: String): ImageBitmap {
     return bmp.asImageBitmap()
 }
 
+// ------------------------------------------------------------------ sync
+
+/**
+ * Sending home, and the key's clock. The countdown is the thing the lead
+ * most needs to see on this screen: past it, the console has dropped this
+ * relay's key and Sync stops working until the tablet is re-provisioned.
+ */
+@Composable
+private fun SyncCard(
+    bundle: org.humint.field.relay.RelayLink.Bundle?,
+    sync: org.humint.field.relay.RelayLink.Progress?,
+    unsent: Int, videoLater: Boolean,
+    onVideoLater: (Boolean) -> Unit, onSync: () -> Unit, onDismiss: () -> Unit,
+    onProvision: () -> Unit,
+) {
+    Column(
+        Modifier.fillMaxWidth().clip(RoundedCornerShape(20.dp))
+            .background(MaterialTheme.colorScheme.surface).padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Text("Send home", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
+        if (bundle == null) {
+            Text("This relay has not been provisioned. At the office, on the console: " +
+                 "Admin → Field devices → Team relays → Register a relay, then scan its code here.",
+                 style = MaterialTheme.typography.bodyMedium)
+            Button(onClick = onProvision, modifier = Modifier.heightIn(min = TapTarget)) {
+                Text("Provision from the console")
+            }
+            return@Column
+        }
+        val expires = bundle.expiresAt
+        val left = expires?.let { it - System.currentTimeMillis() }
+        Text(bundle.label, style = MaterialTheme.typography.titleMedium)
+        Text(
+            when {
+                left == null -> "Keep-alive ${bundle.keepaliveDays} days."
+                left <= 0 -> "The key has expired. The console no longer accepts this relay: " +
+                    "re-provision it at the office. Nothing on the tablet has been lost."
+                left < 24 * 3600_000L -> "Check in within ${left / 3600_000L} h, or the console drops this relay's key."
+                else -> "Check in within ${left / (24 * 3600_000L)} days, or the console drops this relay's key."
+            },
+            style = MaterialTheme.typography.bodyMedium,
+            color = if (left != null && left < 24 * 3600_000L) FieldAmber else MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Text("Console fingerprint ${bundle.fingerprint}",
+             style = MaterialTheme.typography.labelMedium.merge(MonoStyle),
+             color = MaterialTheme.colorScheme.onSurfaceVariant)
+
+        when (val p = sync) {
+            null -> {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    androidx.compose.material3.Checkbox(checked = videoLater, onCheckedChange = onVideoLater)
+                    Text("Reports and photos now, video later", style = MaterialTheme.typography.bodyMedium)
+                }
+                Button(onClick = onSync, modifier = Modifier.heightIn(min = TapTarget)) {
+                    Text(if (unsent == 0) "Sync (check in)" else "Sync $unsent report${if (unsent == 1) "" else "s"}")
+                }
+                Text("Needs the VPN, or the office network. Each report is erased from this tablet " +
+                     "once the console has confirmed it.",
+                     style = MaterialTheme.typography.labelMedium,
+                     color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            is org.humint.field.relay.RelayLink.Progress.Finding ->
+                Text("Looking for the console at ${p.address}…", style = MaterialTheme.typography.bodyMedium)
+            is org.humint.field.relay.RelayLink.Progress.Sending ->
+                Text("Sending ${p.index} of ${p.total}: ${p.title}", style = MaterialTheme.typography.bodyMedium)
+            is org.humint.field.relay.RelayLink.Progress.SendingFile ->
+                Text("Sending ${p.name}…", style = MaterialTheme.typography.bodyMedium)
+            is org.humint.field.relay.RelayLink.Progress.Done -> {
+                Text(
+                    buildString {
+                        append(if (p.sent == 0) "Checked in." else "Sent ${p.sent} home and erased them from this tablet.")
+                        if (p.heldBack > 0) append(" ${p.heldBack} held back until their video goes.")
+                    },
+                    style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold,
+                )
+                TextButton(onClick = onDismiss) { Text("Done") }
+            }
+            is org.humint.field.relay.RelayLink.Progress.Failed -> {
+                Text(p.message, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyMedium)
+                TextButton(onClick = onDismiss) { Text("OK") }
+            }
+        }
+        if (left != null && left <= 0) {
+            OutlinedButton(onClick = onProvision, modifier = Modifier.heightIn(min = TapTarget)) {
+                Text("Re-provision from the console")
+            }
+        }
+    }
+}
+
 // ------------------------------------------------------------ relay status
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-fun RelayHomeScreen(vm: RelayViewModel, padding: PaddingValues) {
+fun RelayHomeScreen(vm: RelayViewModel, padding: PaddingValues, onProvision: () -> Unit) {
     val context = LocalContext.current
     val state by vm.state.collectAsStateWithLifecycle()
+    val bundle by vm.bundle.collectAsStateWithLifecycle()
+    val sync by vm.sync.collectAsStateWithLifecycle()
+    val inbox by vm.inbox.collectAsStateWithLifecycle()
+    var videoLater by remember { mutableStateOf(false) }
     val waiting by vm.waiting.collectAsStateWithLifecycle()
     val devices by vm.devices.collectAsStateWithLifecycle()
     var problem by remember { mutableStateOf<String?>(null) }
@@ -648,6 +764,11 @@ fun RelayHomeScreen(vm: RelayViewModel, padding: PaddingValues) {
                 Banner("$waiting waiting to be opened",
                        "Arrived while the relay was locked. They open as soon as it is unlocked.", FieldAmber)
             }
+
+            SyncCard(bundle, sync, inbox.count { it.forwardedAt == null }, videoLater,
+                     onVideoLater = { videoLater = it },
+                     onSync = { vm.sync(videoLater) }, onDismiss = { vm.dismissSync() },
+                     onProvision = onProvision)
 
             Text("Where phones send", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
             if (addresses.isEmpty()) {

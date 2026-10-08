@@ -1343,8 +1343,10 @@ CREATE TABLE IF NOT EXISTS audit_log (
     -- api/field.py): not a person who typed a password, and not the worker.
     -- Without it the trail reads as though an analyst wrote the submission at
     -- their desk, which is the one thing the entry exists to disprove.
+    -- 'relay' (v1.10) is a team relay tablet syncing reports it carried
+    -- home for its team's phones.
     actor_kind TEXT NOT NULL DEFAULT 'user'
-        CHECK (actor_kind IN ('user', 'system', 'anonymous', 'device')),
+        CHECK (actor_kind IN ('user', 'system', 'anonymous', 'device', 'relay')),
     action TEXT NOT NULL,              -- dotted object.verb, e.g. 'entity.create', 'report.export_pdf', 'auth.login_failed'
     object_type TEXT,                  -- 'entity' | 'report' | 'attachment' | 'user' | 'backup' | ...
     object_id TEXT,                    -- stored as TEXT because ids across this schema are a mix of slugs and serials
@@ -1618,3 +1620,68 @@ CREATE TABLE IF NOT EXISTS route_details (
 
 CREATE INDEX IF NOT EXISTS idx_route_details_bounds
     ON route_details (min_lat, max_lat, min_lon, max_lon);
+
+-- ---------------------------------------------------------------------------
+-- v1.10 — team relays. The same statements as db/migrate-v1.10-relays.sql;
+-- see that file for what each one is for.
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS field_relays (
+    id SERIAL PRIMARY KEY,
+    label TEXT NOT NULL,
+    -- SHA-256 of the relay's token, as for a field device. NULL until the
+    -- tablet has exchanged its one-time provisioning code.
+    token_hash TEXT UNIQUE,
+    token_prefix TEXT,
+    -- One-time code the tablet scans to fetch its bundle. Hashed; cleared
+    -- once used. Valid for 30 minutes.
+    provision_hash TEXT UNIQUE,
+    provision_expires_at TIMESTAMPTZ,
+    -- How long the relay may go without checking in before its key is
+    -- dropped. Days. The console offers 1 to 14, default 3.
+    keepalive_days INTEGER NOT NULL DEFAULT 3 CHECK (keepalive_days BETWEEN 1 AND 14),
+    -- Addresses the tablet tries, in order, when the lead presses Sync:
+    -- the VPN address first, the office LAN second. A JSON array of URLs.
+    addresses JSONB NOT NULL DEFAULT '[]'::jsonb,
+    provisioned_at TIMESTAMPTZ,
+    last_checkin_at TIMESTAMPTZ,
+    last_checkin_ip TEXT,
+    expires_at TIMESTAMPTZ,
+    revoked_at TIMESTAMPTZ,
+    revoked_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    -- 'expired' (no check-in within the keep-alive), 'manual', or
+    -- 'reprovisioned' (replaced by a fresh key on return).
+    revoke_reason TEXT,
+    submission_count INTEGER NOT NULL DEFAULT 0,
+    created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS field_relay_members (
+    relay_id INTEGER NOT NULL REFERENCES field_relays(id) ON DELETE CASCADE,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    PRIMARY KEY (relay_id, user_id)
+);
+
+CREATE TABLE IF NOT EXISTS console_identity (
+    id INTEGER PRIMARY KEY DEFAULT 1 CHECK (id = 1),
+    -- ECDSA P-256, PKCS#8 PEM. Generated on first use. Signs only the
+    -- relay challenge ("humint-relay-hello:v1:" + nonce), nothing else.
+    private_key_pem TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+ALTER TABLE field_submissions ADD COLUMN IF NOT EXISTS
+    relay_id INTEGER REFERENCES field_relays(id) ON DELETE SET NULL;
+-- The relay's own number for this report, and for the phone that sent it.
+-- Together with relay_id they make a retried sync land as the same row.
+ALTER TABLE field_submissions ADD COLUMN IF NOT EXISTS relay_submission_id INTEGER;
+ALTER TABLE field_submissions ADD COLUMN IF NOT EXISTS relay_device_id INTEGER;
+ALTER TABLE field_submissions ADD COLUMN IF NOT EXISTS relay_label TEXT;
+ALTER TABLE field_submissions ADD COLUMN IF NOT EXISTS relayed_at TIMESTAMPTZ;
+-- The team lead's priority tags and note, carried home from the relay.
+ALTER TABLE field_submissions ADD COLUMN IF NOT EXISTS relay_priorities JSONB;
+ALTER TABLE field_submissions ADD COLUMN IF NOT EXISTS relay_note TEXT;
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_field_submissions_relay
+    ON field_submissions (relay_id, relay_submission_id)
+    WHERE relay_id IS NOT NULL AND relay_submission_id IS NOT NULL;

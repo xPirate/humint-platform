@@ -260,7 +260,27 @@ class MainActivity : FragmentActivity() {
                 frame(org.humint.field.ui.RelayTab.Phones) { p -> org.humint.field.ui.RelayPhonesScreen(rvm, p) }
             }
             composable("relay") {
-                frame(org.humint.field.ui.RelayTab.Relay) { p -> org.humint.field.ui.RelayHomeScreen(rvm, p) }
+                frame(org.humint.field.ui.RelayTab.Relay) { p ->
+                    org.humint.field.ui.RelayHomeScreen(rvm, p, onProvision = { nav.navigate("relay-provision") })
+                }
+            }
+            composable("relay-provision") {
+                val err by rvm.provisionError.collectAsStateWithLifecycle()
+                org.humint.field.ui.QrScanScreen(
+                    title = "Provision this relay",
+                    intro = "On the console: Admin → Field devices → Team relays. Scan the code it shows. " +
+                        "This tablet must be on the office network.",
+                    footnote = "Afterwards, check the console fingerprint here matches the one on the console's screen.",
+                    notice = err,
+                    accept = rvm::provision,
+                    typedPayload = { url, code ->
+                        org.json.JSONObject().put("v", 1).put("kind", "relay-provision")
+                            .put("url", url).put("code", code).toString()
+                    },
+                    onScanned = { rvm.clearProvisionError(); nav.popBackStack() },
+                    onCancel = { rvm.clearProvisionError(); nav.popBackStack() },
+                    typedTokenLabel = "Provisioning code",
+                )
             }
             composable("settings") {
                 frame(org.humint.field.ui.RelayTab.Settings) { p -> SettingsScreen(p) }

@@ -68,10 +68,46 @@ import java.util.concurrent.TimeUnit
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ScanScreen(vm: FieldViewModel, onScanned: () -> Unit, onCancel: () -> Unit) {
-    val context = LocalContext.current
-    val owner = LocalLifecycleOwner.current
     val ready by vm.readyCount.collectAsStateWithLifecycle()
     val notice by vm.notice.collectAsStateWithLifecycle()
+    QrScanScreen(
+        title = "Scan to send",
+        intro = "$ready report${if (ready == 1) "" else "s"} ready. Scan the code the console " +
+            "shows under Admin settings → Field devices, or the team relay's code.",
+        footnote = "Nothing about the console is written to this phone. When the upload is " +
+            "finished, or the app goes to the background, it is forgotten again.",
+        notice = notice,
+        accept = vm::onScanned,
+        typedPayload = { url, token ->
+            JSONObject().put("v", 1).put("url", url).put("token", token).toString()
+        },
+        onScanned = onScanned,
+        onCancel = onCancel,
+    )
+}
+
+/**
+ * The scanner itself, for any code the app reads: an upload code on a
+ * phone, a provisioning code on a relay. [accept] is handed each payload
+ * and answers whether it was usable; [typedPayload] builds one from the
+ * typed fallback's two fields.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun QrScanScreen(
+    title: String,
+    intro: String,
+    footnote: String,
+    notice: String?,
+    accept: (String, (Boolean) -> Unit) -> Unit,
+    typedPayload: (String, String) -> String,
+    onScanned: () -> Unit,
+    onCancel: () -> Unit,
+    typedUrlLabel: String = "Console address",
+    typedTokenLabel: String = "Token",
+) {
+    val context = LocalContext.current
+    val owner = LocalLifecycleOwner.current
     var granted by remember { mutableStateOf(false) }
     var typing by remember { mutableStateOf(false) }
     var handled by remember { mutableStateOf(false) }
@@ -89,7 +125,7 @@ fun ScanScreen(vm: FieldViewModel, onScanned: () -> Unit, onCancel: () -> Unit) 
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Scan to send") },
+                title = { Text(title) },
                 navigationIcon = { TextButton(onClick = onCancel) { Text("Back") } },
             )
         },
@@ -98,8 +134,7 @@ fun ScanScreen(vm: FieldViewModel, onScanned: () -> Unit, onCancel: () -> Unit) 
             Modifier.fillMaxSize().padding(padding).padding(horizontal = 16.dp),
         ) {
             Text(
-                "$ready report${if (ready == 1) "" else "s"} ready. Scan the code the console " +
-                "shows under Admin settings → Field devices.",
+                intro,
                 style = MaterialTheme.typography.bodyLarge,
                 modifier = Modifier.padding(vertical = 10.dp),
             )
@@ -142,7 +177,7 @@ fun ScanScreen(vm: FieldViewModel, onScanned: () -> Unit, onCancel: () -> Unit) 
                         if (handled) return@QrAnalyzer
                         handled = true
                         phase = ScanPhase.Read
-                        vm.onScanned(payload) { ok ->
+                        accept(payload) { ok ->
                             if (ok) {
                                 // Leave the brackets green long enough to be
                                 // seen, so "it worked" is something the
@@ -241,8 +276,7 @@ fun ScanScreen(vm: FieldViewModel, onScanned: () -> Unit, onCancel: () -> Unit) 
                 )
                 Spacer(Modifier.height(6.dp))
                 Text(
-                    "Nothing about the console is written to this phone. When the upload is " +
-                    "finished, or the app goes to the background, it is forgotten again.",
+                    footnote,
                     style = MaterialTheme.typography.labelMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -261,10 +295,8 @@ fun ScanScreen(vm: FieldViewModel, onScanned: () -> Unit, onCancel: () -> Unit) 
                 ) { Text("Type the address and token instead") }
             } else {
                 TypedEntry(onSubmit = { url, token ->
-                    val payload = JSONObject()
-                        .put("v", 1).put("url", url).put("token", token).toString()
-                    vm.onScanned(payload) { ok -> if (ok) onScanned() }
-                }, onBack = { typing = false })
+                    accept(typedPayload(url, token)) { ok -> if (ok) onScanned() }
+                }, onBack = { typing = false }, urlLabel = typedUrlLabel, tokenLabel = typedTokenLabel)
             }
 
             notice?.let {
@@ -277,20 +309,21 @@ fun ScanScreen(vm: FieldViewModel, onScanned: () -> Unit, onCancel: () -> Unit) 
 }
 
 @Composable
-private fun TypedEntry(onSubmit: (String, String) -> Unit, onBack: () -> Unit) {
+private fun TypedEntry(onSubmit: (String, String) -> Unit, onBack: () -> Unit,
+                       urlLabel: String = "Console address", tokenLabel: String = "Token") {
     var url by remember { mutableStateOf("http://") }
     var token by remember { mutableStateOf("") }
     Column {
         OutlinedTextField(
             value = url, onValueChange = { url = it },
-            label = { Text("Console address") },
+            label = { Text(urlLabel) },
             supportingText = { Text("the one the phone can reach, not localhost") },
             singleLine = true, modifier = Modifier.fillMaxWidth(),
         )
         Spacer(Modifier.height(10.dp))
         OutlinedTextField(
             value = token, onValueChange = { token = it },
-            label = { Text("Token") },
+            label = { Text(tokenLabel) },
             singleLine = false, minLines = 2,
             textStyle = MonoStyle,
             modifier = Modifier.fillMaxWidth(),
