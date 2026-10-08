@@ -143,12 +143,13 @@ class RelayLink(private val context: Context) {
             save(b.json)
 
             val devices = dao.allDevices().associateBy { it.id }
+            val pmap = dao.allPriorities().associateBy { it.id }
             val queue = dao.unforwarded()
             var sent = 0
             var held = 0
             queue.forEachIndexed { i, row ->
                 onProgress(Progress.Sending(i + 1, queue.size, row.title))
-                val consoleId = sendReport(base, auth, row, devices[row.deviceId])
+                val consoleId = sendReport(base, auth, row, devices[row.deviceId], pmap)
                 var allFiles = true
                 for (f in dao.files(row.id).filterNot { it.forwarded }) {
                     if (videoLater && f.mimeType.startsWith("video/")) { allFiles = false; continue }
@@ -207,28 +208,9 @@ class RelayLink(private val context: Context) {
     }
 
     private fun sendReport(base: String, auth: String, r: RelaySubmissionRow,
-                           device: org.humint.field.data.RelayDeviceRow?): Int {
-        val body = JSONObject().apply {
-            put("title", r.title)
-            r.body?.let { put("body", it) }
-            r.criticality?.let { put("criticality", it) }
-            r.observedAt?.let { put("observed_at", it) }
-            r.lat?.let { put("lat", it) }; r.lng?.let { put("lng", it) }
-            r.accuracyM?.let { put("location_accuracy_m", it) }
-            r.locationNote?.let { put("location_note", it) }
-            r.clientRef?.let { put("client_ref", it) }
-            r.template?.let { put("template", it) }
-            r.templateVersion?.let { put("template_version", it) }
-            put("fields", JSONObject(r.fields))
-            r.geometry?.let { runCatching { put("geometry", JSONObject(it)) } }
-            put("relay_submission_id", r.id)
-            put("relay_device_id", r.deviceId)
-            device?.let { put("phone_label", it.label); put("analyst_name", it.analyst) }
-            device?.consoleUserId?.let { put("analyst_user_id", it) }
-            put("received_at", iso(r.receivedAt))
-            r.priorities?.let { runCatching { put("priorities", JSONArray(it)) } }
-            r.leadNote?.let { put("lead_note", it) }
-        }
+                           device: org.humint.field.data.RelayDeviceRow?,
+                           pmap: Map<Int, org.humint.field.data.RelayPriorityRow>): Int {
+        val body = reportJson(r, device, pmap)
         val json = call(Request.Builder().url("$base/api/relay/submissions").header("Authorization", auth)
             .post(body.toString().toRequestBody("application/json; charset=utf-8".toMediaType())).build())
         return json.getInt("id")
@@ -261,6 +243,36 @@ class RelayLink(private val context: Context) {
     }
 
     companion object {
+        /** One report as the console's /api/relay/submissions takes it —
+         *  the same JSON a Sync sends and a USB backup carries. */
+        fun reportJson(r: RelaySubmissionRow, device: org.humint.field.data.RelayDeviceRow?,
+                       pmap: Map<Int, org.humint.field.data.RelayPriorityRow>): JSONObject = JSONObject().apply {
+            put("title", r.title)
+            r.body?.let { put("body", it) }
+            r.criticality?.let { put("criticality", it) }
+            r.observedAt?.let { put("observed_at", it) }
+            r.lat?.let { put("lat", it) }; r.lng?.let { put("lng", it) }
+            r.accuracyM?.let { put("location_accuracy_m", it) }
+            r.locationNote?.let { put("location_note", it) }
+            r.clientRef?.let { put("client_ref", it) }
+            r.template?.let { put("template", it) }
+            r.templateVersion?.let { put("template_version", it) }
+            put("fields", JSONObject(r.fields))
+            r.geometry?.let { runCatching { put("geometry", JSONObject(it)) } }
+            put("relay_submission_id", r.id)
+            put("relay_device_id", r.deviceId)
+            device?.let { put("phone_label", it.label); put("analyst_name", it.analyst) }
+            device?.consoleUserId?.let { put("analyst_user_id", it) }
+            put("received_at", iso(r.receivedAt))
+            // The priorities themselves, not the relay's ids for them: the
+            // console has never seen this relay's numbering.
+            val tags = RelayViewModel.tagsOf(r).mapNotNull { pmap[it] }
+            if (tags.isNotEmpty()) put("priorities", JSONArray(tags.map {
+                JSONObject().put("rank", it.rank).put("statement", it.statement).put("status", it.status)
+            }))
+            r.leadNote?.let { put("lead_note", it) }
+        }
+
         private fun JSONArray?.strings(): List<String> =
             this?.let { a -> (0 until a.length()).map { a.getString(it) } }.orEmpty()
 

@@ -432,10 +432,19 @@ async def save_submission_file(submission_id: int, file: UploadFile,
     if not content:
         raise HTTPException(status_code=400, detail="That file is empty.")
 
+    file_id = store_file_bytes(submission_id, file.filename, file.content_type, content,
+                               client_ref, duration_ms)
+    return {"id": file_id, "duplicate": False, "bytes": len(content)}
+
+
+def store_file_bytes(submission_id: int, filename: str | None, mime: str | None,
+                     content: bytes, client_ref: str | None, duration_ms: int | None) -> int:
+    """Write a submission's file to disk and its row to the database. The
+    caller has done the checks. Also used by a relay backup import."""
     now = datetime.now(timezone.utc)
     rel_dir = os.path.join("field", str(now.year), f"{now.month:02d}")
     os.makedirs(os.path.join(UPLOAD_DIR, rel_dir), exist_ok=True)
-    ext = os.path.splitext(file.filename or "")[1][:12]
+    ext = os.path.splitext(filename or "")[1][:12]
     ext = ext if re.fullmatch(r"\.[A-Za-z0-9]+", ext or "") else ""
     storage_path = os.path.join(rel_dir, f"{uuid.uuid4().hex}{ext}")
     with open(os.path.join(UPLOAD_DIR, storage_path), "wb") as fh:
@@ -447,17 +456,16 @@ async def save_submission_file(submission_id: int, file: UploadFile,
                 "INSERT INTO field_submission_files (submission_id, filename, storage_path, "
                 "        mime_type, file_size_bytes, client_ref, duration_ms) "
                 "VALUES (%s, %s, %s, %s, %s, %s, %s) RETURNING id",
-                (submission_id, os.path.basename(file.filename or "photo"), storage_path,
-                 file.content_type, len(content), client_ref,
+                (submission_id, os.path.basename(filename or "photo"), storage_path,
+                 mime, len(content), client_ref,
                  duration_ms if duration_ms and 0 < duration_ms < 86_400_000 else None))
-            file_id = cur.fetchone()[0]
+            return cur.fetchone()[0]
     except Exception:
         try:
             os.remove(os.path.join(UPLOAD_DIR, storage_path))
         except OSError:
             pass
         raise
-    return {"id": file_id, "duplicate": False, "bytes": len(content)}
 
 
 # ---------------------------------------------------------------------------
@@ -702,7 +710,8 @@ def list_submissions(status: str = Query(default="new"),
             "       s.report_id, s.received_at, s.handled_at, s.handled_note, "
             "       u.username, h.username, "
             "       (SELECT count(*) FROM field_submission_files f WHERE f.submission_id = s.id), "
-            "       s.template, s.template_version, s.fields, s.geometry "
+            "       s.template, s.template_version, s.fields, s.geometry, "
+            "       s.relay_label, s.relay_priorities, s.relay_note "
             "  FROM field_submissions s "
             "  LEFT JOIN users u ON u.id = s.user_id "
             "  LEFT JOIN users h ON h.id = s.handled_by "
@@ -740,6 +749,9 @@ def list_submissions(status: str = Query(default="new"),
                 # untouched until it becomes a record.
                 "geometry": _display_geometry(r[21]),
                 "geometry_summary": geometry_summary(r[21]),
+                # Carried home by a team relay (v1.10): which relay, the
+                # team lead's priority tags and their note.
+                "relay": r[22], "relay_priorities": r[23] or [], "relay_note": r[24],
             })
         if items:
             cur.execute(

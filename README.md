@@ -273,7 +273,7 @@ see [the exercise briefing](docs/exercise/BRIEFING.md).*
 | [Install and first run](docs/how-to/install.md) | Get it running on a laptop or a Pi, with the optional model, HTTPS and a five-minute check. |
 | [Upgrade](docs/how-to/upgrade.md) · [Back up and restore](docs/how-to/backup-and-restore.md) · [Users and profiles](docs/how-to/users-and-profiles.md) | Keeping an instance running. |
 | [Review and merge](docs/how-to/review-and-merge.md) · [Records and links](docs/how-to/records-and-links.md) · [Reports and exports](docs/how-to/reports-and-exports.md) | The analyst's working loop. |
-| [Field devices](docs/how-to/field-devices.md) · [Field reports](docs/how-to/field-reports.md) · [Release the field app](docs/how-to/release-the-field-app.md) | Phones: enrolling, reporting, and publishing the app on GitHub and Google Play. |
+| [Field devices](docs/how-to/field-devices.md) · [Field reports](docs/how-to/field-reports.md) · [Team relay](docs/how-to/field-relay.md) · [Release the field app](docs/how-to/release-the-field-app.md) | Phones and relay tablets: enrolling, reporting, deploying a relay, and publishing the app on GitHub and Google Play. |
 | [Fix common problems](docs/how-to/troubleshooting.md) | What to check, and the commands to check it. |
 | [The companion app](android/README.md) | Building, testing and signing the Android app, what it keeps on the handset and what it deliberately does not. |
 | [Design notes](docs/DESIGN.md) | The long-form reference: what everything does and why it works that way. Read it when you want to know the reasoning, not the steps. |

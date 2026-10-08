@@ -233,6 +233,7 @@ class MainActivity : FragmentActivity() {
             if (tab == org.humint.field.ui.RelayTab.Lock) { Vault.lock(); return }
             val route = when (tab) {
                 org.humint.field.ui.RelayTab.Inbox -> "inbox"
+                org.humint.field.ui.RelayTab.Priorities -> "priorities"
                 org.humint.field.ui.RelayTab.Phones -> "phones"
                 org.humint.field.ui.RelayTab.Relay -> "relay"
                 else -> "settings"
@@ -255,6 +256,9 @@ class MainActivity : FragmentActivity() {
                 org.humint.field.ui.RelayReportScreen(
                     rvm, entry.arguments?.getString("id")?.toIntOrNull() ?: 0,
                     onBack = { nav.popBackStack() })
+            }
+            composable("priorities") {
+                frame(org.humint.field.ui.RelayTab.Priorities) { p -> org.humint.field.ui.RelayPrioritiesScreen(rvm, p) }
             }
             composable("phones") {
                 frame(org.humint.field.ui.RelayTab.Phones) { p -> org.humint.field.ui.RelayPhonesScreen(rvm, p) }

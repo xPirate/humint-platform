@@ -28,6 +28,7 @@ by the job you are trying to do.
 | [Bring material in and review it](review-and-merge.md) | Documents, pasted text, the review queues, merging duplicates, clearing noise. |
 | [Work with records and links](records-and-links.md) | Grading links 1–6, expiring them, alignment, the network, right-click actions, retention holds. |
 | [Handle field reports](field-reports.md) | Writing and sending a report on the phone, then reviewing it on the console. |
+| [Run a team relay](field-relay.md) | A tablet that collects the team's phone reports on a deployment and syncs them home: provisioning, keep-alive, team and duress PINs, priorities, USB backup. |
 | [Write reports and export packages](reports-and-exports.md) | Reports, the guided debrief, target packages and dossiers, the BOLO sheet, the executive summary. |
 | [Use the map, zones and routes](maps-and-zones.md) | Basemaps, dropping a pin, zones as records, routes, KML/KMZ/GPX import and export, printing a map. |
 | [Use the team pages](team-pages.md) | Your profile, searching by analyst, the Roster, BOLO and Priorities boards, feeds. |

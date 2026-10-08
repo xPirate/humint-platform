@@ -46,6 +46,7 @@ needs to come after.
 | `db/migrate-v1.7-relationship-grading.sql` | 1–6 link grading (converts confirmed→1, probable→2, possible→3) and link expiry dates. |
 | `db/migrate-v1.8-analyst-profiles.sql` | Analyst profiles: status, callsign, contacts. |
 | `db/migrate-v1.9-zones-routes.sql` | Zones become records (existing zones are converted), Routes, and route/area field reports. |
+| `db/migrate-v1.10-relays.sql` | Team relays: registration, keep-alive, the console's signing key, and relayed reports. Rebuild the API image too (`--build`): it adds the `cryptography` package. |
 
 **Run them in version order, oldest you haven't run first.** For example,
 coming from v1.6:
@@ -55,6 +56,7 @@ set -a; . ./.env; set +a         # puts POSTGRES_USER / POSTGRES_DB in the shell
 docker compose exec -T db psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" < db/migrate-v1.7-relationship-grading.sql
 docker compose exec -T db psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" < db/migrate-v1.8-analyst-profiles.sql
 docker compose exec -T db psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" < db/migrate-v1.9-zones-routes.sql
+docker compose exec -T db psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" < db/migrate-v1.10-relays.sql
 ```
 
 The `-T` matters — without it, compose swallows the redirected file. List

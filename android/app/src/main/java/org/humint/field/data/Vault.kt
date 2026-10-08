@@ -69,6 +69,13 @@ object Vault {
     private const val HW_KEY_ALIAS = "humint.field.wrap.v2"
     private const val BIO_KEY_ALIAS = "humint.field.bio.v2"
     private const val VAULT_FILE = "vault.bin"
+    /** A second PIN onto the same data key — a relay's secondary team
+     *  member. Same construction as [VAULT_FILE]. */
+    private const val SECOND_FILE = "vault.2"
+    /** The duress PIN: not a key at all, only a sealed marker that says
+     *  "this PIN means erase". See [unlock]. */
+    private const val DURESS_FILE = "vault.d"
+    private val DURESS_MARK = "humint-duress-v1".toByteArray()
     private const val BIO_FILE = "vault.bio"
     private const val THROTTLE_FILE = "vault.attempts"
 
@@ -152,7 +159,18 @@ object Vault {
             _state.value = State.Locked(System.currentTimeMillis() + wait, failureCount(context))
             return false
         }
-        val dk = readVault(context, pin)
+        // Every slot is tried every time, whichever matches: a PIN that
+        // opened on the first try must not answer measurably faster than
+        // one that matched the duress slot, or the timing would say which
+        // kind of PIN was typed.
+        val primary = readVault(context, pin)
+        val second = readSlot(context, SECOND_FILE, pin)
+        val duress = isDuress(context, pin)
+        if (duress) {
+            erasedUnderDuress(context, pin)
+            return true
+        }
+        val dk = primary ?: second
         if (dk == null) {
             recordFailure(context)
             _state.value = lockedState(context)
@@ -165,6 +183,15 @@ object Vault {
     }
 
     fun changePin(context: Context, oldPin: CharArray, newPin: CharArray): Boolean {
+        // Whoever's PIN it is changes their own slot: the lead's primary, or
+        // the second team member's.
+        readSlot(context, SECOND_FILE, oldPin)?.let { dk ->
+            if (readVault(context, oldPin) == null) {
+                writeSlot(context, SECOND_FILE, dk, newPin)
+                dataKey = dk; clearThrottle(context); _state.value = State.Open
+                return true
+            }
+        }
         val dk = readVault(context, oldPin) ?: run { recordFailure(context); return false }
         writeVault(context, dk, newPin)
         // A biometric shortcut wraps the same data key, so it survives a PIN
@@ -201,6 +228,89 @@ object Vault {
         refreshState(context)
     }
 
+    // --------------------------------------------------------- team PINs
+
+    /** Whether [pin] is the lead's or the second team member's — for an
+     *  action that should be confirmed by someone who knows a team PIN
+     *  even though the vault is already open (a backup, say). */
+    fun checkPin(context: Context, pin: CharArray): Boolean {
+        val ok = anySlot(context, pin) != null
+        if (!ok) recordFailure(context)
+        return ok
+    }
+
+    fun hasSecondPin(context: Context) = File(context.filesDir, SECOND_FILE).exists()
+    fun hasDuressPin(context: Context) = File(context.filesDir, DURESS_FILE).exists()
+
+    sealed interface PinResult {
+        data object Ok : PinResult
+        data class Refused(val why: String) : PinResult
+    }
+
+    /** Whether [pin] is any working PIN on this device. */
+    private fun anySlot(context: Context, pin: CharArray): ByteArray? =
+        readVault(context, pin) ?: readSlot(context, SECOND_FILE, pin)
+
+    /**
+     * Give a second team member their own PIN onto the same reports. The
+     * lead's PIN confirms it; the new one must differ from every PIN
+     * already set, or two people would share one without knowing.
+     */
+    fun setSecondPin(context: Context, leadPin: CharArray, newPin: CharArray): PinResult {
+        val dk = readVault(context, leadPin) ?: run { recordFailure(context); return PinResult.Refused("That is not the lead's PIN.") }
+        if (readVault(context, newPin) != null) return PinResult.Refused("That is the lead's PIN. Choose a different one.")
+        if (isDuress(context, newPin)) return PinResult.Refused("That is the duress PIN. Choose a different one.")
+        writeSlot(context, SECOND_FILE, dk, newPin)
+        return PinResult.Ok
+    }
+
+    fun removeSecondPin(context: Context, leadPin: CharArray): PinResult {
+        readVault(context, leadPin) ?: run { recordFailure(context); return PinResult.Refused("That is not the lead's PIN.") }
+        Crypto.shred(File(context.filesDir, SECOND_FILE))
+        return PinResult.Ok
+    }
+
+    /**
+     * The duress PIN. Typed at the lock screen, it erases this device's
+     * reports and keys — the relay's buffer, its phones, its provisioning,
+     * every report and photo — and then opens a fresh, empty device under
+     * the same PIN, so the screen looks like any other unlock. It cannot be
+     * undone, which is why it must differ from every working PIN.
+     */
+    fun setDuressPin(context: Context, leadPin: CharArray, duressPin: CharArray): PinResult {
+        readVault(context, leadPin) ?: run { recordFailure(context); return PinResult.Refused("That is not the lead's PIN.") }
+        if (anySlot(context, duressPin) != null) {
+            return PinResult.Refused("That PIN already opens this device. The duress PIN must be different from every team PIN.")
+        }
+        val salt = ByteArray(SALT_BYTES).also { SecureRandom().nextBytes(it) }
+        val inner = seal(deriveFromPin(duressPin, salt), DURESS_MARK)
+        val outer = seal(hardwareKey(), inner)
+        File(context.filesDir, DURESS_FILE).outputStream().use { it.write(salt); it.write(outer) }
+        return PinResult.Ok
+    }
+
+    fun removeDuressPin(context: Context, leadPin: CharArray): PinResult {
+        readVault(context, leadPin) ?: run { recordFailure(context); return PinResult.Refused("That is not the lead's PIN.") }
+        Crypto.shred(File(context.filesDir, DURESS_FILE))
+        return PinResult.Ok
+    }
+
+    private fun isDuress(context: Context, pin: CharArray): Boolean {
+        val mark = readSlot(context, DURESS_FILE, pin) ?: return false
+        return java.security.MessageDigest.isEqual(mark, DURESS_MARK)
+    }
+
+    /** Erase, then come back up empty under the same PIN. Relay mode, the
+     *  palette and the theme are left as they were: a device that changed
+     *  its look on unlock would give the game away. */
+    private fun erasedUnderDuress(context: Context, pin: CharArray) {
+        destroyEverything(context)
+        setUp(context, pin)
+        if (org.humint.field.data.Settings.relayMode.value) {
+            runCatching { org.humint.field.relay.Relay.ensureKeys(context) }
+        }
+    }
+
     // ---------------------------------------------------------- the wrapping
 
     private fun writeVault(context: Context, dk: ByteArray, pin: CharArray) {
@@ -227,6 +337,27 @@ object Vault {
         val outer = raw.copyOfRange(SALT_BYTES, raw.size)
         val inner = open(hardwareKey(), outer) ?: return null
         return open(deriveFromPin(pin, salt), inner)
+    }
+
+    private fun writeSlot(context: Context, name: String, dk: ByteArray, pin: CharArray) {
+        val salt = ByteArray(SALT_BYTES).also { SecureRandom().nextBytes(it) }
+        val outer = seal(hardwareKey(), seal(deriveFromPin(pin, salt), dk))
+        File(context.filesDir, name).outputStream().use { it.write(salt); it.write(outer) }
+    }
+
+    /** What a slot file holds under [pin], or null — including when the
+     *  slot does not exist, so a missing slot costs the same as a wrong
+     *  PIN (one derivation) and timing says nothing about which are set. */
+    private fun readSlot(context: Context, name: String, pin: CharArray): ByteArray? {
+        val raw = runCatching { File(context.filesDir, name).readBytes() }.getOrNull()
+        if (raw == null || raw.size <= SALT_BYTES) {
+            deriveFromPin(pin, ByteArray(SALT_BYTES))
+            return null
+        }
+        val salt = raw.copyOfRange(0, SALT_BYTES)
+        val inner = open(hardwareKey(), raw.copyOfRange(SALT_BYTES, raw.size))
+        val key = deriveFromPin(pin, salt)
+        return inner?.let { open(key, it) }
     }
 
     private fun deriveFromPin(pin: CharArray, salt: ByteArray): SecretKey {
@@ -425,7 +556,7 @@ object Vault {
     fun destroyEverything(context: Context) {
         lock()
         FieldDatabase.closeAndForget()
-        listOf(VAULT_FILE, BIO_FILE, THROTTLE_FILE, "store.key").forEach {
+        listOf(VAULT_FILE, SECOND_FILE, DURESS_FILE, BIO_FILE, THROTTLE_FILE, "store.key").forEach {
             Crypto.shred(File(context.filesDir, it))
         }
         mediaDir(context).listFiles()?.forEach { Crypto.shred(it) }

@@ -32,11 +32,13 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Flag
 import androidx.compose.material.icons.filled.Inbox
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.PhoneAndroid
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.WifiTethering
+import androidx.compose.material.icons.outlined.Flag
 import androidx.compose.material.icons.outlined.Inbox
 import androidx.compose.material.icons.outlined.Lock
 import androidx.compose.material.icons.outlined.PhoneAndroid
@@ -102,7 +104,7 @@ import java.util.Locale
  * Settings, or — better — writes it on their own phone and sends it here
  * like everyone else.
  */
-enum class RelayTab { Inbox, Phones, Relay, Lock, Settings }
+enum class RelayTab { Inbox, Priorities, Phones, Relay, Lock, Settings }
 
 @Composable
 fun RelayShell(current: RelayTab, inboxCount: Int, onTab: (RelayTab) -> Unit,
@@ -116,6 +118,7 @@ fun RelayShell(current: RelayTab, inboxCount: Int, onTab: (RelayTab) -> Unit,
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     RelayBarItem(RelayTab.Inbox, current, Icons.Filled.Inbox, Icons.Outlined.Inbox, "Inbox", onTab, inboxCount)
+                    RelayBarItem(RelayTab.Priorities, current, Icons.Filled.Flag, Icons.Outlined.Flag, "Priorities", onTab)
                     RelayBarItem(RelayTab.Phones, current, Icons.Filled.PhoneAndroid, Icons.Outlined.PhoneAndroid, "Phones", onTab)
                     RelayBarItem(RelayTab.Relay, current, Icons.Filled.WifiTethering, Icons.Outlined.WifiTethering, "Relay", onTab)
                     RelayBarItem(RelayTab.Lock, current, Icons.Filled.Lock, Icons.Outlined.Lock, "Lock", onTab)
@@ -177,6 +180,15 @@ fun RelayInboxScreen(vm: RelayViewModel, padding: PaddingValues, onOpen: (Int) -
     val state by vm.state.collectAsStateWithLifecycle()
     val names = devices.associateBy { it.id }
     val unsent = inbox.count { it.forwardedAt == null }
+    val priorities by vm.priorities.collectAsStateWithLifecycle()
+    // null = all, -1 = not looked at yet, otherwise a priority id.
+    var filter by remember { mutableStateOf<Int?>(null) }
+    val untagged = inbox.count { it.priorities == null }
+    val shown = when (filter) {
+        null -> inbox
+        -1 -> inbox.filter { it.priorities == null }
+        else -> inbox.filter { filter in RelayViewModel.tagsOf(it) }
+    }
 
     Page(padding) {
         LazyColumn(
@@ -201,6 +213,18 @@ fun RelayInboxScreen(vm: RelayViewModel, padding: PaddingValues, onOpen: (Int) -
                     Banner("The relay is off", "Turn it on from the Relay tab so phones can send.", FieldAmber)
                 }
             }
+            if (inbox.isNotEmpty()) {
+                item {
+                    androidx.compose.foundation.lazy.LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        item { FilterChipX("All  ${inbox.size}", filter == null) { filter = null } }
+                        item { FilterChipX("Untagged  $untagged", filter == -1) { filter = -1 } }
+                        items(priorities, key = { it.id }) { p ->
+                            val n = inbox.count { p.id in RelayViewModel.tagsOf(it) }
+                            FilterChipX("P${p.rank}  $n", filter == p.id) { filter = p.id }
+                        }
+                    }
+                }
+            }
             if (inbox.isEmpty()) {
                 item {
                     Text(
@@ -212,11 +236,21 @@ fun RelayInboxScreen(vm: RelayViewModel, padding: PaddingValues, onOpen: (Int) -
                     )
                 }
             }
-            items(inbox, key = { it.id }) { row ->
+            items(shown, key = { it.id }) { row ->
                 InboxCard(row, names[row.deviceId], counts[row.id] ?: 0, Modifier.animateItem()) { onOpen(row.id) }
             }
         }
     }
+}
+
+@Composable
+private fun FilterChipX(label: String, selected: Boolean, onClick: () -> Unit) {
+    androidx.compose.material3.FilterChip(
+        selected = selected, onClick = onClick, label = { Text(label) }, shape = CircleShape,
+        colors = androidx.compose.material3.FilterChipDefaults.filterChipColors(
+            selectedContainerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.16f),
+            selectedLabelColor = MaterialTheme.colorScheme.primary),
+    )
 }
 
 @Composable
@@ -260,6 +294,9 @@ private fun InboxCard(row: RelaySubmissionRow, device: RelayDeviceRow?, files: I
                     append("Received ").append(clock(row.receivedAt))
                     if (files == 1) append(" · 1 attachment") else if (files > 1) append(" · $files attachments")
                     if (row.forwardedAt != null) append(" · sent home")
+                    val tags = RelayViewModel.tagsOf(row)
+                    if (row.priorities == null) append(" · untagged")
+                    else if (tags.isNotEmpty()) append(" · tagged")
                 },
                 style = MaterialTheme.typography.labelMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -343,6 +380,8 @@ fun RelayReportScreen(vm: RelayViewModel, id: Int, onBack: () -> Unit) {
 
                 FieldList(r)
 
+                TagSection(vm, r)
+
                 r.body?.let {
                     Text(it, style = MaterialTheme.typography.bodyLarge)
                 }
@@ -366,6 +405,51 @@ fun RelayReportScreen(vm: RelayViewModel, id: Int, onBack: () -> Unit) {
     full?.let {
         if (it.kind == "image") FullImage(it, onClose = { full = null })
         else FullMedia(it, onClose = { full = null })
+    }
+}
+
+/** The lead's half of a report: which priorities it answers, and a note. */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun TagSection(vm: RelayViewModel, r: RelaySubmissionRow) {
+    val priorities by vm.priorities.collectAsStateWithLifecycle()
+    val tags = RelayViewModel.tagsOf(r)
+    val suggested = remember(r.id, priorities) { RelayViewModel.suggest(r, priorities) }
+    var note by remember(r.id) { mutableStateOf(r.leadNote.orEmpty()) }
+    Column(
+        Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp))
+            .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.06f)).padding(14.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Text("Answers which priority?", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+        if (priorities.isEmpty()) {
+            Text("No priorities yet. Add the team's on the Priorities tab.",
+                 style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        } else {
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                priorities.forEach { p ->
+                    androidx.compose.material3.FilterChip(
+                        selected = p.id in tags,
+                        onClick = { vm.toggleTag(r, p.id) },
+                        label = {
+                            Text("P${p.rank} · ${p.statement.take(40)}" +
+                                 if (p.id !in tags && p.id in suggested) "  · suggested" else "")
+                        },
+                    )
+                }
+            }
+            if (r.priorities == null) {
+                TextButton(onClick = { vm.markBackground(r) }) { Text("Background — answers none") }
+            } else if (tags.isEmpty()) {
+                Text("Marked as background.", style = MaterialTheme.typography.labelMedium,
+                     color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
+        OutlinedTextField(note, { note = it }, label = { Text("Lead's note (goes home with it)") },
+                          modifier = Modifier.fillMaxWidth(), minLines = 2)
+        if (note.trim() != r.leadNote.orEmpty()) {
+            TextButton(onClick = { vm.saveNote(r, note) }) { Text("Save note") }
+        }
     }
 }
 
@@ -414,6 +498,152 @@ private fun RelayFileRow.asAttachment() = AttachmentRow(
     filename = filename, mimeType = mimeType, path = path,
     sizeBytes = sizeBytes, durationMs = durationMs,
 )
+
+// ------------------------------------------------------------ priorities
+
+/**
+ * What the team is here to find out, and how well the reports are
+ * answering it. A priority with nothing new in a day is flagged, so the gap
+ * shows before tomorrow's tasking rather than at the debrief.
+ */
+@Composable
+fun RelayPrioritiesScreen(vm: RelayViewModel, padding: PaddingValues) {
+    val priorities by vm.priorities.collectAsStateWithLifecycle()
+    val inbox by vm.inbox.collectAsStateWithLifecycle()
+    var editing by remember { mutableStateOf<org.humint.field.data.RelayPriorityRow?>(null) }
+    var adding by remember { mutableStateOf(false) }
+    val now = System.currentTimeMillis()
+
+    Page(padding) {
+        LazyColumn(
+            contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 32.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            item {
+                Row(Modifier.padding(top = 18.dp, bottom = 4.dp).fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text("Priorities", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
+                        Text("What the team is here to find out.",
+                             style = MaterialTheme.typography.bodyMedium,
+                             color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    Button(onClick = { adding = true }, modifier = Modifier.heightIn(min = TapTarget)) { Text("Add") }
+                }
+            }
+            if (priorities.isEmpty()) {
+                item {
+                    Text("Write the team's priorities before the event — one line each, ranked. " +
+                         "Reports coming in are then tagged against them, and this screen shows which " +
+                         "ones the team is answering.",
+                         style = MaterialTheme.typography.bodyMedium,
+                         color = MaterialTheme.colorScheme.onSurfaceVariant,
+                         modifier = Modifier.padding(vertical = 24.dp))
+                }
+            }
+            items(priorities, key = { it.id }) { p ->
+                val tagged = inbox.filter { p.id in RelayViewModel.tagsOf(it) }
+                val last = tagged.maxOfOrNull { it.receivedAt }
+                val quiet = p.status in listOf("Open", "Partly answered") && (last == null || now - last > 24 * 3600_000L) &&
+                    inbox.isNotEmpty()
+                Column(
+                    Modifier.fillMaxWidth().clip(RoundedCornerShape(20.dp))
+                        .background(if (quiet) FieldAmber.copy(alpha = 0.10f) else MaterialTheme.colorScheme.surface)
+                        .clickable { editing = p }.padding(14.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("P${p.rank}", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold,
+                             color = MaterialTheme.colorScheme.primary)
+                        Spacer(Modifier.width(10.dp))
+                        Text(p.statement, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold,
+                             modifier = Modifier.weight(1f))
+                        StatusTag(p.status)
+                    }
+                    p.answers?.let {
+                        Text(it, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    Text(
+                        buildString {
+                            append(if (tagged.isEmpty()) "No reports yet" else "${tagged.size} report${if (tagged.size == 1) "" else "s"}")
+                            last?.let { append(" · last ").append(clock(it)) }
+                            if (quiet) append(" · nothing new in 24 h")
+                        },
+                        style = MaterialTheme.typography.labelMedium,
+                        color = if (quiet) FieldAmber else MaterialTheme.colorScheme.onSurfaceVariant,
+                        fontWeight = if (quiet) FontWeight.SemiBold else FontWeight.Normal,
+                    )
+                }
+            }
+        }
+    }
+    if (adding) {
+        PriorityDialog(null, nextRank = (priorities.maxOfOrNull { it.rank } ?: 0) + 1,
+                       onSave = { vm.savePriority(it); adding = false }, onDelete = {}, onDismiss = { adding = false })
+    }
+    editing?.let { p ->
+        PriorityDialog(p, nextRank = p.rank, onSave = { vm.savePriority(it); editing = null },
+                       onDelete = { vm.deletePriority(p.id); editing = null }, onDismiss = { editing = null })
+    }
+}
+
+@Composable
+private fun StatusTag(status: String) {
+    val colour = when (status) {
+        "Answered" -> MaterialTheme.colorScheme.primary
+        "Partly answered" -> FieldAmber
+        "Dropped" -> MaterialTheme.colorScheme.onSurfaceVariant
+        else -> MaterialTheme.colorScheme.onSurface
+    }
+    Text(status, style = MaterialTheme.typography.labelMedium, color = colour, fontWeight = FontWeight.SemiBold,
+         modifier = Modifier.clip(CircleShape).background(colour.copy(alpha = 0.12f))
+             .padding(horizontal = 9.dp, vertical = 3.dp))
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun PriorityDialog(
+    row: org.humint.field.data.RelayPriorityRow?, nextRank: Int,
+    onSave: (org.humint.field.data.RelayPriorityRow) -> Unit, onDelete: () -> Unit, onDismiss: () -> Unit,
+) {
+    var statement by remember { mutableStateOf(row?.statement.orEmpty()) }
+    var answers by remember { mutableStateOf(row?.answers.orEmpty()) }
+    var rank by remember { mutableStateOf((row?.rank ?: nextRank).toString()) }
+    var status by remember { mutableStateOf(row?.status ?: "Open") }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(if (row == null) "New priority" else "Priority ${row.rank}") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                OutlinedTextField(statement, { statement = it }, label = { Text("What the team needs to find out") },
+                                  modifier = Modifier.fillMaxWidth(), minLines = 2)
+                OutlinedTextField(answers, { answers = it }, label = { Text("What would answer it (names, places, words)") },
+                                  modifier = Modifier.fillMaxWidth(), minLines = 2)
+                OutlinedTextField(rank, { v -> rank = v.filter { it.isDigit() }.take(2) }, label = { Text("Rank") },
+                                  singleLine = true,
+                                  keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
+                                      keyboardType = androidx.compose.ui.text.input.KeyboardType.Number))
+                if (row != null) {
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        listOf("Open", "Partly answered", "Answered", "Dropped").forEach { st ->
+                            androidx.compose.material3.FilterChip(selected = status == st, onClick = { status = st },
+                                                                  label = { Text(st) })
+                        }
+                    }
+                    TextButton(onClick = onDelete) { Text("Delete this priority", color = MaterialTheme.colorScheme.error) }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(enabled = statement.isNotBlank(), onClick = {
+                onSave((row ?: org.humint.field.data.RelayPriorityRow(rank = 0, statement = "")).copy(
+                    rank = rank.toIntOrNull() ?: nextRank, statement = statement.trim(),
+                    answers = answers.trim().ifBlank { null }, status = status))
+            }) { Text("Save") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+    )
+}
 
 // ---------------------------------------------------------------- phones
 
@@ -602,6 +832,202 @@ private fun qrBitmap(text: String): ImageBitmap {
     return bmp.asImageBitmap()
 }
 
+// ---------------------------------------------------------------- backup
+
+/** An encrypted copy of everything on the relay, to a USB stick. For the
+ *  night the tablet might not make it home. */
+@Composable
+private fun BackupCard(vm: RelayViewModel) {
+    val state by vm.backup.collectAsStateWithLifecycle()
+    val bundle by vm.bundle.collectAsStateWithLifecycle()
+    var asking by remember { mutableStateOf(false) }
+    var pin by remember { mutableStateOf<CharArray?>(null) }
+    val pick = androidx.activity.compose.rememberLauncherForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.CreateDocument("application/octet-stream"),
+    ) { uri ->
+        val p = pin; pin = null
+        if (uri != null && p != null) vm.backup(uri, p) else p?.let { java.util.Arrays.fill(it, '\u0000') }
+    }
+
+    Column(
+        Modifier.fillMaxWidth().clip(RoundedCornerShape(20.dp))
+            .background(MaterialTheme.colorScheme.surface).padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Text("Back up to USB", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
+        Text(
+            if (bundle != null) "Everything on the relay, encrypted. It opens with a team PIN, or at the " +
+                "console with no PIN — so the reports survive the tablet."
+            else "Everything on the relay, encrypted under a team PIN. Provision the relay first and the " +
+                "console can open its backups too.",
+            style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        when (val b = state) {
+            null -> OutlinedButton(onClick = { asking = true }, modifier = Modifier.heightIn(min = TapTarget)) {
+                Text("Back up now")
+            }
+            is RelayViewModel.Backup.Writing -> Text("Writing the backup…")
+            is RelayViewModel.Backup.Done -> {
+                Text("Backed up ${b.reports} report${if (b.reports == 1) "" else "s"} and ${b.files} file${if (b.files == 1) "" else "s"}." +
+                     if (b.consoleCanOpen) " The console can open it." else "",
+                     style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                Text("Keep the stick apart from the tablet, or there is no point.",
+                     style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                TextButton(onClick = { vm.dismissBackup() }) { Text("Done") }
+            }
+            is RelayViewModel.Backup.Failed -> {
+                Text(b.message, color = MaterialTheme.colorScheme.error)
+                TextButton(onClick = { vm.dismissBackup() }) { Text("OK") }
+            }
+        }
+    }
+
+    if (asking) {
+        var typed by remember { mutableStateOf("") }
+        var wrong by remember { mutableStateOf(false) }
+        AlertDialog(
+            onDismissRequest = { asking = false },
+            title = { Text("Back up to USB") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text("Type a team PIN. The backup opens with that PIN on a relay. Next, choose the USB drive.")
+                    PinField(typed, { typed = it; wrong = false }, "Team PIN")
+                    if (wrong) Text("That is not a team PIN.", color = MaterialTheme.colorScheme.error)
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    val chars = typed.toCharArray()
+                    if (!vm.checkPin(chars)) { wrong = true; return@TextButton }
+                    pin = chars; asking = false
+                    val day = java.text.SimpleDateFormat("yyyyMMdd-HHmm", Locale.US).format(Date())
+                    pick.launch("humint-relay-$day.hrb")
+                }) { Text("Choose where to save") }
+            },
+            dismissButton = { TextButton(onClick = { asking = false }) { Text("Cancel") } },
+        )
+    }
+}
+
+// ------------------------------------------------------------- team PINs
+
+/**
+ * A relay belongs to a team, not one person: the lead's PIN, a second team
+ * member's, and a duress PIN that erases the relay and opens it empty.
+ * Every change here asks for the lead's PIN, so a borrowed, unlocked tablet
+ * cannot be given a PIN its team does not know about.
+ */
+@Composable
+private fun TeamPinsCard() {
+    val context = LocalContext.current
+    var tick by remember { mutableStateOf(0) }
+    val second = remember(tick) { org.humint.field.data.Vault.hasSecondPin(context) }
+    val duress = remember(tick) { org.humint.field.data.Vault.hasDuressPin(context) }
+    var editing by remember { mutableStateOf<String?>(null) }
+
+    Column(
+        Modifier.fillMaxWidth().clip(RoundedCornerShape(20.dp))
+            .background(MaterialTheme.colorScheme.surface).padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Text("Team PINs", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
+        PinRow("Lead's PIN", "Set. Change it in Settings.", null, null)
+        PinRow("Second team member", if (second) "Set — opens the same relay and can Sync." else "Not set.",
+               if (second) "Remove" else "Set", if (second) "remove-second" else "second") { editing = it }
+        PinRow("Duress PIN", if (duress) "Set. Typed at the lock screen, it erases this relay and opens it empty."
+                             else "Not set.",
+               if (duress) "Remove" else "Set", if (duress) "remove-duress" else "duress") { editing = it }
+        if (!second || !duress) {
+            Text("Set both before the team deploys.", style = MaterialTheme.typography.labelMedium, color = FieldAmber)
+        }
+    }
+
+    editing?.let { what ->
+        PinDialog(what, onDone = { editing = null; tick++ })
+    }
+}
+
+@Composable
+private fun PinRow(title: String, line: String, action: String?, key: String?, onAction: (String) -> Unit = {}) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Column(Modifier.weight(1f)) {
+            Text(title, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Medium)
+            Text(line, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        if (action != null && key != null) {
+            TextButton(onClick = { onAction(key) }) { Text(action) }
+        }
+    }
+}
+
+@Composable
+private fun PinDialog(what: String, onDone: () -> Unit) {
+    val context = LocalContext.current
+    val removing = what.startsWith("remove")
+    var lead by remember { mutableStateOf("") }
+    var new1 by remember { mutableStateOf("") }
+    var new2 by remember { mutableStateOf("") }
+    var error by remember { mutableStateOf<String?>(null) }
+    val min = org.humint.field.data.Vault.MIN_PIN_LENGTH
+    val max = org.humint.field.data.Vault.MAX_PIN_LENGTH
+    val title = when (what) {
+        "second" -> "Second team member's PIN"
+        "duress" -> "Duress PIN"
+        "remove-second" -> "Remove the second PIN"
+        else -> "Remove the duress PIN"
+    }
+    AlertDialog(
+        onDismissRequest = onDone,
+        title = { Text(title) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                if (what == "duress") {
+                    Text("Typed at the lock screen, this erases every report, photo, phone and key on " +
+                         "this relay, then opens it empty under the same PIN. It cannot be undone. Pick " +
+                         "something no one will type by accident — not a near-miss of a real PIN.",
+                         style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.error)
+                }
+                PinField(lead, { lead = it }, "Lead's PIN")
+                if (!removing) {
+                    PinField(new1, { new1 = it }, "New PIN ($min–$max digits)")
+                    PinField(new2, { new2 = it }, "Same again")
+                }
+                error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = {
+                if (!removing && (new1.length !in min..max || new1 != new2)) {
+                    error = if (new1 != new2) "The two new PINs differ." else "Use $min to $max digits."
+                    return@TextButton
+                }
+                val r = when (what) {
+                    "second" -> org.humint.field.data.Vault.setSecondPin(context, lead.toCharArray(), new1.toCharArray())
+                    "duress" -> org.humint.field.data.Vault.setDuressPin(context, lead.toCharArray(), new1.toCharArray())
+                    "remove-second" -> org.humint.field.data.Vault.removeSecondPin(context, lead.toCharArray())
+                    else -> org.humint.field.data.Vault.removeDuressPin(context, lead.toCharArray())
+                }
+                when (r) {
+                    is org.humint.field.data.Vault.PinResult.Ok -> onDone()
+                    is org.humint.field.data.Vault.PinResult.Refused -> error = r.why
+                }
+            }) { Text(if (removing) "Remove" else "Set") }
+        },
+        dismissButton = { TextButton(onClick = onDone) { Text("Cancel") } },
+    )
+}
+
+@Composable
+private fun PinField(value: String, onChange: (String) -> Unit, label: String) {
+    OutlinedTextField(
+        value, { v -> onChange(v.filter { it.isDigit() }.take(org.humint.field.data.Vault.MAX_PIN_LENGTH)) },
+        label = { Text(label) }, singleLine = true,
+        visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation(),
+        keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
+            keyboardType = androidx.compose.ui.text.input.KeyboardType.NumberPassword),
+    )
+}
+
 // ------------------------------------------------------------------ sync
 
 /**
@@ -764,6 +1190,10 @@ fun RelayHomeScreen(vm: RelayViewModel, padding: PaddingValues, onProvision: () 
                 Banner("$waiting waiting to be opened",
                        "Arrived while the relay was locked. They open as soon as it is unlocked.", FieldAmber)
             }
+
+            TeamPinsCard()
+
+            BackupCard(vm)
 
             SyncCard(bundle, sync, inbox.count { it.forwardedAt == null }, videoLater,
                      onVideoLater = { videoLater = it },

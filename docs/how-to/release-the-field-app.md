@@ -198,8 +198,8 @@ anyway — Play counts any transfer off the device:
 No crash reporting, analytics or Google Play Services are included.
 
 Permissions to expect questions about: camera, microphone, precise location
-(no `ACCESS_BACKGROUND_LOCATION`), and notifications. The photo picker needs
-no media permission.
+(no `ACCESS_BACKGROUND_LOCATION`), notifications, and the specialUse foreground
+service (the team relay). The photo picker needs no media permission.
 
 #### Foreground service declaration (1.6 and later)
 
@@ -221,6 +221,22 @@ permissions**:
 Because recording only ever starts from a button the user presses with the app
 on screen, it counts as while-in-use location; there is no background-location
 declaration.
+
+#### Foreground service declaration (1.7 and later): the team relay
+
+The team relay (1.7) adds a **foreground service of type specialUse**. Under
+**App content → Foreground service permissions**, add:
+
+- **Type:** Special use.
+- **Task:** "On a tablet the user has switched to team relay mode, receives
+  field reports from the user's own team's phones over the tablet's Wi-Fi
+  hotspot, overnight, for later upload to the team's self-hosted server. The
+  user starts and stops it from the app; a notification shows the whole time
+  with a Stop button. No defined type fits a local server for one's own team,
+  and dataSync is limited to six hours a day."
+- **Video:** on a tablet: Settings → Team relay on, Relay → Turn on, show the
+  notification, send a report from a phone, show it arriving in the Inbox,
+  press Stop.
 
 ### 5. Release to testers
 

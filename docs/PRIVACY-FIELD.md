@@ -1,7 +1,7 @@
 # HUMINT Field — privacy policy
 
 *Applies to the Android app **HUMINT Field** (`org.humint.field`).
-Last updated: 5 October 2026.*
+Last updated: 8 October 2026.*
 
 HUMINT Field is a reporting tool for teams that run their own HUMINT Platform
 console. It is open source: everything below can be checked in the code at
@@ -41,9 +41,22 @@ Only what you put into a report:
   Your team decides how long it keeps reports and who can see them. Ask your
   team's administrator about that data.
 
-The app does **not** store the console's address or access token. They are
-read from the QR code at the moment of sending and discarded when sending
-finishes.
+On a phone, the app does **not** store the console's address or access token.
+They are read from the QR code at the moment of sending and discarded when
+sending finishes.
+
+**Team relay mode** (a tablet a team lead switches into relay mode) is the one
+exception, because a relay must reach the console days later with nobody there
+to scan a code. A relay keeps its console address, a relay token and the
+console's public key, encrypted under the team's PINs and the hardware
+keystore. The console drops the relay's token automatically if the relay does
+not check in within a period the team's administrator sets (1 to 14 days).
+
+A relay receives reports from the team's own phones over the tablet's Wi-Fi
+hotspot. It holds them encrypted on the tablet — sealed on arrival to a key
+only a team PIN opens — until the team sends them to their console. It can
+write an encrypted backup to a USB drive the user chooses; the backup opens
+with a team PIN, or at the team's own console.
 
 ## Sharing
 
@@ -72,7 +85,8 @@ administrator which yours uses.
 | Microphone | Voice memos and video sound. |
 | Location (precise) | Recording where an observation was made, while a report is open; recording a route you start. |
 | Foreground service (location) | Keeping a route recording running with the screen off, with a notification. |
-| Notifications | Showing that a route is being recorded, with a Stop button. |
+| Notifications | Showing that a route is being recorded, or that a team relay is running, with a Stop button. |
+| Foreground service (special use) | On a tablet in team relay mode only: receiving the team's reports over the tablet's hotspot overnight, with a notification. |
 | Prevent phone from sleeping | Keeping GPS readings arriving while a route records with the screen off. Released when you press Stop. |
 | Internet | Sending reports to your team's console. |
 

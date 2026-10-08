@@ -45,6 +45,12 @@ from datetime import datetime, timedelta, timezone
 
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec
+import struct
+import tempfile
+
+from cryptography.hazmat.primitives import hmac as crypto_hmac
+from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, Request, UploadFile
 from pydantic import BaseModel, Field
 
@@ -262,8 +268,11 @@ class RelayedSubmission(field_module.Submission):
     lead_note: str | None = Field(default=None, max_length=5000)
 
 
-@tablet.post("/submissions", status_code=201)
-def relayed_submission(payload: RelayedSubmission, relay: dict = Depends(require_relay)):
+def insert_relayed(cur, relay_id: int | None, relay_label: str,
+                   payload: RelayedSubmission) -> tuple[int, bool]:
+    """One relayed report into the queue. Shared by a live Sync and a USB
+    backup import, so both land a report the same way. Returns (id,
+    duplicate)."""
     if payload.criticality and payload.criticality not in field_module.CRITICALITIES:
         raise HTTPException(status_code=400,
                             detail=f"Criticality must be one of {', '.join(field_module.CRITICALITIES)}.")
@@ -274,50 +283,59 @@ def relayed_submission(payload: RelayedSubmission, relay: dict = Depends(require
     template = (payload.template or "").strip()[:64] or None
     shape = field_module._clean_geometry(payload.geometry)
 
-    with db_cursor(commit=True) as cur:
-        cur.execute("SELECT id, status FROM field_submissions "
+    if relay_id is not None:
+        cur.execute("SELECT id FROM field_submissions "
                     " WHERE relay_id = %s AND relay_submission_id = %s",
-                    (relay["id"], payload.relay_submission_id))
+                    (relay_id, payload.relay_submission_id))
         existing = cur.fetchone()
         if existing:
-            return {"id": existing[0], "duplicate": True, "status": existing[1]}
+            return existing[0], True
 
-        # Credit the analyst only if they are on this relay's team: a relay
-        # must not be able to file reports under any account it names.
-        user_id = None
-        if payload.analyst_user_id:
-            cur.execute("SELECT 1 FROM field_relay_members WHERE relay_id = %s AND user_id = %s",
-                        (relay["id"], payload.analyst_user_id))
-            if cur.fetchone():
-                user_id = payload.analyst_user_id
-        who = payload.phone_label or f"Phone {payload.relay_device_id}"
-        if payload.analyst_name and user_id is None:
-            who = f"{payload.analyst_name} · {who}"
-        label = f"{who} (via {relay['label']})"
+    # Credit the analyst only if they are on this relay's team: a relay
+    # must not be able to file reports under any account it names.
+    user_id = None
+    if payload.analyst_user_id and relay_id is not None:
+        cur.execute("SELECT 1 FROM field_relay_members WHERE relay_id = %s AND user_id = %s",
+                    (relay_id, payload.analyst_user_id))
+        if cur.fetchone():
+            user_id = payload.analyst_user_id
+    who = payload.phone_label or f"Phone {payload.relay_device_id}"
+    if payload.analyst_name and user_id is None:
+        who = f"{payload.analyst_name} · {who}"
+    label = f"{who} (via {relay_label})"
 
-        cur.execute(
-            "INSERT INTO field_submissions (device_id, device_label, user_id, title, body, "
-            "        criticality, observed_at, lat, lng, location_accuracy_m, location_note, "
-            "        client_ref, template, template_version, fields, geometry, received_at, "
-            "        relay_id, relay_submission_id, relay_device_id, relay_label, relayed_at, "
-            "        relay_priorities, relay_note) "
-            "VALUES (NULL, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, "
-            "        coalesce(%s, now()), %s, %s, %s, %s, now(), %s, %s) RETURNING id",
-            (label, user_id, payload.title.strip(), body or None, payload.criticality,
-             payload.observed_at, payload.lat, payload.lng, payload.location_accuracy_m,
-             payload.location_note, payload.client_ref, template, payload.template_version,
-             json.dumps(fields), json.dumps(shape) if shape else None, payload.received_at,
-             relay["id"], payload.relay_submission_id, payload.relay_device_id, relay["label"],
-             json.dumps(payload.priorities) if payload.priorities else None,
-             payload.lead_note))
-        sid = cur.fetchone()[0]
+    cur.execute(
+        "INSERT INTO field_submissions (device_id, device_label, user_id, title, body, "
+        "        criticality, observed_at, lat, lng, location_accuracy_m, location_note, "
+        "        client_ref, template, template_version, fields, geometry, received_at, "
+        "        relay_id, relay_submission_id, relay_device_id, relay_label, relayed_at, "
+        "        relay_priorities, relay_note) "
+        "VALUES (NULL, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, "
+        "        coalesce(%s, now()), %s, %s, %s, %s, now(), %s, %s) RETURNING id",
+        (label, user_id, payload.title.strip(), body or None, payload.criticality,
+         payload.observed_at, payload.lat, payload.lng, payload.location_accuracy_m,
+         payload.location_note, payload.client_ref, template, payload.template_version,
+         json.dumps(fields), json.dumps(shape) if shape else None, payload.received_at,
+         relay_id, payload.relay_submission_id, payload.relay_device_id, relay_label,
+         json.dumps(payload.priorities) if payload.priorities else None,
+         payload.lead_note))
+    sid = cur.fetchone()[0]
+    if relay_id is not None:
         cur.execute("UPDATE field_relays SET submission_count = submission_count + 1 WHERE id = %s",
-                    (relay["id"],))
+                    (relay_id,))
+    return sid, False
 
+
+@tablet.post("/submissions", status_code=201)
+def relayed_submission(payload: RelayedSubmission, relay: dict = Depends(require_relay)):
+    with db_cursor(commit=True) as cur:
+        sid, dup = insert_relayed(cur, relay["id"], relay["label"], payload)
+    if dup:
+        return {"id": sid, "duplicate": True, "status": "new"}
     audit.record("field.relay.submission", actor_kind="relay", object_type="field_submission",
                  object_id=sid, object_label=payload.title.strip(),
                  detail={"relay": relay["label"], "phone": payload.phone_label,
-                         "template": template})
+                         "template": payload.template})
     return {"id": sid, "duplicate": False, "status": "new"}
 
 
@@ -558,3 +576,130 @@ def delete_relay(relay_id: int, user: dict = Depends(auth.require_admin)):
         cur.execute("DELETE FROM field_relays WHERE id = %s", (relay_id,))
     audit.record("field.relay.delete", user=user, object_type="field_relay", object_id=relay_id,
                  object_label=row[0])
+
+
+# ---------------------------------------------------------------------------
+# A relay's USB backup, opened at the console
+# ---------------------------------------------------------------------------
+#
+# For the tablet that broke, or was lost after a backup was made. The lead
+# writes an encrypted backup to USB media (relay/RelayBackup.kt); its key is
+# wrapped twice — under the lead's PIN, and to this console's public key —
+# so it opens here with no PIN at all. Format, all lengths big-endian:
+#
+#     "HUMINTRB" 0x01 | u32 header length | header JSON | AES-256-GCM body
+#
+# The header (relay, counts, the two key wraps, the body's IV) is the GCM
+# additional data, so it cannot be edited without the body failing to open.
+# The body is: u32 manifest length | manifest JSON | each file's bytes, in
+# manifest order.
+
+BACKUP_MAGIC = b"HUMINTRB\x01"
+
+
+def _ecies_open(priv: ec.EllipticCurvePrivateKey, blob: bytes) -> bytes:
+    """The console's half of relay/RelayCrypto.kt: same curve, same KDF."""
+    (eph_len,) = struct.unpack(">H", blob[:2])
+    eph_der = blob[2:2 + eph_len]
+    iv = blob[2 + eph_len:2 + eph_len + 12]
+    body = blob[2 + eph_len + 12:]
+    eph = serialization.load_der_public_key(eph_der)
+    shared = priv.exchange(ec.ECDH(), eph)
+    h = crypto_hmac.HMAC(eph_der, hashes.SHA256()); h.update(shared); prk = h.finalize()
+    h = crypto_hmac.HMAC(prk, hashes.SHA256()); h.update(b"humint-relay-v1\x01"); key = h.finalize()[:32]
+    return AESGCM(key).decrypt(iv, body, None)
+
+
+@manage.post("/import-backup")
+async def import_backup(file: UploadFile = File(...), user: dict = Depends(auth.require_admin)):
+    """Open a relay's USB backup with this console's key and file its reports
+    in From the field, exactly as a Sync would. Allowed whatever the relay's
+    key state — the tablet may be the reason this is happening."""
+    with tempfile.TemporaryDirectory() as tmp:
+        src = os.path.join(tmp, "backup.bin")
+        with open(src, "wb") as out:
+            while chunk := await file.read(1024 * 1024):
+                out.write(chunk)
+        size = os.path.getsize(src)
+        with open(src, "rb") as fh:
+            if fh.read(len(BACKUP_MAGIC)) != BACKUP_MAGIC:
+                raise HTTPException(status_code=400, detail="That is not a relay backup.")
+            (hlen,) = struct.unpack(">I", fh.read(4))
+            if hlen > 1_000_000:
+                raise HTTPException(status_code=400, detail="That backup's header is damaged.")
+            header_bytes = fh.read(hlen)
+            header = json.loads(header_bytes)
+            body_start = fh.tell()
+
+        wrap = next((w for w in header.get("wraps", []) if w.get("kind") == "console"), None)
+        if wrap is None:
+            raise HTTPException(status_code=400,
+                                detail="This backup was made before the relay was provisioned, so only "
+                                       "the team's PIN opens it, on a relay.")
+        try:
+            key = _ecies_open(_identity(), base64.b64decode(wrap["blob"]))
+        except Exception:
+            raise HTTPException(status_code=400,
+                                detail="This console's key does not open that backup. It was made for "
+                                       f"the console with fingerprint {wrap.get('fingerprint', '?')}.")
+
+        # The body: ciphertext then a 16-byte tag. Streamed to a plaintext
+        # temp file, authenticated before anything is read from it.
+        plain = os.path.join(tmp, "plain.bin")
+        iv = base64.b64decode(header["iv"])
+        with open(src, "rb") as fh:
+            fh.seek(size - 16); tag = fh.read(16)
+            fh.seek(body_start)
+            dec = Cipher(algorithms.AES(key), modes.GCM(iv, tag)).decryptor()
+            dec.authenticate_additional_data(header_bytes)
+            remaining = size - 16 - body_start
+            with open(plain, "wb") as out:
+                while remaining > 0:
+                    chunk = fh.read(min(1024 * 1024, remaining))
+                    remaining -= len(chunk)
+                    out.write(dec.update(chunk))
+                try:
+                    out.write(dec.finalize())
+                except Exception:
+                    raise HTTPException(status_code=400,
+                                        detail="That backup is damaged or has been altered. Nothing was imported.")
+
+        relay_id = header.get("relay_id")
+        relay_label = header.get("label") or "relay backup"
+        with db_cursor() as cur:
+            cur.execute("SELECT id, label FROM field_relays WHERE id = %s", (relay_id,))
+            row = cur.fetchone()
+        if row is None:
+            relay_id = None
+        else:
+            relay_label = row[1]
+
+        new = dup = files = 0
+        with open(plain, "rb") as fh:
+            (mlen,) = struct.unpack(">I", fh.read(4))
+            manifest = json.loads(fh.read(mlen))
+            for item in manifest.get("reports", []):
+                report_files = item.pop("files", [])
+                payload = RelayedSubmission(**item)
+                with db_cursor(commit=True) as cur:
+                    sid, was_dup = insert_relayed(cur, relay_id, relay_label, payload)
+                if was_dup: dup += 1
+                else: new += 1
+                for f in report_files:
+                    content = fh.read(int(f["length"]))
+                    ref = f.get("client_ref")
+                    with db_cursor() as cur:
+                        cur.execute("SELECT 1 FROM field_submission_files "
+                                    " WHERE submission_id = %s AND client_ref = %s", (sid, ref))
+                        if ref and cur.fetchone():
+                            continue
+                    field_module.store_file_bytes(sid, f.get("filename"), f.get("mime"), content,
+                                                  ref, f.get("duration_ms"))
+                    files += 1
+
+    audit.record("field.relay.import_backup", user=user, object_type="field_relay",
+                 object_id=relay_id, object_label=relay_label,
+                 detail={"reports": new, "already_here": dup, "files": files,
+                         "backup_made": header.get("created_at")})
+    return {"reports": new, "already_here": dup, "files": files, "relay": relay_label,
+            "made_at": header.get("created_at")}

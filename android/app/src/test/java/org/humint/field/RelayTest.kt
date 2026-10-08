@@ -162,6 +162,56 @@ class RelayTest {
         assertNull(bare.publicKey())
     }
 
+    // ---------------------------------------------------------------- backup
+
+    private fun sampleBackup(pin: CharArray, console: java.security.KeyPair): ByteArray {
+        val photo = ByteArray(5000) { (it * 7).toByte() }
+        val manifest = JSONObject().put("reports", org.json.JSONArray().put(
+            JSONObject().put("title", "Depot gate").put("relay_submission_id", 4).put("relay_device_id", 2)
+                .put("phone_label", "Sonim 2").put("analyst_name", "R. Ortiz").put("client_ref", "c-4")
+                .put("fields", JSONObject().put("place_name", "Depot"))
+                .put("files", org.json.JSONArray().put(JSONObject().put("filename", "gate.jpg")
+                    .put("mime", "image/jpeg").put("client_ref", "f-9").put("length", photo.size)))))
+        val out = java.io.ByteArrayOutputStream()
+        org.humint.field.relay.BackupFormat.write(
+            out, JSONObject().put("relay_id", 1).put("label", "Team Alpha tablet").put("reports", 1),
+            manifest, listOf { photo.copyOf() }, pin, console.public, "AAAA BBBB")
+        return out.toByteArray()
+    }
+
+    @Test fun aBackupOpensWithThePinAndWithTheConsoleKey() {
+        val console = RelayCrypto.newKeyPair()
+        val bytes = sampleBackup("483920".toCharArray(), console)
+        val a = org.humint.field.relay.BackupFormat.openWithPin(bytes, "483920".toCharArray())
+        assertEquals("Depot gate", a.manifest.getJSONArray("reports").getJSONObject(0).getString("title"))
+        assertArrayEquals(ByteArray(5000) { (it * 7).toByte() }, a.files.readBytes())
+        val b = org.humint.field.relay.BackupFormat.openWithConsoleKey(bytes, console.private)
+        assertEquals("Team Alpha tablet", b.header.getString("label"))
+        assertFalse(String(bytes, Charsets.ISO_8859_1).contains("Depot gate"))
+
+        // Kept for the console's reader to open too (see the Python cross-check).
+        val dir = File("build/relay-backup-sample").apply { mkdirs() }
+        File(dir, "sample.hrb").writeBytes(bytes)
+        File(dir, "console-key.pk8").writeBytes(console.private.encoded)
+    }
+
+    @Test fun theWrongPinDoesNotOpenABackup() {
+        val bytes = sampleBackup("483920".toCharArray(), RelayCrypto.newKeyPair())
+        try {
+            org.humint.field.relay.BackupFormat.openWithPin(bytes, "000000".toCharArray())
+            fail("opened with the wrong PIN")
+        } catch (e: org.humint.field.relay.BackupFormat.Wrongkey) { }
+    }
+
+    @Test fun anEditedHeaderBreaksTheWholeBackup() {
+        val bytes = sampleBackup("483920".toCharArray(), RelayCrypto.newKeyPair())
+        val text = String(bytes, Charsets.ISO_8859_1).replace("Team Alpha tablet", "Team Omega tablet")
+        try {
+            org.humint.field.relay.BackupFormat.openWithPin(text.toByteArray(Charsets.ISO_8859_1), "483920".toCharArray())
+            fail("opened after the header was edited")
+        } catch (e: IllegalArgumentException) { }
+    }
+
     // --------------------------------------------------------------- helpers
 
     private fun get(path: String, t: String = token): Pair<Int, JSONObject> =

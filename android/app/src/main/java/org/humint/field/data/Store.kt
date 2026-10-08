@@ -156,8 +156,34 @@ data class RelayDeviceRow(
     @ColumnInfo(name = "console_user_id") val consoleUserId: Int? = null,
 )
 
+/** One of the team's priorities, written by the lead before the event. */
+@Entity(tableName = "relay_priorities")
+data class RelayPriorityRow(
+    @PrimaryKey(autoGenerate = true) val id: Int = 0,
+    val rank: Int,
+    val statement: String,
+    /** What would answer it — guidance for the team, and the words the
+     *  relay matches incoming reports against to suggest a tag. */
+    val answers: String? = null,
+    /** Open | Partly answered | Answered | Dropped */
+    val status: String = "Open",
+    @ColumnInfo(name = "created_at") val createdAt: Long = System.currentTimeMillis(),
+)
+
 @Dao
 interface RelayDao {
+    @Query("SELECT * FROM relay_priorities ORDER BY rank, id")
+    fun priorities(): Flow<List<RelayPriorityRow>>
+
+    @Query("SELECT * FROM relay_priorities ORDER BY rank, id")
+    suspend fun allPriorities(): List<RelayPriorityRow>
+
+    @androidx.room.Insert suspend fun insert(row: RelayPriorityRow): Long
+    @Update suspend fun update(row: RelayPriorityRow)
+
+    @Query("DELETE FROM relay_priorities WHERE id = :id")
+    suspend fun deletePriority(id: Int)
+
     @Query("SELECT * FROM relay_submissions ORDER BY received_at DESC")
     fun submissions(): Flow<List<RelaySubmissionRow>>
 
@@ -166,6 +192,9 @@ interface RelayDao {
 
     @Query("SELECT * FROM relay_submissions WHERE id = :id")
     suspend fun submission(id: Int): RelaySubmissionRow?
+
+    @Query("SELECT * FROM relay_submissions")
+    suspend fun allSubmissions(): List<RelaySubmissionRow>
 
     @Query("SELECT * FROM relay_submissions WHERE forwarded_at IS NULL ORDER BY received_at ASC")
     suspend fun unforwarded(): List<RelaySubmissionRow>
@@ -287,8 +316,9 @@ interface FieldDao {
 
 @Database(
     entities = [ReportRow::class, AttachmentRow::class,
-                RelaySubmissionRow::class, RelayFileRow::class, RelayDeviceRow::class],
-    version = 3, exportSchema = false)
+                RelaySubmissionRow::class, RelayFileRow::class, RelayDeviceRow::class,
+                RelayPriorityRow::class],
+    version = 4, exportSchema = false)
 abstract class FieldDatabase : RoomDatabase() {
     abstract fun dao(): FieldDao
     abstract fun relay(): RelayDao
@@ -325,7 +355,7 @@ abstract class FieldDatabase : RoomDatabase() {
             val factory = SupportOpenHelperFactory(key.copyOf())
             return Room.databaseBuilder(context, FieldDatabase::class.java, "field.db")
                 .openHelperFactory(factory)
-                .addMigrations(MIGRATION_1_2, MIGRATION_2_3)
+                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
                 // No fallbackToDestructiveMigration. A migration this app
                 // cannot perform must not silently throw away a queue of
                 // reports nobody has uploaded yet; crashing is louder and
@@ -360,6 +390,15 @@ val MIGRATION_2_3 = object : androidx.room.migration.Migration(2, 3) {
         db.execSQL("CREATE TABLE IF NOT EXISTS `relay_devices` (`id` INTEGER NOT NULL, " +
             "`label` TEXT NOT NULL, `analyst` TEXT NOT NULL, `created_at` INTEGER NOT NULL, " +
             "`revoked` INTEGER NOT NULL, `console_user_id` INTEGER, PRIMARY KEY(`id`))")
+    }
+}
+
+/** 1.7 test builds -> 1.7: the lead's priorities. */
+val MIGRATION_3_4 = object : androidx.room.migration.Migration(3, 4) {
+    override fun migrate(db: androidx.sqlite.db.SupportSQLiteDatabase) {
+        db.execSQL("CREATE TABLE IF NOT EXISTS `relay_priorities` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
+            "`rank` INTEGER NOT NULL, `statement` TEXT NOT NULL, `answers` TEXT, `status` TEXT NOT NULL, " +
+            "`created_at` INTEGER NOT NULL)")
     }
 }
 

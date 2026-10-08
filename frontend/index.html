@@ -1126,7 +1126,12 @@
       <p class="view-hint">A tablet a team takes on deployment. The team's phones send to it each night over its own hotspot; the lead presses <strong>Sync</strong> over the VPN or back at the office and the reports land here, under the phone and analyst that wrote them. A relay that does not check in within its <strong>keep-alive</strong> loses its key on its own &mdash; its reports stay safe on the tablet until it is re-provisioned in person.</p>
       <div class="view-toolbar">
         <p class="view-hint" id="relay-fingerprint"></p>
-        <button type="button" class="btn-primary" id="relay-new-btn">+ Register a relay</button>
+        <span class="toolbar-actions">
+          <button type="button" class="btn-secondary" id="relay-import-btn"
+                  title="Open a relay's encrypted USB backup with this console's key">Import a USB backup</button>
+          <input type="file" id="relay-import-file" accept=".hrb" hidden>
+          <button type="button" class="btn-primary" id="relay-new-btn">+ Register a relay</button>
+        </span>
       </div>
       <div id="relay-list" class="stack"></div>
         </div>

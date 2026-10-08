@@ -26,6 +26,7 @@ import org.humint.field.data.RelayFileRow
 import org.humint.field.data.RelaySubmissionRow
 import org.humint.field.data.Vault
 import org.humint.field.data.mediaDir
+import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
 import java.text.SimpleDateFormat
@@ -58,6 +59,42 @@ class RelayViewModel(app: Application) : AndroidViewModel(app) {
         .flatMapLatest { if (it is Vault.State.Open) dao().fileCounts() else flowOf(emptyList()) }
         .map { l -> l.associate { it.reportId.toInt() to it.n } }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyMap())
+
+    @OptIn(ExperimentalCoroutinesApi::class)
+    val priorities: StateFlow<List<org.humint.field.data.RelayPriorityRow>> = Vault.state
+        .flatMapLatest { if (it is Vault.State.Open) dao().priorities() else flowOf(emptyList()) }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    fun savePriority(row: org.humint.field.data.RelayPriorityRow) = viewModelScope.launch(Dispatchers.IO) {
+        if (row.id == 0) dao().insert(row) else dao().update(row)
+    }
+
+    fun deletePriority(id: Int) = viewModelScope.launch(Dispatchers.IO) {
+        dao().deletePriority(id)
+        // Take the tag off every report that carried it.
+        dao().allSubmissions().forEach { r ->
+            val ids = tagsOf(r)
+            if (id in ids) dao().update(r.copy(priorities = JSONArray(ids - id).toString()))
+        }
+    }
+
+    /** Tag or untag a report against a priority. */
+    fun toggleTag(report: RelaySubmissionRow, priorityId: Int) = viewModelScope.launch(Dispatchers.IO) {
+        val current = dao().submission(report.id) ?: return@launch
+        val ids = tagsOf(current)
+        val next = if (priorityId in ids) ids - priorityId else ids + priorityId
+        dao().update(current.copy(priorities = JSONArray(next).toString()))
+    }
+
+    /** Marked as background: looked at, answers no priority. Stored as an
+     *  empty array, which is different from null (not looked at yet). */
+    fun markBackground(report: RelaySubmissionRow) = viewModelScope.launch(Dispatchers.IO) {
+        dao().submission(report.id)?.let { dao().update(it.copy(priorities = "[]")) }
+    }
+
+    fun saveNote(report: RelaySubmissionRow, note: String) = viewModelScope.launch(Dispatchers.IO) {
+        dao().submission(report.id)?.let { dao().update(it.copy(leadNote = note.trim().ifBlank { null })) }
+    }
 
     fun submission(id: Int) = dao().submissionFlow(id)
     fun files(id: Int) = dao().filesFlow(id)
@@ -147,6 +184,69 @@ class RelayViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun dismissSync() { _sync.value = null }
+
+    // ------------------------------------------------------------- backup
+
+    sealed interface Backup {
+        data object Writing : Backup
+        data class Done(val reports: Int, val files: Int, val consoleCanOpen: Boolean) : Backup
+        data class Failed(val message: String) : Backup
+    }
+
+    private val _backup = MutableStateFlow<Backup?>(null)
+    val backup: StateFlow<Backup?> = _backup
+    fun dismissBackup() { _backup.value = null }
+
+    fun checkPin(pin: CharArray) = Vault.checkPin(context, pin)
+
+    /**
+     * Everything on the relay, encrypted, to wherever [uri] points — a USB
+     * stick chosen in Android's file picker. Opens with [pin] on a relay,
+     * and at the console with no PIN (if this relay has been provisioned).
+     */
+    fun backup(uri: android.net.Uri, pin: CharArray) = viewModelScope.launch(Dispatchers.IO) {
+        _backup.value = Backup.Writing
+        _backup.value = runCatching {
+            ingest().join()
+            val dao = dao()
+            val b = link.bundle()
+            val devices = dao.allDevices().associateBy { it.id }
+            val pmap = dao.allPriorities().associateBy { it.id }
+            val reports = JSONArray()
+            val producers = mutableListOf<() -> ByteArray>()
+            var fileCount = 0
+            val rows = dao.allSubmissions().sortedBy { it.receivedAt }
+            for (r in rows) {
+                val json = RelayLink.reportJson(r, devices[r.deviceId], pmap)
+                val files = JSONArray()
+                for (f in dao.files(r.id)) {
+                    files.put(JSONObject().put("filename", f.filename).put("mime", f.mimeType)
+                        .put("client_ref", f.clientRef ?: "relay-file-${f.id}")
+                        .put("duration_ms", f.durationMs ?: JSONObject.NULL)
+                        .put("length", f.sizeBytes))
+                    producers += { Crypto.openBytes(context, File(f.path).readBytes()) }
+                    fileCount++
+                }
+                reports.put(json.put("files", files))
+            }
+            val meta = JSONObject()
+                .put("relay_id", b?.relayId ?: JSONObject.NULL)
+                .put("label", b?.label ?: "Unprovisioned relay")
+                .put("created_at", RelayLink.isoNow())
+                .put("reports", rows.size).put("files", fileCount)
+            val manifest = JSONObject().put("reports", reports)
+                .put("priorities", JSONArray(pmap.values.map {
+                    JSONObject().put("rank", it.rank).put("statement", it.statement)
+                        .put("answers", it.answers ?: JSONObject.NULL).put("status", it.status)
+                }))
+            val console = b?.let { RelayCrypto.publicFrom(it.consoleKey) }
+            context.contentResolver.openOutputStream(uri, "w")!!.use { out ->
+                BackupFormat.write(out, meta, manifest, producers, pin, console, b?.fingerprint)
+            }
+            Backup.Done(rows.size, fileCount, console != null)
+        }.getOrElse { Backup.Failed(it.message ?: "The backup could not be written.") }
+        java.util.Arrays.fill(pin, '\u0000')
+    }
 
     // ------------------------------------------------------- moving it in
 
@@ -243,6 +343,30 @@ class RelayViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     companion object {
+        fun tagsOf(r: RelaySubmissionRow): List<Int> = runCatching {
+            val a = JSONArray(r.priorities ?: "[]"); (0 until a.length()).map { a.getInt(it) }
+        }.getOrDefault(emptyList())
+
+        /**
+         * Which priorities a report seems to bear on: any priority whose
+         * "what would answer it" shares a meaningful word with the report.
+         * A suggestion for the lead, never a tag — matching words is not
+         * judgement, and a wrong tag would mislead the debrief.
+         */
+        fun suggest(r: RelaySubmissionRow, ps: List<org.humint.field.data.RelayPriorityRow>): List<Int> {
+            val text = (r.title + " " + (r.body ?: "") + " " + r.fields + " " + (r.locationNote ?: "")).lowercase()
+            val words = Regex("[a-z0-9]{4,}").findAll(text).map { it.value }.toSet()
+            return ps.filter { it.status != "Dropped" }.filter { p ->
+                val keys = Regex("[a-z0-9]{4,}").findAll(((p.answers ?: "") + " " + p.statement).lowercase())
+                    .map { it.value }.filterNot { it in STOP }.toSet()
+                keys.any { it in words }
+            }.map { it.id }
+        }
+
+        private val STOP = setOf("what", "when", "where", "which", "with", "from", "that", "this", "they",
+            "them", "their", "there", "have", "about", "near", "into", "over", "after", "before", "would",
+            "should", "could", "report", "reports", "anyone", "anything", "whether")
+
         fun parseIso(s: String?): Long? = s?.let {
             runCatching {
                 SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", Locale.US)

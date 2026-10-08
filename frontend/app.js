@@ -13638,6 +13638,28 @@ function printDeviceCard(d) {
   if (btn) btn.addEventListener("click", openEnrollDeviceForm);
   const relayBtn = document.getElementById("relay-new-btn");
   if (relayBtn) relayBtn.addEventListener("click", () => openRelayForm(null));
+  // A relay's USB backup: for the tablet that broke or did not come home.
+  // It opens with this console's key, so no PIN is needed here.
+  const importBtn = document.getElementById("relay-import-btn");
+  const importFile = document.getElementById("relay-import-file");
+  if (importBtn && importFile) {
+    importBtn.addEventListener("click", () => importFile.click());
+    importFile.addEventListener("change", async () => {
+      const f = importFile.files[0];
+      importFile.value = "";
+      if (!f) return;
+      const fd = new FormData();
+      fd.append("file", f);
+      try {
+        showToast("Opening the backup…");
+        const r = await apiUpload("/api/field/relays/import-backup", fd);
+        showToast(`${r.relay}: ${r.reports} report${r.reports === 1 ? "" : "s"} into From the field` +
+                  (r.already_here ? `, ${r.already_here} already here` : "") +
+                  `, ${r.files} file${r.files === 1 ? "" : "s"}.`);
+        loadRelays();
+      } catch (e) { showToast(e.message, true); }
+    });
+  }
 })();
 
 /* ==========================================================================
@@ -13904,6 +13926,21 @@ function fieldMediaHtml(s) {
   }).join("")}</div>`;
 }
 
+/* What a team relay carried home with the report: the team lead's priority
+ * tags and their note. The lead read it in the field, with context nobody at
+ * the console has, so it sits right under what the analyst wrote. */
+function fieldRelayHtml(s) {
+  const tags = Array.isArray(s.relay_priorities) ? s.relay_priorities : [];
+  if (!tags.length && !s.relay_note) return "";
+  return `<div class="field-sub-relay">
+    ${tags.length ? `<div class="field-sub-relay-tags">Answers: ${tags.map((t) =>
+      `<span class="status-pill">${t && typeof t === "object"
+        ? "P" + escapeHtml(String(t.rank)) + " · " + escapeHtml(t.statement || "")
+        : "priority " + escapeHtml(String(t))}</span>`).join(" ")}</div>` : ""}
+    ${s.relay_note ? `<p class="field-sub-relay-note"><strong>Team lead:</strong> ${escapeHtml(s.relay_note)}</p>` : ""}
+  </div>`;
+}
+
 function fieldSubmissionHtml(s) {
   const pos = (s.lat != null && s.lng != null)
     ? `${s.lat.toFixed(5)}, ${s.lng.toFixed(5)}`
@@ -13929,6 +13966,7 @@ function fieldSubmissionHtml(s) {
       </div>
       ${fieldLayoutHtml(s.layout)}
       ${s.body ? `<p class="field-sub-body">${escapeHtml(s.body)}</p>` : ""}
+      ${fieldRelayHtml(s)}
       ${pos || s.location_note ? `
         <div class="field-sub-where">
           ${pos ? `<span class="field-sub-pos">${escapeHtml(pos)}</span>` : ""}
