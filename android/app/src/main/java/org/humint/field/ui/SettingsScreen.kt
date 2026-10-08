@@ -2,7 +2,13 @@ package org.humint.field.ui
 
 import androidx.biometric.BiometricManager
 import androidx.biometric.BiometricPrompt
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -37,6 +43,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
@@ -44,10 +51,30 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.fragment.app.FragmentActivity
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import org.humint.field.data.PaletteChoice
 import org.humint.field.data.Settings
 import org.humint.field.data.ThemeChoice
 import org.humint.field.data.Vault
 import java.util.concurrent.Executor
+
+/** A dot of the palette's accent, so the list can be told apart without
+ *  trying each one. */
+@Composable
+private fun PaletteSwatch(choice: PaletteChoice) {
+    val dark = when (Settings.theme.collectAsStateWithLifecycle().value) {
+        ThemeChoice.DARK -> true
+        ThemeChoice.LIGHT -> false
+        ThemeChoice.SYSTEM -> isSystemInDarkTheme()
+    }
+    Box(
+        Modifier
+            .padding(end = 6.dp)
+            .size(22.dp)
+            .clip(CircleShape)
+            .background(paletteSwatch(choice, dark))
+            .border(1.dp, MaterialTheme.colorScheme.outline, CircleShape),
+    )
+}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -55,6 +82,7 @@ fun SettingsScreen(outer: androidx.compose.foundation.layout.PaddingValues) {
     val context = LocalContext.current
     val activity = context as? FragmentActivity
     val theme by Settings.theme.collectAsStateWithLifecycle()
+    val palette by Settings.palette.collectAsStateWithLifecycle()
     var changingPin by remember { mutableStateOf(false) }
     var bioOn by remember { mutableStateOf(Vault.biometricEnabled(context)) }
     var notice by remember { mutableStateOf<String?>(null) }
@@ -78,6 +106,27 @@ fun SettingsScreen(outer: androidx.compose.foundation.layout.PaddingValues) {
                  fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
                  modifier = Modifier.padding(top = 18.dp))
             Section("Appearance")
+            // The console's four looks, under the same names. The swatch is
+            // the palette's accent in the mode currently showing.
+            PaletteChoice.entries.forEach { choice ->
+                Row(
+                    Modifier.fillMaxWidth().heightIn(min = TapTarget)
+                        .clickable { Settings.setPalette(context, choice) },
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    RadioButton(selected = palette == choice,
+                                onClick = { Settings.setPalette(context, choice) })
+                    Column(Modifier.padding(start = 6.dp).weight(1f)) {
+                        Text(choice.label, style = MaterialTheme.typography.bodyLarge)
+                        Text(choice.blurb, style = MaterialTheme.typography.labelMedium,
+                             color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    PaletteSwatch(choice)
+                }
+            }
+            Spacer(Modifier.height(10.dp))
+            HorizontalDivider()
+            Spacer(Modifier.height(10.dp))
             ThemeChoice.entries.forEach { choice ->
                 Row(
                     Modifier.fillMaxWidth().heightIn(min = TapTarget)

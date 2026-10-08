@@ -25,21 +25,46 @@ enum class ThemeChoice(val label: String, val blurb: String) {
     }
 }
 
+/** The console's palettes, on the phone, under the same names — so a team
+ *  that runs its console in Slate can match the handsets to it. */
+enum class PaletteChoice(val label: String, val blurb: String) {
+    TERMINAL("Terminal", "The green this tool started with"),
+    SLATE("Slate", "Neutral blue-grey"),
+    GRAPHITE("Graphite", "Warm charcoal and bronze, square corners"),
+    ARCHIVE("Archive", "Paper and oxblood, for readers");
+
+    companion object {
+        fun from(name: String?): PaletteChoice =
+            entries.firstOrNull { it.name == name } ?: TERMINAL
+    }
+}
+
 object Settings {
     private const val FILE = "field.settings"
     private const val KEY_THEME = "theme"
+    private const val KEY_PALETTE = "palette"
 
     private val _theme = MutableStateFlow(ThemeChoice.SYSTEM)
     val theme: StateFlow<ThemeChoice> = _theme
 
+    private val _palette = MutableStateFlow(PaletteChoice.TERMINAL)
+    val palette: StateFlow<PaletteChoice> = _palette
+
     fun load(context: Context) {
         val prefs = context.getSharedPreferences(FILE, Context.MODE_PRIVATE)
         _theme.value = ThemeChoice.from(prefs.getString(KEY_THEME, null))
+        _palette.value = PaletteChoice.from(prefs.getString(KEY_PALETTE, null))
     }
 
     fun setTheme(context: Context, choice: ThemeChoice) {
         context.getSharedPreferences(FILE, Context.MODE_PRIVATE)
             .edit().putString(KEY_THEME, choice.name).apply()
         _theme.value = choice
+    }
+
+    fun setPalette(context: Context, choice: PaletteChoice) {
+        context.getSharedPreferences(FILE, Context.MODE_PRIVATE)
+            .edit().putString(KEY_PALETTE, choice.name).apply()
+        _palette.value = choice
     }
 }

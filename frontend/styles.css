@@ -98,6 +98,9 @@
   --scrim:rgba(0,0,0,.6); --scrim-strong:rgba(0,0,0,.82);
   --font-ui: var(--font-mono);
   --font-display: var(--font-mono);
+  /* Report bodies read as documents even here: the terminal look is for the
+     chrome, but a page of prose in monospace reads as a dump of itself. */
+  --font-prose: "Segoe UI", system-ui, -apple-system, "Helvetica Neue", Arial, sans-serif;
   --radius:4px; --radius-lg:8px;
   --heading-weight:600; --heading-tracking:0;
   --border-strong:#357a4f;
@@ -134,6 +137,7 @@
   --scrim:rgba(4,8,12,.62); --scrim-strong:rgba(4,8,12,.84);
   --font-ui: "Inter", "Segoe UI", system-ui, -apple-system, "Helvetica Neue", Arial, sans-serif;
   --font-display: var(--font-ui);
+  --font-prose: var(--font-ui);
   --radius:6px; --radius-lg:10px;
   --heading-weight:600; --heading-tracking:-0.01em;
   --border-strong:#5d6c7c;
@@ -170,6 +174,7 @@
   --scrim:rgba(8,9,10,.66); --scrim-strong:rgba(8,9,10,.86);
   --font-ui: "Segoe UI", system-ui, -apple-system, "Helvetica Neue", Arial, sans-serif;
   --font-display: var(--font-ui);
+  --font-prose: var(--font-ui);
   --radius:3px; --radius-lg:4px;
   --heading-weight:600; --heading-tracking:0.01em;
   --border-strong:#656b71;
@@ -206,6 +211,8 @@
   --scrim:rgba(12,10,7,.64); --scrim-strong:rgba(12,10,7,.85);
   --font-ui: "Segoe UI", system-ui, -apple-system, "Helvetica Neue", Arial, sans-serif;
   --font-display: "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, ui-serif, serif;
+  /* The reading palette reads its reports in a book face. */
+  --font-prose: var(--font-display);
   --radius:2px; --radius-lg:3px;
   --heading-weight:600; --heading-tracking:0;
   --border-strong:#6f6857;
@@ -768,9 +775,29 @@ input:focus,select:focus,textarea:focus{outline:2px solid var(--accent); outline
 .chip button{background:none; border:none; color:var(--muted); padding:0; font-size:13px;}
 .chip-row{display:flex; flex-wrap:wrap; gap:.4em; margin-bottom:.5em;}
 
-.markdown-body{line-height:1.6;}
-.markdown-body p{margin:.6em 0;}
-.markdown-body code{background:var(--panel-2); padding:.1em .3em; border-radius:var(--radius);}
+/* A report is read as a document: a reading face, a measure a human can
+ * track line to line, headings that step down from the title, and italics
+ * (the provenance lines) set quiet. This is most of the difference between
+ * "intelligence report" and "database record". */
+.markdown-body{line-height:1.65; font-family:var(--font-prose, var(--font-ui));
+  font-size:15px; max-width:74ch;}
+.markdown-body p{margin:.75em 0;}
+.markdown-body h3, .markdown-body h4, .markdown-body h5, .markdown-body h6{
+  font-family:var(--font-display); font-weight:var(--heading-weight);
+  letter-spacing:var(--heading-tracking); line-height:1.25;
+  margin:1.3em 0 .45em; color:var(--text-bright);}
+.markdown-body h3{font-size:1.25em; padding-bottom:.15em; border-bottom:1px solid var(--border-soft);}
+.markdown-body h4{font-size:1.1em;}
+.markdown-body h5, .markdown-body h6{font-size:1em;}
+.markdown-body ul, .markdown-body ol{margin:.5em 0 .8em; padding-left:1.5em;}
+.markdown-body li{margin:.3em 0;}
+.markdown-body blockquote{margin:.9em 0; padding:.1em 1em;
+  border-left:3px solid var(--accent-dim); color:var(--muted);}
+.markdown-body hr{border:0; border-top:1px solid var(--border); margin:1.3em 0;}
+.markdown-body em{color:var(--muted);}
+.markdown-body strong{color:var(--text-bright);}
+.markdown-body code{background:var(--panel-2); padding:.1em .3em; border-radius:var(--radius);
+  font-family:var(--font-mono); font-size:.92em;}
 
 /* ---------- Forms / modal ---------- */
 /* z-index must clear Leaflet's own panes/controls (map/marker/popup panes
@@ -1436,9 +1463,11 @@ input:focus,select:focus,textarea:focus{outline:2px solid var(--accent); outline
 .doc-by-hand .view-hint{margin-top:0;}
 
 /* --- Offline maps: source switcher, admin registry, area picker ---------- */
-.map-source-controls{display:flex; align-items:center; gap:.5em; flex-wrap:wrap;}
+.map-source-controls{display:flex; align-items:center; gap:.6em; flex-wrap:wrap;}
 .map-source-controls label{color:var(--muted); font-size:12px;}
-.map-source-controls select{min-width:170px;}
+.map-source-controls select{min-width:150px;}
+.map-tool-group{display:flex; align-items:center; gap:.5em; flex-wrap:wrap;}
+.map-tool-divider{width:1px; align-self:stretch; background:var(--border); margin:0 .2em;}
 .map-source-note{margin:-.6em 0 .8em; color:var(--amber);}
 .toolbar-actions{display:flex; gap:.5em; flex-wrap:wrap;}
 
@@ -1991,7 +2020,8 @@ a .hostile-name,.hostile-name a{color:var(--red);}
 .field-sub-kind{color:var(--muted); border-color:var(--border-soft);}
 .field-sub-skew{margin:.2em 0 .4em; font-size:12px; color:var(--amber);}
 
-.field-sub-fields{display:grid; grid-template-columns:auto 1fr; gap:.25em .9em;
+.field-sub-fields{display:grid; grid-template-columns:minmax(0,118px) minmax(0,1fr); gap:.3em .9em;
+  align-items:baseline;
   margin:.2em 0; align-items:baseline;}
 .field-sub-field{display:contents;}
 .field-sub-fields dt{color:var(--muted); font-size:12px; white-space:nowrap;}

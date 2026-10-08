@@ -108,8 +108,9 @@ class MainActivity : FragmentActivity() {
 
         setContent {
             val theme by Settings.theme.collectAsStateWithLifecycle()
+            val palette by Settings.palette.collectAsStateWithLifecycle()
             val vault by Vault.state.collectAsStateWithLifecycle()
-            FieldTheme(theme) {
+            FieldTheme(theme, palette) {
                 // Nothing behind the lock is composed at all while it is shut:
                 // the queue screen would otherwise try to open the database,
                 // which has no key until the PIN is in.

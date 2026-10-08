@@ -5688,7 +5688,11 @@ function wireMapAdmin() {
     if (el) el.addEventListener("click", fn);
   };
   on("map-new-source-btn", () => openMapSourceForm(null));
-  on("map-import-btn", openMapImportDialog);
+  // Its own id: this used to share "map-import-btn" with the Map view's
+  // KML/GPX Import…, so getElementById wired both handlers onto the first
+  // button in the document — the Map view's, which then opened two dialogs
+  // at once — and this one onto nothing.
+  on("map-atak-import-btn", openMapImportDialog);
   on("map-new-pack-btn", openMapPackDialog);
 }
 
@@ -7586,23 +7590,80 @@ async function openReportDetail(id) {
 // api/reports.py.
 const MENTION_LINK_RE = /\[([^\]]+)\]\(#\/entities\/([A-Za-z0-9_-]+)\)/g;
 
-function renderMarkdown(text) {
-  if (window.DOMPurify && window.marked) {
-    return DOMPurify.sanitize(marked.parse(text || ""));
+/* A markdown renderer of our own, replacing marked + DOMPurify off a CDN.
+ *
+ * The CDN pair was the single worst dependency in the app: on exactly the
+ * deployments this tool is built for — a Pi on a LAN, an air-gapped cell —
+ * jsdelivr never loads, and every report fell back to a <pre> of raw
+ * asterisks and double-hashes. A report that renders as its own source code
+ * reads like a database dump, however well it was written.
+ *
+ * This covers the markdown reports actually use: headings, paragraphs,
+ * bold/italic/code, lists, quotes, rules, and links. Input is escaped
+ * before any markup is built, and the only links that survive are entity
+ * mentions and http(s) URLs, so nothing a report says can become script.
+ *
+ * Single newlines inside a paragraph are joined, the way markdown means
+ * them: a body hard-wrapped at 72 columns by an editor (or a phone) flows
+ * as prose instead of showing its ragged right edge.
+ */
+function mdInline(t) {
+  t = t.replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, (m, label, href) => {
+    if (/^#\/entities\/[A-Za-z0-9_-]+$/.test(href)) return `<a href="${href}">${label}</a>`;
+    if (/^https?:\/\/[^"'<>]+$/.test(href)) return `<a href="${href}" target="_blank" rel="noopener">${label}</a>`;
+    return m;
+  });
+  t = t.replace(/`([^`]+)`/g, "<code>$1</code>");
+  t = t.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
+  t = t.replace(/(^|[\s(])\*([^*\n]+)\*(?=[\s).,;:!?]|$)/g, "$1<em>$2</em>");
+  t = t.replace(/(^|[\s(])_([^_\n]+)_(?=[\s).,;:!?]|$)/g, "$1<em>$2</em>");
+  return t;
+}
+
+function mdToHtml(src) {
+  const lines = escapeHtml(src || "").split(/\r?\n/);
+  const out = [];
+  let para = [], list = null, quote = [];
+  const flushPara = () => { if (para.length) { out.push(`<p>${mdInline(para.join(" "))}</p>`); para = []; } };
+  const flushList = () => {
+    if (list) {
+      out.push(`<${list.tag}>` + list.items.map((i) => `<li>${mdInline(i)}</li>`).join("") + `</${list.tag}>`);
+      list = null;
+    }
+  };
+  const flushQuote = () => { if (quote.length) { out.push(`<blockquote>${mdInline(quote.join(" "))}</blockquote>`); quote = []; } };
+  const flushAll = () => { flushPara(); flushList(); flushQuote(); };
+  for (const line of lines) {
+    const h = line.match(/^(#{1,6})\s+(.*)$/);
+    if (h) {
+      flushAll();
+      // Body headings start one level below the page's own h2 title.
+      const n = Math.min(h[1].length + 2, 6);
+      out.push(`<h${n}>${mdInline(h[2])}</h${n}>`);
+      continue;
+    }
+    if (/^(\*{3,}|-{3,}|_{3,})\s*$/.test(line)) { flushAll(); out.push("<hr>"); continue; }
+    const ul = line.match(/^\s*[-*+]\s+(.*)$/);
+    const ol = line.match(/^\s*\d+[.)]\s+(.*)$/);
+    if (ul || ol) {
+      flushPara(); flushQuote();
+      const tag = ul ? "ul" : "ol";
+      if (!list || list.tag !== tag) { flushList(); list = { tag, items: [] }; }
+      list.items.push((ul || ol)[1]);
+      continue;
+    }
+    const q = line.match(/^&gt;\s?(.*)$/);
+    if (q) { flushPara(); flushList(); quote.push(q[1]); continue; }
+    if (!line.trim()) { flushAll(); continue; }
+    flushList(); flushQuote();
+    para.push(line.trim());
   }
-  // Offline fallback, for the air-gapped/LAN-only deployments this app
-  // explicitly supports: the markdown CDN is unreachable, so the body renders
-  // as plain text. Mentions are still turned into real links even here —
-  // without this, every report written using @-mentions would display raw
-  // `[Name](#/entities/…)` syntax on exactly the deployments least able to
-  // fix it. Escaping happens first, so the only markup that survives is the
-  // anchors added afterward.
-  const escaped = escapeHtml(text || "");
-  const withMentions = escaped.replace(
-    MENTION_LINK_RE,
-    (_match, label, entityId) => `<a href="#/entities/${entityId}">${label}</a>`,
-  );
-  return `<pre>${withMentions}</pre>`;
+  flushAll();
+  return out.join("\n");
+}
+
+function renderMarkdown(text) {
+  return mdToHtml(text);
 }
 
 function renderReportDetail(report) {

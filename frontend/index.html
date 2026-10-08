@@ -63,21 +63,12 @@
     }
   })();
 </script>
-<!-- `defer` on all three: a slow or blocked CDN (ad blocker, VPN, corporate
-     filtering, no internet at all) must never stop the page itself from
-     rendering. Without `defer` these sit in <head> and block HTML parsing
-     until each one loads or definitively fails — on a connection that just
-     hangs on unpkg.com/jsdelivr.net rather than failing fast, that leaves
-     the whole body unparsed (title shows, page is otherwise blank) instead
-     of just missing a nice-to-have feature. app.js already degrades
-     gracefully when marked/DOMPurify never show up (see renderMarkdown), so
-     deferring costs nothing.
-     vis-network used to be loaded here for the relationship graphs. It is
-     gone: both graphs are now drawn by app.js itself, so the feature works
-     on a machine with no route to the internet — which is a normal way to
-     run this. -->
-<script defer src="https://cdn.jsdelivr.net/npm/marked@12.0.2/marked.min.js"></script>
-<script defer src="https://cdn.jsdelivr.net/npm/dompurify@3.1.6/dist/purify.min.js"></script>
+<!-- Nothing loads from a CDN any more. marked + DOMPurify used to come
+     from jsdelivr for report bodies, which meant every LAN-only and
+     air-gapped deployment — a normal way to run this — rendered reports as
+     raw markdown instead. app.js now renders markdown itself (mdToHtml).
+     vis-network went the same way earlier: both graphs are drawn by app.js
+     itself. -->
 <!-- Leaflet is served from this app, not a CDN. It used to come from unpkg,
      which meant a machine with no route to the internet lost the entire Map
      view rather than just its tiles -- and losing the map is what stops a
@@ -778,35 +769,46 @@
       <div class="view-toolbar">
         <p class="view-hint">Click an empty spot to add a Location. Click a marker to see what's linked to it.</p>
         <div class="map-source-controls">
-          <label for="zone-draw-select">Zone</label>
-          <select id="zone-draw-select">
-            <option value="">+ Draw…</option>
-            <option value="polygon">Polygon</option>
-            <option value="rectangle">Rectangle</option>
-            <option value="circle">Circle</option>
-          </select>
-          <label class="checkbox-row">
-            <input type="checkbox" id="zone-show-expired" checked>
-            Show expired
-          </label>
-          <button type="button" class="btn-secondary btn-sm" id="route-draw-btn"
-                  title="Click along a way on the map to record it as a Route">+ Route</button>
-          <button type="button" class="btn-secondary btn-sm" id="map-import-btn"
-                  title="Read routes, areas and points from a KML, KMZ or GPX file">Import…</button>
-          <select id="map-export-select" title="Download every route and zone on the map">
-            <option value="">Export…</option>
-            <option value="kmz">KMZ (Google Earth, ATAK)</option>
-            <option value="kml">KML</option>
-            <option value="gpx">GPX (routes only)</option>
-          </select>
-          <button type="button" class="btn-secondary btn-sm" id="map-print-btn"
-                  title="A PDF of this view, for printing or a package">Print map…</button>
-          <label for="map-source-select">Basemap</label>
-          <select id="map-source-select"></select>
-          <label class="checkbox-row" id="map-offline-row" hidden>
-            <input type="checkbox" id="map-offline-toggle">
-            Downloaded only
-          </label>
+          <!-- Grouped by job — draw, file, basemap — because nine controls
+               in one flat row is a junk drawer. The separators are the whole
+               fix: the same controls, in an order a hand learns. -->
+          <span class="map-tool-group">
+            <label for="zone-draw-select">Zone</label>
+            <select id="zone-draw-select">
+              <option value="">+ Draw…</option>
+              <option value="polygon">Polygon</option>
+              <option value="rectangle">Rectangle</option>
+              <option value="circle">Circle</option>
+            </select>
+            <button type="button" class="btn-secondary btn-sm" id="route-draw-btn"
+                    title="Click along a way on the map to record it as a Route">+ Route</button>
+            <label class="checkbox-row" title="Zones past their review date">
+              <input type="checkbox" id="zone-show-expired" checked>
+              Show expired
+            </label>
+          </span>
+          <span class="map-tool-divider" aria-hidden="true"></span>
+          <span class="map-tool-group">
+            <button type="button" class="btn-secondary btn-sm" id="map-import-btn"
+                    title="Read routes, areas and points from a KML, KMZ or GPX file">Import…</button>
+            <select id="map-export-select" title="Download every route and zone on the map">
+              <option value="">Export…</option>
+              <option value="kmz">KMZ (Google Earth, ATAK)</option>
+              <option value="kml">KML</option>
+              <option value="gpx">GPX (routes only)</option>
+            </select>
+            <button type="button" class="btn-secondary btn-sm" id="map-print-btn"
+                    title="A PDF of this view, for printing or a package">Print map…</button>
+          </span>
+          <span class="map-tool-divider" aria-hidden="true"></span>
+          <span class="map-tool-group">
+            <label for="map-source-select">Basemap</label>
+            <select id="map-source-select"></select>
+            <label class="checkbox-row" id="map-offline-row" hidden>
+              <input type="checkbox" id="map-offline-toggle">
+              Downloaded only
+            </label>
+          </span>
         </div>
       </div>
       <p class="view-hint map-source-note" id="map-source-note" hidden></p>
@@ -1025,7 +1027,7 @@
       <div class="view-toolbar">
         <p class="view-hint">Map sources for the Map view and the debrief picker. Download areas while online to use them offline. <strong>Check each source's terms before downloading.</strong></p>
         <span class="toolbar-actions">
-          <button id="map-import-btn" class="btn-secondary">Import ATAK XML</button>
+          <button id="map-atak-import-btn" class="btn-secondary">Import ATAK XML</button>
           <button id="map-new-source-btn" class="btn-primary">+ Source</button>
         </span>
       </div>

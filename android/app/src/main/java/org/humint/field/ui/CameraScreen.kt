@@ -233,10 +233,7 @@ fun PhotoCaptureScreen(
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
             Text(
-                if (busy) "Saving…"
-                else if (multiShot && shotCount == 0) "Shoot now — file it to a report after"
-                else if (multiShot) "$shotCount taken · Done when you have the scene"
-                else "Pinch to zoom · tap to focus",
+                if (busy) "Saving…" else "Pinch to zoom · tap to focus",
                 color = Color.White.copy(alpha = 0.85f),
                 style = MaterialTheme.typography.labelMedium,
             )
