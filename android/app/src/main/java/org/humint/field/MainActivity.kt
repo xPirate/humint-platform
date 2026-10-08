@@ -43,6 +43,7 @@ import kotlinx.coroutines.launch
 class MainActivity : FragmentActivity() {
 
     private val vm: FieldViewModel by viewModels()
+    private val relayVm: org.humint.field.relay.RelayViewModel by viewModels()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -116,6 +117,12 @@ class MainActivity : FragmentActivity() {
                 // which has no key until the PIN is in.
                 if (vault !is Vault.State.Open) {
                     LockScreen(vault) { Vault.refreshState(applicationContext) }
+                    return@FieldTheme
+                }
+                // A tablet in relay mode gets the relay's own frame.
+                val relayMode by Settings.relayMode.collectAsStateWithLifecycle()
+                if (relayMode) {
+                    RelayApp(relayVm)
                     return@FieldTheme
                 }
                 val nav = rememberNavController()
@@ -213,6 +220,50 @@ class MainActivity : FragmentActivity() {
                         shell(Tab.Settings) { padding -> SettingsScreen(padding) }
                     }
                 }
+            }
+        }
+    }
+
+    @androidx.compose.runtime.Composable
+    private fun RelayApp(rvm: org.humint.field.relay.RelayViewModel) {
+        val nav = rememberNavController()
+        val inbox by rvm.inbox.collectAsStateWithLifecycle()
+        val unsent = inbox.count { it.forwardedAt == null }
+        fun go(tab: org.humint.field.ui.RelayTab) {
+            if (tab == org.humint.field.ui.RelayTab.Lock) { Vault.lock(); return }
+            val route = when (tab) {
+                org.humint.field.ui.RelayTab.Inbox -> "inbox"
+                org.humint.field.ui.RelayTab.Phones -> "phones"
+                org.humint.field.ui.RelayTab.Relay -> "relay"
+                else -> "settings"
+            }
+            nav.navigate(route) {
+                popUpTo("inbox") { saveState = true }
+                launchSingleTop = true
+                restoreState = true
+            }
+        }
+        val frame: @androidx.compose.runtime.Composable (org.humint.field.ui.RelayTab, @androidx.compose.runtime.Composable (androidx.compose.foundation.layout.PaddingValues) -> Unit) -> Unit =
+            { tab, body -> org.humint.field.ui.RelayShell(tab, unsent, ::go, body) }
+        NavHost(navController = nav, startDestination = "inbox") {
+            composable("inbox") {
+                frame(org.humint.field.ui.RelayTab.Inbox) { p ->
+                    org.humint.field.ui.RelayInboxScreen(rvm, p) { id -> nav.navigate("relay-report/$id") }
+                }
+            }
+            composable("relay-report/{id}") { entry ->
+                org.humint.field.ui.RelayReportScreen(
+                    rvm, entry.arguments?.getString("id")?.toIntOrNull() ?: 0,
+                    onBack = { nav.popBackStack() })
+            }
+            composable("phones") {
+                frame(org.humint.field.ui.RelayTab.Phones) { p -> org.humint.field.ui.RelayPhonesScreen(rvm, p) }
+            }
+            composable("relay") {
+                frame(org.humint.field.ui.RelayTab.Relay) { p -> org.humint.field.ui.RelayHomeScreen(rvm, p) }
+            }
+            composable("settings") {
+                frame(org.humint.field.ui.RelayTab.Settings) { p -> SettingsScreen(p) }
             }
         }
     }

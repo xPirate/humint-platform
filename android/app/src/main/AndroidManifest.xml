@@ -31,6 +31,11 @@
     <!-- Keeps the processor awake while a route records with the screen off,
          so GPS fixes are delivered rather than held until the phone wakes. -->
     <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <!-- The team relay (relay/RelayService.kt): a tablet taking reports from
+         the team's phones over its own hotspot, all night. "specialUse"
+         because no defined type covers a local server for one's own team,
+         and dataSync is limited to six hours a day on Android 15. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <!-- So the "Recording a route" notification can be seen. Asked for when
          a recording starts; refused, the recording still runs. -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
@@ -76,5 +81,14 @@
             android:name=".track.RouteRecorderService"
             android:exported="false"
             android:foregroundServiceType="location" />
+
+        <service
+            android:name=".relay.RelayService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Receives field reports from the user's own team's phones over the tablet's Wi-Fi hotspot while the team is deployed, for later upload to their self-hosted server." />
+        </service>
     </application>
 </manifest>

@@ -349,7 +349,9 @@ class FieldViewModel(app: Application) : AndroidViewModel(app) {
                 _notice.value = "The console has newer report forms than this app. " +
                     "What you send still arrives in full; ask for an updated app when convenient."
             }
-            val outcome = uploader.sendAll(session) { _upload.value = it }
+            val sentAll = uploader.sendAll(session) { _upload.value = it }
+            val outcome = if (hello.relay && sentAll is Uploader.Progress.Done)
+                sentAll.copy(toRelay = true) else sentAll
             _upload.value = outcome
             if (outcome is Uploader.Progress.Done && outcome.sent > 0) purgeSent()
         } finally {

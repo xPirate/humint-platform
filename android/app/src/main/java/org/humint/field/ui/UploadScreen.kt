@@ -69,6 +69,8 @@ fun UploadScreen(vm: FieldViewModel, onDone: () -> Unit) {
                 is Uploader.Progress.Done -> {
                     Text(
                         when {
+                            p.failed == 0 && p.sent > 0 && p.toRelay ->
+                                "Sent ${p.sent} to the team relay. Removed from this phone."
                             p.failed == 0 && p.sent > 0 ->
                                 "Sent ${p.sent}. Removed from this phone."
                             p.sent == 0 -> "Nothing went through."
@@ -85,7 +87,8 @@ fun UploadScreen(vm: FieldViewModel, onDone: () -> Unit) {
                         )
                     }
                     Text(
-                        "The console's address and token are gone from this phone again.",
+                        if (p.toRelay) "The relay's address and token are gone from this phone again."
+                        else "The console's address and token are gone from this phone again.",
                         style = MaterialTheme.typography.labelMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )

@@ -43,6 +43,7 @@ object Settings {
     private const val FILE = "field.settings"
     private const val KEY_THEME = "theme"
     private const val KEY_PALETTE = "palette"
+    private const val KEY_RELAY = "relay_mode"
 
     private val _theme = MutableStateFlow(ThemeChoice.SYSTEM)
     val theme: StateFlow<ThemeChoice> = _theme
@@ -50,10 +51,22 @@ object Settings {
     private val _palette = MutableStateFlow(PaletteChoice.TERMINAL)
     val palette: StateFlow<PaletteChoice> = _palette
 
+    /** This install is a team relay (1.7). Here rather than in the vault
+     *  because the app has to know which frame to draw before the PIN. */
+    private val _relayMode = MutableStateFlow(false)
+    val relayMode: StateFlow<Boolean> = _relayMode
+
     fun load(context: Context) {
         val prefs = context.getSharedPreferences(FILE, Context.MODE_PRIVATE)
         _theme.value = ThemeChoice.from(prefs.getString(KEY_THEME, null))
         _palette.value = PaletteChoice.from(prefs.getString(KEY_PALETTE, null))
+        _relayMode.value = prefs.getBoolean(KEY_RELAY, false)
+    }
+
+    fun setRelayMode(context: Context, on: Boolean) {
+        context.getSharedPreferences(FILE, Context.MODE_PRIVATE)
+            .edit().putBoolean(KEY_RELAY, on).apply()
+        _relayMode.value = on
     }
 
     fun setTheme(context: Context, choice: ThemeChoice) {

@@ -432,6 +432,8 @@ object Vault {
         // A route recording in progress, and the points waiting to be merged.
         org.humint.field.track.RouteRecorder.stop(context)
         org.humint.field.track.TrackBuffer.destroyAll(context)
+        // A relay's keys, its phones, and anything not yet opened.
+        org.humint.field.relay.Relay.wipe(context)
         listOf("field.db", "field.db-wal", "field.db-shm").forEach {
             Crypto.shred(context.getDatabasePath(it))
         }

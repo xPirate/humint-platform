@@ -49,8 +49,8 @@ android {
         // Android 16. Google Play refuses new apps and updates targeting
         // anything lower from 31 August 2026.
         targetSdk = 36
-        versionCode = 7
-        versionName = "1.6"
+        versionCode = 8
+        versionName = "1.7"
 
         // SQLCipher ships a native library per ABI and they are 4-6 MB each,
         // which was a fifth of the debug APK for three architectures nothing

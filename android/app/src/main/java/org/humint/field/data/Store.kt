@@ -92,6 +92,128 @@ data class AttachmentCount(
     val n: Int,
 )
 
+// ------------------------------------------------------------- relay (1.7)
+//
+// What a relay has opened. Reports arrive sealed to the relay's public key
+// (relay/RelayLanding.kt) because the vault is shut while it serves; when
+// the team unlocks it, each is opened and moved here, under the PIN like
+// everything else. The relay's own numbering is kept as the key, because a
+// phone retrying a file upload names the report by that number.
+
+@Entity(tableName = "relay_submissions")
+data class RelaySubmissionRow(
+    @PrimaryKey val id: Int,
+    @ColumnInfo(name = "device_id") val deviceId: Int,
+    @ColumnInfo(name = "received_at") val receivedAt: Long,
+    val title: String,
+    val body: String?,
+    val criticality: String?,
+    /** As the phone sent it: ISO 8601 UTC. */
+    @ColumnInfo(name = "observed_at") val observedAt: String?,
+    val lat: Double?,
+    val lng: Double?,
+    @ColumnInfo(name = "location_accuracy_m") val accuracyM: Double?,
+    @ColumnInfo(name = "location_note") val locationNote: String?,
+    @ColumnInfo(name = "client_ref") val clientRef: String?,
+    val template: String?,
+    @ColumnInfo(name = "template_version") val templateVersion: Int?,
+    /** The template's fields, as the JSON object the phone sent. */
+    val fields: String,
+    val geometry: String?,
+    /** The lead's priority tags, a JSON array of priority ids (1.7 phase 4). */
+    val priorities: String? = null,
+    @ColumnInfo(name = "lead_note") val leadNote: String? = null,
+    /** Set once the console has confirmed this report on a Sync. */
+    @ColumnInfo(name = "forwarded_at") val forwardedAt: Long? = null,
+)
+
+@Entity(tableName = "relay_files")
+data class RelayFileRow(
+    @PrimaryKey val id: Int,
+    @ColumnInfo(name = "submission_id") val submissionId: Int,
+    @ColumnInfo(name = "client_ref") val clientRef: String?,
+    val filename: String,
+    @ColumnInfo(name = "mime_type") val mimeType: String,
+    /** Re-sealed under the vault key, in the app's media directory. */
+    val path: String,
+    @ColumnInfo(name = "size_bytes") val sizeBytes: Long,
+    @ColumnInfo(name = "duration_ms") val durationMs: Long?,
+    val forwarded: Boolean = false,
+)
+
+/** A phone this relay takes reports from. The token's hash lives outside
+ *  the vault (RelayLanding's devices.idx) so the server can check it while
+ *  locked; the names live here, behind the PIN. */
+@Entity(tableName = "relay_devices")
+data class RelayDeviceRow(
+    @PrimaryKey val id: Int,
+    val label: String,
+    val analyst: String,
+    @ColumnInfo(name = "created_at") val createdAt: Long,
+    val revoked: Boolean = false,
+    /** The analyst's console account, when the relay was provisioned with
+     *  the team's roster (phase 2). */
+    @ColumnInfo(name = "console_user_id") val consoleUserId: Int? = null,
+)
+
+@Dao
+interface RelayDao {
+    @Query("SELECT * FROM relay_submissions ORDER BY received_at DESC")
+    fun submissions(): Flow<List<RelaySubmissionRow>>
+
+    @Query("SELECT * FROM relay_submissions WHERE id = :id")
+    fun submissionFlow(id: Int): Flow<RelaySubmissionRow?>
+
+    @Query("SELECT * FROM relay_submissions WHERE id = :id")
+    suspend fun submission(id: Int): RelaySubmissionRow?
+
+    @Query("SELECT * FROM relay_submissions WHERE forwarded_at IS NULL ORDER BY received_at ASC")
+    suspend fun unforwarded(): List<RelaySubmissionRow>
+
+    @androidx.room.Insert(onConflict = androidx.room.OnConflictStrategy.IGNORE)
+    suspend fun insert(row: RelaySubmissionRow)
+
+    @Update suspend fun update(row: RelaySubmissionRow)
+
+    @Query("SELECT * FROM relay_files WHERE submission_id = :id ORDER BY id")
+    fun filesFlow(id: Int): Flow<List<RelayFileRow>>
+
+    @Query("SELECT * FROM relay_files WHERE submission_id = :id ORDER BY id")
+    suspend fun files(id: Int): List<RelayFileRow>
+
+    @Query("SELECT submission_id AS report_id, count(*) AS n FROM relay_files GROUP BY submission_id")
+    fun fileCounts(): Flow<List<AttachmentCount>>
+
+    @androidx.room.Insert(onConflict = androidx.room.OnConflictStrategy.IGNORE)
+    suspend fun insert(row: RelayFileRow)
+
+    @Update suspend fun update(row: RelayFileRow)
+
+    @Query("SELECT * FROM relay_devices ORDER BY revoked, id")
+    fun devices(): Flow<List<RelayDeviceRow>>
+
+    @Query("SELECT * FROM relay_devices")
+    suspend fun allDevices(): List<RelayDeviceRow>
+
+    @androidx.room.Insert(onConflict = androidx.room.OnConflictStrategy.REPLACE)
+    suspend fun insert(row: RelayDeviceRow)
+
+    @Query("UPDATE relay_devices SET revoked = 1 WHERE id = :id")
+    suspend fun revokeDevice(id: Int)
+
+    @Query("SELECT * FROM relay_files")
+    suspend fun allFiles(): List<RelayFileRow>
+
+    @Query("DELETE FROM relay_files")
+    suspend fun clearFiles()
+
+    @Query("DELETE FROM relay_submissions")
+    suspend fun clearSubmissions()
+
+    @Query("DELETE FROM relay_devices")
+    suspend fun clearDevices()
+}
+
 @Dao
 interface FieldDao {
     @Query("SELECT * FROM reports WHERE status != 'sent' ORDER BY created_at DESC")
@@ -157,9 +279,13 @@ interface FieldDao {
     suspend fun noteError(id: String, message: String?, now: Long = System.currentTimeMillis())
 }
 
-@Database(entities = [ReportRow::class, AttachmentRow::class], version = 2, exportSchema = false)
+@Database(
+    entities = [ReportRow::class, AttachmentRow::class,
+                RelaySubmissionRow::class, RelayFileRow::class, RelayDeviceRow::class],
+    version = 3, exportSchema = false)
 abstract class FieldDatabase : RoomDatabase() {
     abstract fun dao(): FieldDao
+    abstract fun relay(): RelayDao
 
     companion object {
         @Volatile private var instance: FieldDatabase? = null
@@ -193,7 +319,7 @@ abstract class FieldDatabase : RoomDatabase() {
             val factory = SupportOpenHelperFactory(key.copyOf())
             return Room.databaseBuilder(context, FieldDatabase::class.java, "field.db")
                 .openHelperFactory(factory)
-                .addMigrations(MIGRATION_1_2)
+                .addMigrations(MIGRATION_1_2, MIGRATION_2_3)
                 // No fallbackToDestructiveMigration. A migration this app
                 // cannot perform must not silently throw away a queue of
                 // reports nobody has uploaded yet; crashing is louder and
@@ -208,6 +334,26 @@ abstract class FieldDatabase : RoomDatabase() {
 val MIGRATION_1_2 = object : androidx.room.migration.Migration(1, 2) {
     override fun migrate(db: androidx.sqlite.db.SupportSQLiteDatabase) {
         db.execSQL("ALTER TABLE reports ADD COLUMN geometry TEXT")
+    }
+}
+
+/** 1.6 -> 1.7: the relay's three tables. New tables only; a phone that
+ *  never becomes a relay carries them empty. */
+val MIGRATION_2_3 = object : androidx.room.migration.Migration(2, 3) {
+    override fun migrate(db: androidx.sqlite.db.SupportSQLiteDatabase) {
+        db.execSQL("CREATE TABLE IF NOT EXISTS `relay_submissions` (`id` INTEGER NOT NULL, " +
+            "`device_id` INTEGER NOT NULL, `received_at` INTEGER NOT NULL, `title` TEXT NOT NULL, " +
+            "`body` TEXT, `criticality` TEXT, `observed_at` TEXT, `lat` REAL, `lng` REAL, " +
+            "`location_accuracy_m` REAL, `location_note` TEXT, `client_ref` TEXT, `template` TEXT, " +
+            "`template_version` INTEGER, `fields` TEXT NOT NULL, `geometry` TEXT, `priorities` TEXT, " +
+            "`lead_note` TEXT, `forwarded_at` INTEGER, PRIMARY KEY(`id`))")
+        db.execSQL("CREATE TABLE IF NOT EXISTS `relay_files` (`id` INTEGER NOT NULL, " +
+            "`submission_id` INTEGER NOT NULL, `client_ref` TEXT, `filename` TEXT NOT NULL, " +
+            "`mime_type` TEXT NOT NULL, `path` TEXT NOT NULL, `size_bytes` INTEGER NOT NULL, " +
+            "`duration_ms` INTEGER, `forwarded` INTEGER NOT NULL, PRIMARY KEY(`id`))")
+        db.execSQL("CREATE TABLE IF NOT EXISTS `relay_devices` (`id` INTEGER NOT NULL, " +
+            "`label` TEXT NOT NULL, `analyst` TEXT NOT NULL, `created_at` INTEGER NOT NULL, " +
+            "`revoked` INTEGER NOT NULL, `console_user_id` INTEGER, PRIMARY KEY(`id`))")
     }
 }
 

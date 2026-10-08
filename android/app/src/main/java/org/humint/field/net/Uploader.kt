@@ -62,7 +62,9 @@ class Uploader(
         data class Checking(val host: String) : Progress
         data class Sending(val index: Int, val total: Int, val title: String) : Progress
         data class SendingFile(val index: Int, val total: Int, val filename: String) : Progress
-        data class Done(val sent: Int, val failed: Int) : Progress
+        /** [toRelay]: the code scanned was a team relay's, not the console's
+         *  — so the phone says where its reports went, honestly. */
+        data class Done(val sent: Int, val failed: Int, val toRelay: Boolean = false) : Progress
         data class Failed(val message: String) : Progress
     }
 
@@ -91,6 +93,7 @@ class Uploader(
                     maxSubmissionBytes = json.optLong("max_submission_bytes", Long.MAX_VALUE),
                     maxFiles = json.optInt("max_files", 10),
                     consoleTemplateVersion = templates?.optInt("version") ?: 0,
+                    relay = json.optBoolean("relay", false),
                 )
             }
         }
@@ -103,6 +106,8 @@ class Uploader(
         val maxSubmissionBytes: Long,
         val maxFiles: Int,
         val consoleTemplateVersion: Int,
+        /** A team relay (a tablet in relay mode), not the console itself. */
+        val relay: Boolean = false,
     ) {
         /** The console has forms this app has never heard of. Worth saying
          *  once, not worth blocking on: the console renders what it does not

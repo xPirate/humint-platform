@@ -57,6 +57,61 @@ import org.humint.field.data.ThemeChoice
 import org.humint.field.data.Vault
 import java.util.concurrent.Executor
 
+/**
+ * Turning this install into a team relay, or back. A relay takes reports
+ * from the team's phones over its hotspot instead of writing its own; see
+ * the Relay tab once it is on. Turning it off keeps everything the relay
+ * holds — it only changes which screens show.
+ */
+@Composable
+private fun RelayModeRow() {
+    val context = LocalContext.current
+    val on by Settings.relayMode.collectAsStateWithLifecycle()
+    var confirm by remember { mutableStateOf(false) }
+    var problem by remember { mutableStateOf<String?>(null) }
+    Row(Modifier.fillMaxWidth().heightIn(min = TapTarget), verticalAlignment = Alignment.CenterVertically) {
+        Column(Modifier.weight(1f)) {
+            Text("Use this device as a team relay", style = MaterialTheme.typography.bodyLarge)
+            Text(
+                "For the team lead's tablet on a deployment: the team's phones send here " +
+                "each night, and you send everything home when you can reach the console.",
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        Switch(checked = on, onCheckedChange = { want ->
+            if (want) confirm = true
+            else {
+                org.humint.field.relay.Relay.stop(context)
+                Settings.setRelayMode(context, false)
+            }
+        })
+    }
+    problem?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+    if (confirm) {
+        AlertDialog(
+            onDismissRequest = { confirm = false },
+            title = { Text("Make this a team relay?") },
+            text = {
+                Text("The app switches to the relay's screens: Inbox, Phones and Relay. " +
+                     "Reports already on this device stay where they are; turn relay mode " +
+                     "off to see them again.")
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    confirm = false
+                    problem = runCatching {
+                        org.humint.field.relay.Relay.ensureKeys(context)
+                        Settings.setRelayMode(context, true)
+                        null
+                    }.getOrElse { "Could not set up the relay: ${it.message}" }
+                }) { Text("Make it a relay") }
+            },
+            dismissButton = { TextButton(onClick = { confirm = false }) { Text("Cancel") } },
+        )
+    }
+}
+
 /** A dot of the palette's accent, so the list can be told apart without
  *  trying each one. */
 @Composable
@@ -142,6 +197,11 @@ fun SettingsScreen(outer: androidx.compose.foundation.layout.PaddingValues) {
                     }
                 }
             }
+
+            Spacer(Modifier.height(18.dp))
+            HorizontalDivider()
+            Section("Team relay")
+            RelayModeRow()
 
             Spacer(Modifier.height(18.dp))
             HorizontalDivider()
