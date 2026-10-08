@@ -1,6 +1,8 @@
 package org.humint.field.ui
 
 import android.Manifest
+import android.os.Build
+import android.view.HapticFeedbackConstants
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.camera.core.Camera
@@ -10,6 +12,7 @@ import androidx.camera.core.Preview
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -51,6 +54,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -91,7 +95,16 @@ private enum class FlashChoice(val label: String) {
 fun PhotoCaptureScreen(
     onDone: (Capture.Captured?) -> Unit,
     onCancel: () -> Unit,
+    /**
+     * Quick capture: the screen stays open after each shot so a scene can
+     * be covered in three or four frames without re-opening the camera.
+     * Each shot is handed to [onDone] as it is taken; [onCancel] is the
+     * way out, relabelled Done once something has been taken.
+     */
+    multiShot: Boolean = false,
+    shotCount: Int = 0,
 ) {
+    val haptics = LocalView.current
     val context = LocalContext.current
     val owner = LocalLifecycleOwner.current
     val scope = rememberCoroutineScope()
@@ -173,8 +186,20 @@ fun PhotoCaptureScreen(
             Modifier.fillMaxWidth().statusBarsPadding().padding(horizontal = 8.dp, vertical = 4.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            RoundIcon(onClick = onCancel) {
-                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = Color.White)
+            if (multiShot && shotCount > 0) {
+                Row(
+                    Modifier.clip(CircleShape).background(Color.Black.copy(alpha = 0.4f))
+                        .clickable(onClick = onCancel)
+                        .padding(horizontal = 18.dp).heightIn(min = TapTarget),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text("Done · $shotCount", color = Color.White, fontWeight = FontWeight.SemiBold,
+                         style = MaterialTheme.typography.labelLarge)
+                }
+            } else {
+                RoundIcon(onClick = onCancel) {
+                    Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = Color.White)
+                }
             }
             Spacer(Modifier.weight(1f))
             if (camera?.cameraInfo?.hasFlashUnit() == true) {
@@ -208,7 +233,10 @@ fun PhotoCaptureScreen(
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
             Text(
-                if (busy) "Saving…" else "Pinch to zoom · tap to focus",
+                if (busy) "Saving…"
+                else if (multiShot && shotCount == 0) "Shoot now — file it to a report after"
+                else if (multiShot) "$shotCount taken · Done when you have the scene"
+                else "Pinch to zoom · tap to focus",
                 color = Color.White.copy(alpha = 0.85f),
                 style = MaterialTheme.typography.labelMedium,
             )
@@ -224,10 +252,15 @@ fun PhotoCaptureScreen(
                     onClick = {
                         if (busy || !granted) return@Button
                         busy = true
+                        haptics.performHapticFeedback(
+                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R)
+                                HapticFeedbackConstants.CONFIRM
+                            else HapticFeedbackConstants.VIRTUAL_KEY)
                         scope.launch {
                             val shot = runCatching { Capture.takePhoto(context, capture) }
-                            runCatching { camera?.cameraControl?.enableTorch(false) }
+                            if (!multiShot) runCatching { camera?.cameraControl?.enableTorch(false) }
                             onDone(shot.getOrNull())
+                            if (multiShot) busy = false
                         }
                     },
                     enabled = granted && !busy,

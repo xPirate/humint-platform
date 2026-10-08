@@ -12,6 +12,18 @@ Setting up phones is in [Set up field devices](field-devices.md).
 The bottom bar: **Reports** · **Send** · **+** (new report) · **Lock** ·
 **Settings**.
 
+### Capture first, file it later
+
+When something is in front of you *now* and the report can wait, use the
+**camera button** at the top of the Reports tab. It opens straight into the
+viewfinder; every shot is saved encrypted and the screen stays up, so a
+scene can be covered in several frames. Press **Done** when you have it.
+
+The shots land in **Unfiled captures** at the top of the Reports tab. Tap
+one to check it, file it to a draft report, start a new report with it
+already attached, or discard it. Nothing can be sent from the tray — a
+capture only leaves the phone as part of a report you marked ready.
+
 ### Write a report
 
 1. Unlock with your PIN (or fingerprint).

@@ -21,6 +21,7 @@ import org.humint.field.ui.LockScreen
 import org.humint.field.ui.SettingsScreen
 import org.humint.field.net.SessionHolder
 import org.humint.field.ui.FieldTheme
+import org.humint.field.ui.PhotoCaptureScreen
 import org.humint.field.ui.QueueScreen
 import org.humint.field.ui.ReportScreen
 import org.humint.field.ui.ScanScreen
@@ -162,8 +163,23 @@ class MainActivity : FragmentActivity() {
                                 onOpen = { id -> nav.navigate("report/$id") },
                                 onSend = { goTab(Tab.Send) },
                                 onNew = { picking = true },
+                                onCapture = { nav.navigate("capture") },
                             )
                         }
+                    }
+                    composable("capture") {
+                        // Quick capture: shoot now, file it to a report
+                        // later from the tray on the Reports tab. The
+                        // screen stays up between shots.
+                        var shots by remember { mutableStateOf(0) }
+                        PhotoCaptureScreen(
+                            onDone = { captured ->
+                                captured?.let { vm.addUnfiled(it, "image"); shots++ }
+                            },
+                            onCancel = { nav.popBackStack() },
+                            multiShot = true,
+                            shotCount = shots,
+                        )
                     }
                     composable("send") {
                         shell(Tab.Send) { padding ->

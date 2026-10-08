@@ -58,6 +58,15 @@ data class ReportRow(
     val geometry: String? = null,
 )
 
+/**
+ * A photo, clip or memo. Usually it belongs to a report; a row whose
+ * [reportId] is [AttachmentRow.UNFILED] is a **quick capture** — taken from
+ * the camera button before any report existed, waiting to be filed to one.
+ * The empty string rather than null keeps the schema as it was (no
+ * migration), and no report can ever have an empty id, so nothing can
+ * collide with it. The uploader reads attachments per report, so an
+ * unfiled capture can never leave the phone.
+ */
 @Entity(tableName = "attachments")
 data class AttachmentRow(
     @PrimaryKey val id: String = UUID.randomUUID().toString(),
@@ -73,6 +82,14 @@ data class AttachmentRow(
     @ColumnInfo(name = "duration_ms") val durationMs: Long? = null,
     /** Set once the console has this file, so a resumed upload skips it. */
     val sent: Boolean = false,
+) {
+    companion object { const val UNFILED = "" }
+}
+
+/** How many attachments each report has, for the queue cards. */
+data class AttachmentCount(
+    @ColumnInfo(name = "report_id") val reportId: String,
+    val n: Int,
 )
 
 @Dao
@@ -119,6 +136,22 @@ interface FieldDao {
 
     @Query("DELETE FROM attachments WHERE id = :id")
     suspend fun deleteAttachment(id: String)
+
+    // ------------------------------------------------------ quick captures
+
+    @Query("SELECT * FROM attachments WHERE report_id = '' ORDER BY rowid DESC")
+    fun unfiledFlow(): Flow<List<AttachmentRow>>
+
+    @Query("SELECT * FROM attachments WHERE report_id = '' AND id = :id")
+    suspend fun unfiled(id: String): AttachmentRow?
+
+    /** Files a quick capture to a report. From then on it is an ordinary
+     *  attachment and is sent, shown and shredded with that report. */
+    @Query("UPDATE attachments SET report_id = :reportId WHERE id = :id")
+    suspend fun fileAttachment(id: String, reportId: String)
+
+    @Query("SELECT report_id, count(*) AS n FROM attachments GROUP BY report_id")
+    fun attachmentCounts(): Flow<List<AttachmentCount>>
 
     @Query("UPDATE reports SET last_error = :message, updated_at = :now WHERE id = :id")
     suspend fun noteError(id: String, message: String?, now: Long = System.currentTimeMillis())

@@ -7,6 +7,7 @@ import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.stateIn
@@ -58,6 +59,22 @@ class FieldViewModel(app: Application) : AndroidViewModel(app) {
             if (st is Vault.State.Open) dao().queue() else flowOf(emptyList())
         }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    @OptIn(ExperimentalCoroutinesApi::class)
+    val unfiled: StateFlow<List<AttachmentRow>> = Vault.state
+        .flatMapLatest { st ->
+            if (st is Vault.State.Open) dao().unfiledFlow() else flowOf(emptyList())
+        }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    /** report id -> how many attachments, for the queue cards. */
+    @OptIn(ExperimentalCoroutinesApi::class)
+    val attachmentCounts: StateFlow<Map<String, Int>> = Vault.state
+        .flatMapLatest { st ->
+            if (st is Vault.State.Open) dao().attachmentCounts() else flowOf(emptyList())
+        }
+        .map { list -> list.associate { it.reportId to it.n } }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyMap())
 
     @OptIn(ExperimentalCoroutinesApi::class)
     val readyCount: StateFlow<Int> = Vault.state
@@ -264,6 +281,38 @@ class FieldViewModel(app: Application) : AndroidViewModel(app) {
     fun removeAttachment(row: AttachmentRow) = viewModelScope.launch {
         Crypto.shred(File(row.path))
         dao().deleteAttachment(row.id)
+    }
+
+    // -------------------------------------------------------- quick capture
+
+    /** A capture taken before any report existed. Encrypted and queued like
+     *  any attachment, but filed to nothing yet — it shows in the tray on
+     *  the Reports tab until it is filed or discarded, and it can never be
+     *  uploaded from there. */
+    fun addUnfiled(captured: Capture.Captured, kind: String) =
+        viewModelScope.launch {
+            dao().insert(AttachmentRow(
+                reportId = AttachmentRow.UNFILED,
+                kind = kind,
+                filename = captured.filename,
+                mimeType = captured.mimeType,
+                path = captured.file.absolutePath,
+                sizeBytes = captured.sizeBytes,
+                durationMs = captured.durationMs,
+            ))
+        }
+
+    /** Files a quick capture to an existing report. */
+    fun fileCapture(attachmentId: String, reportId: String) = viewModelScope.launch {
+        dao().fileAttachment(attachmentId, reportId)
+    }
+
+    /** A new report started from a capture: the capture is filed to it
+     *  before the editor opens, so it is already attached on first sight. */
+    suspend fun newReportFrom(templateKey: String, attachmentId: String): String {
+        val id = newReport(templateKey)
+        dao().fileAttachment(attachmentId, id)
+        return id
     }
 
     // -------------------------------------------------------------- sending

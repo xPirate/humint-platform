@@ -25,8 +25,12 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.CloudUpload
 import androidx.compose.material.icons.filled.ErrorOutline
+import androidx.compose.material.icons.filled.PhotoCamera
+import androidx.compose.material.icons.outlined.PhotoCamera
 import androidx.compose.material.icons.outlined.Inbox
 import androidx.compose.material3.Button
+import androidx.compose.material3.FilledTonalIconButton
+import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
@@ -68,10 +72,13 @@ fun QueueScreen(
     onOpen: (String) -> Unit,
     onSend: () -> Unit,
     onNew: () -> Unit,
+    onCapture: () -> Unit,
 ) {
     val queue by vm.queue.collectAsStateWithLifecycle()
     val ready by vm.readyCount.collectAsStateWithLifecycle()
     val recorder by vm.recorder.collectAsStateWithLifecycle()
+    val unfiled by vm.unfiled.collectAsStateWithLifecycle()
+    val counts by vm.attachmentCounts.collectAsStateWithLifecycle()
     var filter by rememberSaveable { mutableStateOf("all") }
     val drafts = queue.count { it.status == "draft" }
     val shown = when (filter) {
@@ -86,22 +93,51 @@ fun QueueScreen(
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
         item {
-            Column(Modifier.padding(top = 18.dp, bottom = 4.dp)) {
-                Text("Reports", style = MaterialTheme.typography.headlineMedium,
-                     fontWeight = FontWeight.Bold)
-                Text(
-                    when {
-                        queue.isEmpty() -> "Nothing on this phone"
-                        else -> "${queue.size} on this phone · encrypted"
-                    },
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
+            Row(
+                Modifier.padding(top = 18.dp, bottom = 4.dp).fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Text("Reports", style = MaterialTheme.typography.headlineMedium,
+                         fontWeight = FontWeight.Bold)
+                    Text(
+                        when {
+                            queue.isEmpty() -> "Nothing on this phone"
+                            else -> "${queue.size} on this phone · encrypted"
+                        },
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                // Capture first, file it later: the camera with nothing in
+                // front of it to fill in. For the moment when the thing worth
+                // photographing is there and the report can wait.
+                FilledTonalIconButton(
+                    onClick = onCapture,
+                    modifier = Modifier.size(52.dp),
+                    colors = IconButtonDefaults.filledTonalIconButtonColors(
+                        containerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.14f),
+                        contentColor = MaterialTheme.colorScheme.primary,
+                    ),
+                ) {
+                    Icon(Icons.Filled.PhotoCamera, contentDescription = "Quick capture")
+                }
+            }
+        }
+
+        if (unfiled.isNotEmpty()) {
+            item(key = "unfiled-tray") {
+                Box(Modifier.animateItem()) {
+                    UnfiledTray(vm, unfiled, drafts = queue.filter { it.status == "draft" },
+                                onOpenReport = onOpen)
+                }
             }
         }
 
         if (ready > 0) {
-            item { ReadyBanner(ready, onSend) }
+            item(key = "ready-banner") {
+                Box(Modifier.animateItem()) { ReadyBanner(ready, onSend) }
+            }
         }
 
         if (queue.isNotEmpty()) {
@@ -126,7 +162,12 @@ fun QueueScreen(
             }
         } else {
             items(shown, key = { it.id }) { row ->
-                QueueCard(row, recording = recorder.running && recorder.reportId == row.id) { onOpen(row.id) }
+                QueueCard(
+                    row,
+                    recording = recorder.running && recorder.reportId == row.id,
+                    attachments = counts[row.id] ?: 0,
+                    modifier = Modifier.animateItem(),
+                ) { onOpen(row.id) }
             }
         }
     }
@@ -208,10 +249,16 @@ private fun EmptyQueue(onNew: () -> Unit) {
 }
 
 @Composable
-private fun QueueCard(row: ReportRow, recording: Boolean = false, onClick: () -> Unit) {
+private fun QueueCard(
+    row: ReportRow,
+    recording: Boolean = false,
+    attachments: Int = 0,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit,
+) {
     val template = Templates.byKey(row.template)
     Row(
-        Modifier
+        modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(20.dp))
             .background(MaterialTheme.colorScheme.surface)
@@ -236,7 +283,11 @@ private fun QueueCard(row: ReportRow, recording: Boolean = false, onClick: () ->
                  maxLines = 2, overflow = TextOverflow.Ellipsis)
             Spacer(Modifier.height(4.dp))
             Text(
-                friendlyTime(row.observedAt ?: row.createdAt),
+                buildString {
+                    append(friendlyTime(row.observedAt ?: row.createdAt))
+                    if (attachments == 1) append(" · 1 attachment")
+                    else if (attachments > 1) append(" · $attachments attachments")
+                },
                 style = MaterialTheme.typography.labelMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )

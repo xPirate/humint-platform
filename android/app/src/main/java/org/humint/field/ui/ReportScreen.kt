@@ -1,6 +1,8 @@
 package org.humint.field.ui
 
 import android.Manifest
+import android.os.Build
+import android.view.HapticFeedbackConstants
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
@@ -52,6 +54,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.KeyboardType
@@ -166,12 +169,21 @@ fun ReportScreen(vm: FieldViewModel, reportId: String, onDone: () -> Unit) {
         },
         snackbarHost = { SnackbarHost(snackbar) },
         bottomBar = {
+            val haptics = LocalView.current
             Column(Modifier.padding(16.dp)) {
                 Button(
                     onClick = {
                         vm.markReady(report,
                             onRefused = { why -> scope.launch { snackbar.showSnackbar(why) } },
-                            onReady = onDone)
+                            onReady = {
+                                // A press that changes the report's state
+                                // deserves to be felt, gloves or not.
+                                haptics.performHapticFeedback(
+                                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R)
+                                        HapticFeedbackConstants.CONFIRM
+                                    else HapticFeedbackConstants.VIRTUAL_KEY)
+                                onDone()
+                            })
                     },
                     modifier = Modifier.fillMaxWidth().heightIn(min = TapTarget),
                 ) {
