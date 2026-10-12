@@ -53,6 +53,90 @@ ENTITY_TYPES = ("person", "organization", "location", "event", "source", "commun
 MAX_GRAPH_NODES = 400
 
 
+def _focus_graph(focus: str, depth: int, active_only: bool,
+                 include_expired_links: bool, limit: int) -> dict:
+    """The focused record, its direct links, and (at depth 2) theirs.
+
+    Walked a step at a time rather than with a recursive CTE: two steps is
+    the most the network offers, and a plain loop keeps the "stop at the
+    node cap, keeping the nearest" rule easy to read. Nearer records always
+    win a place over farther ones, so a hub two steps out cannot crowd the
+    focus's own links off the picture.
+    """
+    live = "" if include_expired_links else \
+        " AND (r.expires_on IS NULL OR r.expires_on >= CURRENT_DATE)"
+    alive = " AND e.is_active = TRUE" if active_only else ""
+    with db_cursor() as cur:
+        cur.execute("SELECT id, name, entity_type FROM entities "
+                    " WHERE id = %s AND merged_into IS NULL", (focus,))
+        row = cur.fetchone()
+        if row is None:
+            raise HTTPException(status_code=404, detail="No such entity.")
+        centre = {"id": row[0], "name": row[1], "entity_type": row[2]}
+
+        ring = {focus: 0}           # id -> steps from the focus
+        frontier = [focus]
+        for step in range(1, depth + 1):
+            if not frontier or len(ring) >= limit:
+                break
+            cur.execute(
+                f"""
+                SELECT DISTINCT CASE WHEN r.from_entity_id = ANY(%s) THEN r.to_entity_id
+                                     ELSE r.from_entity_id END AS other
+                  FROM relationships r
+                  JOIN entities e ON e.id = CASE WHEN r.from_entity_id = ANY(%s)
+                                                 THEN r.to_entity_id ELSE r.from_entity_id END
+                 WHERE (r.from_entity_id = ANY(%s) OR r.to_entity_id = ANY(%s))
+                   AND e.merged_into IS NULL{alive}{live}
+                """,
+                (frontier, frontier, frontier, frontier))
+            found = [r[0] for r in cur.fetchall() if r[0] not in ring]
+            room = limit - len(ring)
+            found = found[:room]
+            for other in found:
+                ring[other] = step
+            frontier = found
+        truncated = len(ring) >= limit
+
+        ids = list(ring)
+        degree_live = "" if include_expired_links else \
+            "WHERE expires_on IS NULL OR expires_on >= CURRENT_DATE"
+        cur.execute(
+            f"""
+            WITH degree AS (
+                SELECT entity_id, count(*) AS n FROM (
+                    SELECT from_entity_id AS entity_id FROM relationships {degree_live}
+                    UNION ALL
+                    SELECT to_entity_id AS entity_id FROM relationships {degree_live}
+                ) both_ends GROUP BY entity_id
+            )
+            SELECT e.id, e.name, e.entity_type, e.is_active, COALESCE(d.n, 0)
+              FROM entities e LEFT JOIN degree d ON d.entity_id = e.id
+             WHERE e.id = ANY(%s)
+            """, (ids,))
+        nodes = [{"id": r[0], "name": r[1], "entity_type": r[2], "is_active": r[3],
+                  "degree": r[4], "steps": ring[r[0]]} for r in cur.fetchall()]
+        alignments = entities.fetch_alignments(cur, ids)
+        for node in nodes:
+            node["alignment"] = alignments.get(node["id"])
+        cur.execute(
+            """
+            SELECT id, from_entity_id, to_entity_id, relationship_type, confidence,
+                   expires_on, (expires_on IS NOT NULL AND expires_on < CURRENT_DATE)
+              FROM relationships
+             WHERE from_entity_id = ANY(%s) AND to_entity_id = ANY(%s)
+               AND (%s OR expires_on IS NULL OR expires_on >= CURRENT_DATE)
+             ORDER BY id
+            """, (ids, ids, include_expired_links))
+        edges = [{"id": r[0], "from": r[1], "to": r[2], "relationship_type": r[3],
+                  "confidence": r[4], "expires_on": r[5], "expired": r[6]}
+                 for r in cur.fetchall()]
+    nodes.sort(key=lambda n: (n["steps"], -n["degree"], n["name"]))
+    return {"nodes": nodes, "edges": edges, "total": len(nodes), "truncated": truncated,
+            "max_degree": max((n["degree"] for n in nodes), default=0),
+            "focus": centre, "depth": depth}
+
+
 @router.get("/entities/graph")
 def entity_graph(
     entity_type: Optional[str] = Query(default=None),
@@ -63,12 +147,19 @@ def entity_graph(
     # default — that is the point of letting a link expire. This brings them
     # back, flagged so the network can draw them faded.
     include_expired_links: bool = Query(default=False),
+    # Focus: one record and everything within `depth` links of it, of any
+    # type. The search box and the type filter do not apply — the point of
+    # focusing on someone is to see all of who and what they connect to.
+    focus: Optional[str] = Query(default=None, max_length=200),
+    depth: int = Query(default=1, ge=1, le=2),
     limit: int = Query(default=MAX_GRAPH_NODES, ge=1, le=MAX_GRAPH_NODES),
     user: dict = Depends(auth.require_user),
 ):
     if entity_type is not None and entity_type not in ENTITY_TYPES:
         raise HTTPException(status_code=400,
                             detail=f"entity_type must be one of {list(ENTITY_TYPES)}")
+    if focus:
+        return _focus_graph(focus, depth, active_only, include_expired_links, limit)
 
     where = ["e.merged_into IS NULL"]
     params: list = []

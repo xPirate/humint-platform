@@ -85,16 +85,33 @@ created from a field report get the first photo automatically.
   thing everything points at stands out. *Hide unconnected* is on by default.
   Search and the type filter drive both panes.
 
+**Narrow it down:** the **Show** chips above the network — *People,
+Organizations, Locations, Vehicles* and the rest — show one kind of record at
+a time. They set the same type filter as the toolbar, so the tree follows.
+
+**Focus on one record:** **click a dot**, or right-click any record and
+choose **Focus in the network**. The network becomes that record, everything
+it links to (of any type, every one labelled), and the links between them.
+
+- **Click a neighbour** to walk on to it; **◀ Back** walks back.
+- **Two steps out** adds what the neighbours link to — the way to find the
+  person two hops from your subject. **Direct links** goes back to one step.
+- **Summary** shows the record's card; **Open record** its full page.
+- **✕ Show everything** returns to the whole network.
+
+The focused record is marked in the tree as well.
+
 **Arrange it:**
 
 - **Drag** a dot to pin it (dashed ring); the rest makes room.
 - **Double-click** a pinned dot to release it.
 - **Refit** releases everything and re-runs the layout.
 
-**Click a dot** for a summary card: type, alias, alignment, key fields, link
-and report counts, nearest connections with their grades. Click a connection
+The **summary card** shows type, alias, alignment, key fields, link and
+report counts, and nearest connections with their grades. Click a connection
 on the card to walk the chain; **Open record** for the full page;
-**Actions ▾** for the right-click menu. Escape closes it.
+**Actions ▾** for the right-click menu. Escape closes it. On a record's own
+page, clicking a dot in its small network still opens the card.
 
 ## Right-click a record
 

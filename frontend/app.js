@@ -428,6 +428,8 @@ function entityMenuItems(ctx) {
   const items = [
     { label: "Open record", act: () => openEntityDetail(ctx.id),
       hide: state.currentEntityId === ctx.id },
+    { label: "Focus in the network", note: "its links, and theirs",
+      act: () => focusEntityGraph(ctx.id) },
     { sep: true },
     { label: "Look for links", ai: true, disabled: !ai && aiOff,
       note: "proposes into Review", act: () => proposeLinksFor(ctx) },
@@ -3371,11 +3373,108 @@ let entityDegrees = new Map();
 const entityNetwork = createNetwork({
   canvasId: "entity-graph-canvas",
   tipId: "graph-tip",
+  // A click on the case-file network narrows it to that record and
+  // everything it touches. The summary card is one button away in the
+  // focus bar, rather than on every click.
+  onPick: (id) => focusEntityGraph(id),
 });
 let entityGraphMeta = { total: 0, truncated: false };
 
+/*
+ * Focus. The whole case file as one picture is a hairball past a few dozen
+ * records; what an analyst usually wants is one record and what it touches.
+ * So: pick a kind of record (the chips), click one, and the network becomes
+ * that record, its links, and — one click away — its links' links. Clicking
+ * a neighbour walks on to it; Back walks back.
+ */
+const graphFocus = { id: null, depth: 1, history: [], meta: null };
+
+const GRAPH_TYPE_PLURALS = {
+  person: "People", organization: "Organizations", location: "Locations", event: "Events",
+  vehicle: "Vehicles", communication: "Communications", source: "Sources", record: "Records",
+  zone: "Zones", route: "Routes",
+};
+
+function focusEntityGraph(id, opts = {}) {
+  closeSummaryCard();
+  if (graphFocus.id && graphFocus.id !== id && !opts.back) graphFocus.history.push(graphFocus.id);
+  graphFocus.id = id;
+  if (opts.depth) graphFocus.depth = opts.depth;
+  const onPage = document.getElementById("view-entities").classList.contains("active");
+  if (!onPage) switchView("entities");      // which loads the network, focused
+  else loadEntityGraph();
+}
+
+function clearGraphFocus() {
+  graphFocus.id = null;
+  graphFocus.history = [];
+  graphFocus.meta = null;
+  loadEntityGraph();
+}
+
+function renderGraphTypes() {
+  const el = document.getElementById("graph-types");
+  if (!el) return;
+  const current = document.getElementById("entity-type-filter").value;
+  el.innerHTML = `<span class="graph-types-label">Show</span>`
+    + [["", "All"], ...Object.entries(GRAPH_TYPE_PLURALS)].map(([t, label]) =>
+      `<button type="button" class="graph-type-chip${t === current && !graphFocus.id ? " active" : ""}${t ? " type-" + t : ""}"
+               data-graph-type="${t}" aria-pressed="${t === current && !graphFocus.id}">${escapeHtml(label)}</button>`).join("");
+  el.querySelectorAll("[data-graph-type]").forEach((b) => b.addEventListener("click", () => {
+    graphFocus.id = null; graphFocus.history = []; graphFocus.meta = null;
+    const sel = document.getElementById("entity-type-filter");
+    sel.value = b.dataset.graphType;
+    sel.dispatchEvent(new Event("change"));     // the tree follows, and reloads the network
+  }));
+}
+
+function renderGraphFocusBar(data) {
+  const el = document.getElementById("graph-focus");
+  if (!el) return;
+  if (!graphFocus.id || !data || !data.focus) { el.hidden = true; el.innerHTML = ""; return; }
+  const f = data.focus;
+  const direct = data.nodes.filter((n) => n.steps === 1).length;
+  const far = data.nodes.filter((n) => n.steps === 2).length;
+  el.hidden = false;
+  el.innerHTML = `
+    ${graphFocus.history.length ? '<button type="button" class="btn-link btn-sm" data-focus-back title="The record you focused on before this one">◀ Back</button>' : ""}
+    <span class="graph-focus-label">Focused on</span>
+    <span class="type-pill type-${escapeHtml(f.entity_type)}">${escapeHtml(ENTITY_TYPE_LABELS[f.entity_type] || f.entity_type)}</span>
+    <strong class="graph-focus-name">${escapeHtml(f.name)}</strong>
+    <span class="card-meta">${direct} linked${data.depth === 2 ? ` · ${far} more one step further` : ""}${data.truncated ? " · trimmed to fit" : ""}</span>
+    <span class="graph-focus-depth" role="group" aria-label="How far out">
+      <button type="button" class="graph-type-chip${data.depth === 1 ? " active" : ""}" data-focus-depth="1" title="Only what this record links to directly">Direct links</button>
+      <button type="button" class="graph-type-chip${data.depth === 2 ? " active" : ""}" data-focus-depth="2" title="And what those link to">Two steps out</button>
+    </span>
+    <span class="graph-focus-actions">
+      <button type="button" class="btn-secondary btn-sm" data-focus-summary>Summary</button>
+      <button type="button" class="btn-secondary btn-sm" data-focus-open>Open record</button>
+      <button type="button" class="btn-link btn-sm" data-focus-clear title="Back to the whole network">✕ Show everything</button>
+    </span>`;
+  const back = el.querySelector("[data-focus-back]");
+  if (back) back.addEventListener("click", () => focusEntityGraph(graphFocus.history.pop(), { back: true }));
+  el.querySelectorAll("[data-focus-depth]").forEach((b) => b.addEventListener("click", () =>
+    focusEntityGraph(graphFocus.id, { depth: Number(b.dataset.focusDepth), back: true })));
+  el.querySelector("[data-focus-summary]").addEventListener("click", (ev) => {
+    ev.stopPropagation();
+    const r = ev.currentTarget.getBoundingClientRect();
+    openSummaryCard(f.id, r.left, r.bottom + 8);
+  });
+  el.querySelector("[data-focus-open]").addEventListener("click", () => openEntityDetail(f.id));
+  el.querySelector("[data-focus-clear]").addEventListener("click", clearGraphFocus);
+}
+
 async function loadEntityGraph() {
   if (!document.getElementById("entity-graph-canvas")) return;
+  // "Hide unconnected" is a whole-network control; a focus is connected by
+  // definition.
+  const isolatedToggle = document.getElementById("graph-hide-isolated");
+  if (isolatedToggle) isolatedToggle.parentElement.hidden = !!graphFocus.id;
+  if (graphFocus.id) return loadFocusedGraph();
+  entityNetwork.state.focusId = null;
+  entityNetwork.state.labelCount = 8;
+  renderGraphFocusBar(null);
+  renderGraphTypes();
   const params = new URLSearchParams();
   const q = document.getElementById("entity-search").value.trim();
   const entityType = document.getElementById("entity-type-filter").value;
@@ -3400,7 +3499,9 @@ async function loadEntityGraph() {
     if (!nodes.length) {
       empty.textContent = hideIsolated && data.nodes.length
         ? "Every entity matching these filters is unconnected. Untick “Hide unconnected” to see them."
-        : "Nothing to draw yet.";
+        : entityType && !q
+          ? `No ${(GRAPH_TYPE_PLURALS[entityType] || "records").toLowerCase()} in the case file yet.`
+          : "Nothing to draw yet.";
     }
     updateGraphSummary();
     renderGraphLegend();
@@ -3413,6 +3514,47 @@ async function loadEntityGraph() {
       empty.textContent = "The network could not be loaded: " + err.message;
     }
   }
+}
+
+async function loadFocusedGraph() {
+  const params = new URLSearchParams();
+  params.set("focus", graphFocus.id);
+  params.set("depth", String(graphFocus.depth));
+  params.set("active_only", document.getElementById("entity-show-archived").checked ? "false" : "true");
+  const showExpiredLinks = document.getElementById("graph-show-expired-links");
+  if (showExpiredLinks && showExpiredLinks.checked) params.set("include_expired_links", "true");
+  renderGraphTypes();
+  try {
+    const data = await api("/api/entities/graph?" + params.toString());
+    entityGraphMeta = { total: data.total, truncated: data.truncated, focus: true };
+    // The focused record is drawn as the centre, as on its own page.
+    entityNetwork.state.focusId = data.focus.id;
+    // Every direct link is named: that is the question a focus answers.
+    // Two steps out stays unlabelled unless hovered, or the picture is text.
+    entityNetwork.state.labelCount = Math.min(40, data.nodes.filter((n) => n.steps <= 1).length);
+    entityNetwork.setData(data.nodes, data.edges, data.max_degree);
+    const empty = document.getElementById("graph-empty");
+    empty.hidden = data.nodes.length > 1;
+    if (data.nodes.length <= 1) {
+      empty.textContent = `${data.focus.name} has no ${showExpiredLinks && showExpiredLinks.checked ? "" : "live "}links yet.`;
+    }
+    renderGraphFocusBar(data);
+    updateGraphSummary();
+    renderGraphLegend();
+    highlightTreeEntity(data.focus.id);
+  } catch (err) {
+    // A record merged away or deleted since: fall back to the whole picture.
+    graphFocus.id = null; graphFocus.history = [];
+    showToast(err.message, true);
+    loadEntityGraph();
+  }
+}
+
+/** Mark the focused record in the tree beside the network, if it is listed. */
+function highlightTreeEntity(id) {
+  document.querySelectorAll("#entity-list .tree-focused").forEach((x) => x.classList.remove("tree-focused"));
+  const row = document.querySelector(`#entity-list [data-id="${CSS.escape(id)}"]`);
+  if (row) { row.classList.add("tree-focused"); row.scrollIntoView({ block: "nearest" }); }
 }
 
 function updateGraphSummary() {

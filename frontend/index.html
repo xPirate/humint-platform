@@ -328,13 +328,19 @@
             <button id="graph-refit" class="btn-secondary btn-sm"
                     title="Re-run the layout and release anything you have dragged">Refit</button>
           </div>
+          <!-- Narrowing the picture: one kind of record at a time, then click
+               one to see everything it connects to. The chips drive the same
+               type filter as the toolbar above, so the tree and the network
+               always show the same kind of thing. -->
+          <div class="graph-types" id="graph-types" role="toolbar" aria-label="Show one kind of record"></div>
+          <div class="graph-focus" id="graph-focus" hidden></div>
           <div class="graph-canvas-wrap">
             <canvas id="entity-graph-canvas"></canvas>
             <div id="graph-empty" class="empty-state" hidden>Nothing to draw yet.</div>
             <div id="graph-tip" class="graph-tip" hidden></div>
           </div>
           <div class="graph-legend">
-            <span class="graph-legend-label graph-drag-hint">Click for a summary · drag to arrange · double-click to release</span>
+            <span class="graph-legend-label graph-drag-hint">Click to focus on a record · drag to arrange · double-click to release</span>
             <span class="graph-legend-label">Fewest relationships</span>
             <span class="graph-scale" id="graph-scale" aria-hidden="true"></span>
             <span class="graph-legend-label" id="graph-legend-max">most</span>

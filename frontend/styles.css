@@ -527,8 +527,29 @@ input:focus,select:focus,textarea:focus{outline:2px solid var(--accent); outline
 .graph-toolbar{display:flex; flex-wrap:wrap; align-items:center; gap:.7em; padding:.5em .8em;
   border-bottom:1px solid var(--border);}
 .graph-title{font-family:var(--font-display); color:var(--text-bright);}
+/* Focus: a row of kinds of record, and — once one record is picked — a bar
+   saying which, how far out, and the way back. */
+.graph-types{display:flex; flex-wrap:wrap; align-items:center; gap:.35em; padding:.45em .8em;
+  border-bottom:1px solid var(--border-soft);}
+.graph-types-label, .graph-focus-label{color:var(--muted); font-size:12px; margin-right:.2em;}
+.graph-type-chip{font:inherit; font-size:12px; padding:.2em .7em; border-radius:999px; cursor:pointer;
+  border:1px solid var(--border); background:transparent; color:var(--text);}
+.graph-type-chip:hover{border-color:var(--border-strong); color:var(--text-bright);}
+.graph-type-chip.active{background:var(--accent-dim); border-color:var(--accent-dim); color:var(--on-accent);}
+.graph-focus{display:flex; flex-wrap:wrap; align-items:center; gap:.5em .7em; padding:.5em .8em;
+  border-bottom:1px solid var(--border); background:var(--panel-2);}
+.graph-focus-name{color:var(--text-bright);}
+.graph-focus-depth{display:inline-flex; gap:.3em;}
+.graph-focus-actions{display:inline-flex; align-items:center; gap:.4em; margin-left:auto;}
+#entity-list .tree-focused{outline:1px solid var(--accent-dim); outline-offset:-1px;
+  background:rgba(var(--accent-rgb), .08);}
 .graph-summary{color:var(--muted); font-size:12px; flex:1 1 auto;}
 .graph-canvas-wrap{position:relative; flex:1 1 auto; min-height:0; min-width:0;}
+/* Over the canvas, not under it: the canvas fills the box, so an empty note
+   in the normal flow was pushed out below the whole pane. */
+.graph-canvas-wrap > .empty-state{position:absolute; inset:0; display:flex; align-items:center;
+  justify-content:center; text-align:center; padding:1.5em; pointer-events:none;}
+.graph-canvas-wrap > .empty-state[hidden]{display:none;}
 #entity-graph-canvas{display:block; width:100%; height:100%;}
 .graph-tip{position:absolute; z-index:5; pointer-events:none; max-width:20em;
   background:var(--panel-2); border:1px solid var(--border); border-radius:4px;
