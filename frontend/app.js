@@ -1166,15 +1166,7 @@ function paletteCacheKey() {
 function applyPalette(palette) {
   const valid = PALETTES.includes(palette) ? palette : "terminal";
   document.documentElement.setAttribute("data-palette", valid);
-  function clearPaletteCache() {
-  // Only this user's keyed copy. The un-keyed pre-paint hint is deliberately
-  // left: it stops the next person on a shared machine seeing a flash of the
-  // stock palette before their own arrives, and it reveals nothing — it is a
-  // colour scheme, not a name.
-  try { localStorage.removeItem(paletteCacheKey()); } catch (e) { /* ignore */ }
-}
-
-document.querySelectorAll("[data-palette-choice]").forEach((btn) => {
+  document.querySelectorAll("[data-palette-choice]").forEach((btn) => {
     btn.classList.toggle("active", btn.dataset.paletteChoice === valid);
   });
   try {
@@ -1189,6 +1181,8 @@ document.querySelectorAll("[data-palette-choice]").forEach((btn) => {
   if (state.currentEntityId && document.getElementById("entity-graph")) {
     restyleEntityGraph();
   }
+  // Each palette has its own face, so every tab just changed width.
+  requestAnimationFrame(() => placeTabIndicator(true));
 }
 
 async function setPalette(palette) {
@@ -1498,7 +1492,59 @@ document.querySelectorAll(".back-link").forEach((btn) => {
 
 function setActiveTab(view) {
   document.querySelectorAll(".tab-btn").forEach((b) => b.classList.toggle("active", b.dataset.view === view));
+  placeTabIndicator();
 }
+
+/* The active tab's marker is one element that glides from tab to tab, so a
+ * click shows where you went. It is placed by measuring the active button
+ * rather than by CSS alone because the tabs wrap onto two rows on a narrow
+ * window, badges change their widths, and the board tabs come and go.
+ * Without this script the CSS marks the active tab itself (.has-indicator is
+ * what switches that fallback off). Off any tab — a record's page, Admin —
+ * the marker fades out rather than pointing at the last place you were. */
+// Made on first use rather than at load: setActiveTab can run from code above
+// this point in the file, before a top-level const here would exist.
+function tabIndicator() {
+  if (tabIndicator.made !== undefined) return tabIndicator.made;
+  const tabs = document.querySelector(".topbar .tabs");
+  tabIndicator.made = null;
+  if (!tabs) return null;
+  const el = document.createElement("span");
+  el.className = "tab-indicator instant";
+  el.setAttribute("aria-hidden", "true");
+  tabs.prepend(el);
+  tabs.classList.add("has-indicator");
+  tabIndicator.made = { tabs, el };
+  if ("ResizeObserver" in window) {
+    new ResizeObserver(() => placeTabIndicator(true)).observe(tabs);
+  }
+  if (document.fonts && document.fonts.ready) {
+    // The shipped faces arrive after first paint and change every tab's width.
+    document.fonts.ready.then(() => placeTabIndicator(true));
+  }
+  return tabIndicator.made;
+}
+
+function placeTabIndicator(instant) {
+  const ind = tabIndicator();
+  if (!ind) return;
+  const { tabs, el } = ind;
+  const active = tabs.querySelector(".tab-btn.active:not([hidden])");
+  if (!active || !active.offsetWidth) { el.style.opacity = "0"; return; }
+  // The first placement, and any re-layout (a resize, a badge appearing),
+  // jumps straight there; only a change of tab glides.
+  const wasHidden = el.style.opacity === "0" || !el.style.width;
+  el.classList.toggle("instant", Boolean(instant) || wasHidden);
+  el.style.width = active.offsetWidth + "px";
+  el.style.height = active.offsetHeight + "px";
+  el.style.transform = `translate(${active.offsetLeft}px, ${active.offsetTop}px)`;
+  el.style.opacity = "1";
+  if (el.classList.contains("instant")) {
+    // Let the jump land before transitions come back on for the next click.
+    requestAnimationFrame(() => requestAnimationFrame(() => el.classList.remove("instant")));
+  }
+}
+
 
 function switchView(view) {
   // Leaving the editor mid-interview is the one navigation in this app that
@@ -1540,8 +1586,17 @@ function switchViewRaw(view) {
   // Leaving the analyst page drops its address, so the back button and a
   // later "Entered by" click both behave.
   if (view !== "analyst") clearAnalystHash();
-  document.querySelectorAll(".view").forEach((v) => v.classList.remove("active"));
-  document.getElementById("view-" + view).classList.add("active");
+  const next = document.getElementById("view-" + view);
+  const changed = !next.classList.contains("active");
+  document.querySelectorAll(".view").forEach((v) => { if (v !== next) v.classList.remove("active"); });
+  next.classList.add("active");
+  // A short settle-in when the page actually changes, so a click visibly
+  // lands. Not on a re-render of the page already showing.
+  if (changed) {
+    next.classList.remove("view-enter");
+    void next.offsetWidth;   // restart the animation if it was mid-flight
+    next.classList.add("view-enter");
+  }
 }
 
 /* ---------------------------------------------------------------------------
@@ -7797,6 +7852,14 @@ function mdToHtml(src) {
     const q = line.match(/^&gt;\s?(.*)$/);
     if (q) { flushPara(); flushList(); quote.push(q[1]); continue; }
     if (!line.trim()) { flushAll(); continue; }
+    // A line straight after a list item, with no blank line between, is the
+    // rest of that item (markdown's "lazy continuation") — a long bullet
+    // wrapped in the editor. It used to close the list and come out as a
+    // separate paragraph, cutting the bullet in half mid-sentence.
+    if (list && list.items.length) {
+      list.items[list.items.length - 1] += " " + line.trim();
+      continue;
+    }
     flushList(); flushQuote();
     para.push(line.trim());
   }

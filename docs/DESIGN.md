@@ -892,10 +892,10 @@ account menu rather than one list of eight.
 
 | Theme | What it is |
 |---|---|
-| **Terminal** | The phosphor-green CRT this tool started as. Monospace throughout, which is most of why it reads the way it does. Still the default. |
-| **Slate** | Neutral blue-grey with a proper UI sans. The one nobody has to defend in a procurement meeting. |
-| **Graphite** | Warm charcoal, bronze accent, tighter corners. An operations room rather than a SaaS product. Nothing glows. |
-| **Archive** | Warm paper, serif headings, oxblood accent. For a team whose day is reading and writing reports rather than watching a dashboard. |
+| **Terminal** | The phosphor-green CRT this tool started as, set throughout in IBM Plex Mono, with labels in small capitals. Still the default. |
+| **Slate** | Neutral blue-grey in Inter, with softer corners. The one nobody has to defend in a procurement meeting. |
+| **Graphite** | Warm charcoal and a bronze accent in Schibsted Grotesk, a squarer face, with tight corners. An operations room rather than a SaaS product. Nothing glows. |
+| **Archive** | Warm paper and an oxblood accent. Headings and report bodies are in Newsreader, a book face set a size up. For a team whose day is reading and writing reports rather than watching a dashboard. |
 
 On every theme except Terminal the interface is set in a sans face, and
 monospace is kept for the things that are genuinely *data*: record IDs,
@@ -904,10 +904,32 @@ numbers, and code. The test is whether anyone ever compares two of them
 character by character or reads one aloud. A name or a description fails that
 test and reads better in the UI face; a grid square passes it.
 
-**Every font is a system font.** No webfonts, no CDN. This app is expected to
-run on a Pi on a network that may have no route to the internet at all, and a
-theme that silently falls back to Times because a font host is unreachable is
-worse than one that never tried.
+**Fonts ship with the app; nothing is fetched.** The four faces live in
+`frontend/vendor/fonts` (Latin and Latin Extended only, about half a megabyte,
+with their OFL licences) and are served by this app like any other file. This
+app is expected to run on a Pi on a network that may have no route to the
+internet at all, so nothing comes from a font host or CDN. Every stack still
+ends in system fonts, so a missing file degrades to the old look, not to Times.
+On Slate and Archive, Inter's tailed *l* and serifed *I* are switched on: in a
+case file "Il1" are three different things.
+
+**Shape and depth are per theme too.** Each theme has its own corner radii,
+from Slate's rounded 8px to Archive's near-square 3px, and every panel, menu
+and dialog uses them. Surfaces sit at one of three depths: the page, things
+floating over it (menus, cards), and dialogs. Tags (a record's type, a
+report's status, a link's grading) are tinted with a faint wash of their own
+colour. The wash is mixed from the tag's colour in CSS, so it follows every
+theme and the brand colour without a second list of colours to keep in step.
+
+**Motion answers what you did; it is not decoration.** The active tab's marker
+glides to the tab you clicked, a page settles in when you arrive, and menus,
+dialogs, toasts and the assistant open from where they were asked for. The
+login screen is the one exception: a dotted globe turns slowly behind the form,
+with reports arcing in to one point. It is drawn on a canvas by
+`frontend/globe.js` with no libraries. The land is a 2.6 KB bitmask computed
+from Natural Earth (public domain). It stops the moment someone logs in or the
+tab is in the background. When the operating system asks for reduced motion,
+all of this is switched off and the globe is drawn once, still.
 
 **Every theme was contrast-checked in both modes**, not just the two anyone
 remembers to look at. The theme test suite walks all eight combinations
@@ -956,7 +978,10 @@ header wants that header, not one assembled from something else.
 
 You supply **one** brand colour, because that is what a brand guide contains.
 The fill behind a primary button, its hover state, and — importantly — the
-label colour on that fill are all derived from it. The label is chosen by
+label colour on that fill are all derived from it. (The hover state no longer
+repaints the fill. It lifts the button with a ring and glow in the accent
+instead, because a lighter fill under a white label was unreadable in three of
+the dark themes.) The label is chosen by
 measuring rather than assuming: a brand colour can be anything from navy to
 lime, and guessing white gets one of those badly wrong. If the colour is too
 light to carry white text the fill is darkened until the pair clears AA.
