@@ -47,6 +47,7 @@ needs to come after.
 | `db/migrate-v1.8-analyst-profiles.sql` | Analyst profiles: status, callsign, contacts. |
 | `db/migrate-v1.9-zones-routes.sql` | Zones become records (existing zones are converted), Routes, and route/area field reports. |
 | `db/migrate-v1.10-relays.sql` | Team relays: registration, keep-alive, the console's signing key, and relayed reports. Rebuild the API image too (`--build`): it adds the `cryptography` package. |
+| `db/migrate-v1.11-assistant.sql` | The AI Assistant's settings (thinking, context window, lookups per question) and the trail of lookups kept with each answer. Without it the assistant still works on the `.env` values. |
 
 **Run them in version order, oldest you haven't run first.** For example,
 coming from v1.6:
@@ -57,6 +58,7 @@ docker compose exec -T db psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" < db/migrat
 docker compose exec -T db psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" < db/migrate-v1.8-analyst-profiles.sql
 docker compose exec -T db psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" < db/migrate-v1.9-zones-routes.sql
 docker compose exec -T db psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" < db/migrate-v1.10-relays.sql
+docker compose exec -T db psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" < db/migrate-v1.11-assistant.sql
 ```
 
 The `-T` matters — without it, compose swallows the redirected file. List

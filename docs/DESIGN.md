@@ -3437,47 +3437,86 @@ falls back to its default.
 
 An expandable side panel — the tab on the right edge of the screen, labeled
 **AI Assistant** — reachable from every view, not just the Dashboard. Ask it
-things like "what do we know about John Smith," "any reports mentioning the
-warehouse," or "how is Acme Corp connected to anyone in this case," and it
-answers from your own case data rather than general knowledge.
+things like "how is Ewa Tomczak connected to Meridian," "what came in from the
+field this week about the north gate," or "what is still missing for our open
+priorities," and it answers from your own case data rather than general
+knowledge.
 
-**How it decides what's relevant.** Every question triggers a fresh, small
-retrieval step before it ever reaches Ollama:
+**It looks things up as it works (v1.11).** The model is given eight
+read-only lookups over the case file and decides which to use:
 
-1. If an embedding model is configured (`OLLAMA_EMBED_MODEL` — see "Which
-   model, and how it's configured" above), the question itself is embedded
-   and compared against every entity/report the correlation feature has
-   already embedded, by similarity. This is the good path: it can surface a
-   relevant record even when your question doesn't share exact words with
-   it.
-2. Otherwise (or if that turns up nothing), it falls back to matching the
-   meaningful words in your question against entity names/descriptions and
-   report titles/bodies directly. Cruder, but it means the assistant still
-   works with only a chat model configured and no separate embedding model
-   ever pulled — a very common setup, since embeddings are an optional
-   second model pull extraction doesn't need.
+| Lookup | What it returns |
+|---|---|
+| Search | Records, reports and field reports matching a name, alias, plate, phone number, address or words |
+| Open a record | Everything on one record or report: details, every live link and its grading, the reports that mention it, any board it is on |
+| Network | What a record is linked to, one or two steps out, optionally one kind only |
+| Connection | The shortest chains of live links between two records |
+| Reports | Written reports by date, subject, words, status or precedence |
+| Field reports | What phones and team relays sent in, where, from whom, and whether it was reviewed |
+| Case overview | Counts, reporting tempo, urgent and forgotten reports, hotspots, rising names |
+| Priorities | The team's intelligence priorities and what would answer them |
 
-Whichever entities/reports come out of that (up to 5 entities and 4 reports
-per question), it builds a short dossier for each — the same
-details/relationships/linked-reports you'd see by opening that record
-yourself — hands that to Ollama as context alongside your question and the
-last few turns of conversation, and that's the *only* information the model
-is allowed to answer from. It's explicitly instructed to say "I don't see
-that in the case file" rather than guess when nothing relevant turns up, and
-every reply that did use case data shows small citation chips underneath it
-— click one to jump straight to that entity or report.
+It works in a loop — look something up, read it, decide what to check next —
+until it has enough to answer or reaches its limit of lookups. Each lookup
+appears in the panel as it runs. Under the answer, **Looked up N things**
+opens the list of what it checked and what each lookup found, and
+**Reasoning** shows the model's own working when it thought first. That trail
+is kept with the conversation, so an answer can be checked later.
+
+Before v1.11 it made one keyword search, pasted the top few records into the
+prompt and asked the model once. It could not follow a link, check a date or
+count anything, so it could only read back what you would have clicked on
+anyway.
+
+**Three settings, because hardware differs** (Admin → Ollama Settings → AI
+Assistant; `.env` starting values in brackets):
+
+- **Let the assistant think first** (`ASSISTANT_THINKING=true`). A model
+  that can reason — Qwen3, gpt-oss, DeepSeek-R1 — works each question through
+  before every step. Noticeably better at questions about connections and
+  timelines, and several times slower. Turn it off on a small GPU or a
+  machine without one. A model that cannot think is detected and answers
+  without it.
+- **Lookups per question** (`ASSISTANT_MAX_LOOKUPS=6`, 0–12). Each lookup is
+  another call to the model. **0** gives the pre-v1.11 behaviour: one search,
+  one answer.
+- **Context window** (`ASSISTANT_CONTEXT_TOKENS=8192`). How much the model
+  reads at once, sent with every call. Ollama's own default is smaller, and
+  when a prompt is longer Ollama drops the *beginning* — the instructions and
+  the case data — without saying so, which is a large part of why answers
+  used to be thin. Older parts of the conversation and earlier lookup results
+  are trimmed first to stay inside it. 8K suits an 8B model on 8 GB of GPU
+  memory; 16K is comfortable on 12 GB.
+
+**Which model.** The loop needs a model that can call tools. Qwen3 (8B on a
+12 GB card, 14B or 32B with more memory), Llama 3.1 8B and gpt-oss-20b can.
+Mistral 7B does so unreliably and cannot think. A model that refuses tools is
+detected on the first call. The panel says so, and the question is answered
+the old way from one search rather than failing. On a CPU-only machine it
+still works, slowly: a question that needs four lookups is five model calls.
+
+**It is told to show its working.** Answer first, then the supporting points;
+use only what the lookups returned; say what it checked when the file does not
+show something; and say when a conclusion rests on a weakly graded link or
+report (1 confirmed … 6 cannot be judged). The chips under an answer are the
+records it actually names, not everything it glanced at.
 
 **This is a private research aid, not a shared case log.** Each analyst has
 their own conversation with the assistant; nobody else, including other
 admins, can see it. **Clear** at the top of the panel wipes your own history
 permanently — there's no undo, and no admin override to recover it.
 
-**Nothing here writes to your case graph.** The assistant only ever reads
-entities/reports/relationships to answer a question and writes to its own
-conversation log — never to entities, relationships, or reports. Treat any
-answer the same way you'd treat a colleague's off-the-cuff recollection of
-the case file: a useful starting point, not a substitute for opening the
-actual record.
+**Nothing here writes to your case graph.** Every lookup is read-only. The
+only thing the assistant writes is its own conversation log. Treat an answer
+as you would a colleague's quick check of the file: a good starting point
+whose sources are listed, not a substitute for opening the records yourself.
+
+**What is audited.** Each question records which lookups ran, every record
+they returned (what the model read on the analyst's behalf), and the records
+the answer cites. Neither the question nor the words searched for
+are copied into the audit log. Both are already in that analyst's own
+conversation, and copying them into a log with different access rules would
+spread the case data rather than audit it.
 
 **If it's unavailable**, the panel shows the reason inline instead of
 inventing an answer: Ollama disabled entirely (Admin → Ollama Settings), or
@@ -4542,19 +4581,15 @@ debrief wizard, every admin section and the audit table open.
   container's RAM rather than its disk; and the format is versioned, so a
   future schema change may need a newer build to read older backups (it will
   say so plainly rather than restoring something half-understood).
-- **The AI Assistant's retrieval is a best-effort shortlist, not a
-  guarantee.** It hands Ollama the top few entities/reports it thinks are
-  relevant (by embedding similarity, or keyword overlap without an embedding
-  model — see "AI Assistant" above) — not your whole case file. A record
-  that's relevant but doesn't share vocabulary with your question, and
-  doesn't score high enough on similarity either, can simply be missed,
-  producing a confidently-worded "not in the case file" that's actually a
-  retrieval miss rather than a true absence. Treat it as a fast first look,
-  not a substitute for searching the Entities/Reports views yourself when it
-  really matters. It's also one continuous log per user, not multiple
-  named/switchable conversations — clearing it is the only "start over."
-  Replies aren't streamed token-by-token either — it's a single wait, then
-  the full answer, same as extraction/correlation's request pattern.
+- **The AI Assistant is only as good as the model behind it.** It looks
+  things up rather than guessing, and shows what it checked, but a small local
+  model still misreads, stops early, or misses a lookup it should have made.
+  An answer that says something is not in the case file means the lookups it
+  chose did not find it, not that the file has been searched exhaustively.
+  The trail under each answer is there so that can be checked. It is also one
+  continuous log per user, not multiple named conversations — clearing it is
+  the only "start over." Progress streams as it works, but the answer itself
+  arrives whole rather than word by word.
 
 ## Architecture
 

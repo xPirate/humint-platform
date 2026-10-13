@@ -10,6 +10,7 @@ automatic retry (see main.py's docstring on the tradeoffs there).
 
 import json
 import logging
+import re
 
 import requests
 
@@ -84,6 +85,18 @@ analyst: there is no record for it, so there is nothing they can accept.
 Only extract what is clearly stated or strongly implied in the text — never invent \
 people, organizations, or events that aren't actually mentioned. If nothing worth \
 extracting is present, return {"entities": [], "relationships": []}."""
+
+
+class OllamaUnsupported(Exception):
+    """The model cannot do something it was asked to: call tools, or think.
+
+    Raised rather than folded into the usual "return None" because the caller
+    can do something useful with it — ask again without that feature — where
+    an ordinary failure (host down, timeout) has no better second attempt."""
+
+    def __init__(self, feature: str, message: str):
+        super().__init__(message)
+        self.feature = feature
 
 
 class OllamaClient:
@@ -353,6 +366,76 @@ class OllamaClient:
             return None
         self._record("chat", "success", response=body)
         return content.strip() if isinstance(content, str) else None
+
+    def converse(self, messages: list[dict], tools: list | None = None, think: bool | None = None,
+                 num_ctx: int | None = None, temperature: float = 0.3) -> dict | None:
+        """One turn of a conversation that may call tools — the assistant's
+        lookup loop (api/assistant_agent.py) calls this once per step.
+
+        Returns {"content", "thinking", "tool_calls": [{"name", "arguments"}],
+        "message"} where `message` is the assistant message exactly as Ollama
+        sent it, to be appended to the conversation before the tool results.
+        None on any ordinary failure, as with chat(). Raises OllamaUnsupported
+        when the model refuses tools or thinking, so the caller can retry
+        without them.
+
+        `num_ctx` is sent every time on purpose. Ollama's default window is
+        small, and when a prompt is longer it drops the BEGINNING — the
+        instructions and the case data — without saying so."""
+        if not self.enabled:
+            return None
+        options = {"temperature": temperature}
+        if num_ctx:
+            options["num_ctx"] = int(num_ctx)
+        payload = {"model": self.model, "messages": messages, "stream": False, "options": options}
+        if tools:
+            payload["tools"] = tools
+        if think is not None:
+            payload["think"] = bool(think)
+        try:
+            resp = requests.post(f"{self.base_url}/api/chat", json=payload, timeout=self.timeout)
+            if resp.status_code >= 400:
+                try:
+                    error = str(resp.json().get("error") or "")
+                except ValueError:
+                    error = resp.text or ""
+                lowered = error.lower()
+                if "not support tools" in lowered:
+                    raise OllamaUnsupported("tools", error)
+                if "not support thinking" in lowered or ("think" in lowered and "not support" in lowered):
+                    raise OllamaUnsupported("thinking", error)
+            resp.raise_for_status()
+            body = resp.json()
+            message = body["message"]
+        except OllamaUnsupported:
+            raise
+        except (requests.RequestException, KeyError, ValueError, TypeError) as exc:
+            logger.warning("Ollama chat (tools) failed: %s", exc)
+            self._record("chat", self._outcome_for(exc), error=exc)
+            return None
+        self._record("chat", "success", response=body)
+
+        content = message.get("content") or ""
+        thinking = message.get("thinking") or ""
+        # An older Ollama (or a template that leaves them in) returns the
+        # reasoning inline as <think>…</think> instead of in its own field.
+        inline = re.match(r"\s*<think>(.*?)</think>\s*(.*)\Z", content, re.S)
+        if inline:
+            thinking = (thinking + "\n" + inline.group(1)).strip()
+            content = inline.group(2)
+        calls = []
+        for call in message.get("tool_calls") or []:
+            fn = call.get("function") or {}
+            args = fn.get("arguments")
+            if isinstance(args, str):
+                try:
+                    args = json.loads(args)
+                except ValueError:
+                    args = {}
+            if fn.get("name"):
+                calls.append({"name": fn["name"], "arguments": args if isinstance(args, dict) else {}})
+        return {"content": content.strip(), "thinking": thinking.strip(), "tool_calls": calls,
+                "message": message}
 
     def embed(self, text: str) -> list[float] | None:
         """Used by the correlation pass — see main.py."""

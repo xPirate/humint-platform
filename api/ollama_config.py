@@ -77,3 +77,51 @@ def _resolve(config: dict) -> dict:
     not."""
     config["extract_model"] = (config.get("extract_model") or "").strip() or config["model"]
     return config
+
+
+# ---------------------------------------------------------------------------
+# The assistant's own settings (v1.11). Kept apart from the dict above because
+# that one is splatted straight into OllamaClient(**config); these are about
+# how the assistant uses the model, not how to reach it.
+# ---------------------------------------------------------------------------
+
+def _env_bool(name: str, default: str) -> bool:
+    return os.environ.get(name, default).strip().lower() in ("1", "true", "yes", "on")
+
+
+def _env_int(name: str, default: int, low: int, high: int) -> int:
+    try:
+        return max(low, min(high, int(os.environ.get(name, str(default)))))
+    except ValueError:
+        return default
+
+
+ASSISTANT_ENV_DEFAULTS = {
+    # On by default: a model that cannot think simply ignores it (see
+    # assistant_agent.py), and one that can gives noticeably better answers.
+    "thinking": _env_bool("ASSISTANT_THINKING", "true"),
+    # 8K fits an 8B model on an 8 GB card with room to spare; 16K is
+    # comfortable on 12 GB. Ollama's own default is smaller than either, which
+    # is how case data used to fall silently out of the prompt.
+    "context_tokens": _env_int("ASSISTANT_CONTEXT_TOKENS", 8192, 2048, 131072),
+    "max_lookups": _env_int("ASSISTANT_MAX_LOOKUPS", 6, 0, 12),
+}
+
+
+def get_assistant_settings() -> dict:
+    """{thinking, context_tokens, max_lookups}: an admin override if set,
+    otherwise .env. Never raises; a database that has not had the v1.11
+    migration simply gets the .env values."""
+    settings = dict(ASSISTANT_ENV_DEFAULTS)
+    try:
+        with db_cursor() as cur:
+            cur.execute("SELECT assistant_thinking, assistant_context_tokens, assistant_max_lookups "
+                        "FROM app_settings WHERE id = 1")
+            row = cur.fetchone()
+    except Exception:
+        row = None
+    if row:
+        for key, value in zip(("thinking", "context_tokens", "max_lookups"), row):
+            if value is not None:
+                settings[key] = value
+    return settings

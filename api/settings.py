@@ -29,7 +29,7 @@ import audit
 import auth
 from db import db_cursor
 from ollama_client import OllamaClient
-from ollama_config import get_effective_ollama_config
+from ollama_config import ASSISTANT_ENV_DEFAULTS, get_effective_ollama_config
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
 
@@ -48,10 +48,16 @@ ENV_DEFAULTS = {
     "ollama_embed_model": os.environ.get("OLLAMA_EMBED_MODEL", ""),
     "ollama_enabled": os.environ.get("OLLAMA_ENABLED", "true").lower() == "true",
     "ollama_timeout_seconds": int(os.environ.get("OLLAMA_TIMEOUT_SECONDS", "180")),
+    # How the assistant uses the model (v1.11) — see ollama_config.py.
+    "assistant_thinking": ASSISTANT_ENV_DEFAULTS["thinking"],
+    "assistant_context_tokens": ASSISTANT_ENV_DEFAULTS["context_tokens"],
+    "assistant_max_lookups": ASSISTANT_ENV_DEFAULTS["max_lookups"],
 }
 
-_SETTINGS_COLS = ["ollama_base_url", "ollama_model", "ollama_extract_model",
-                  "ollama_embed_model", "ollama_enabled", "ollama_timeout_seconds"]
+_BASE_COLS = ["ollama_base_url", "ollama_model", "ollama_extract_model",
+              "ollama_embed_model", "ollama_enabled", "ollama_timeout_seconds"]
+_ASSISTANT_COLS = ["assistant_thinking", "assistant_context_tokens", "assistant_max_lookups"]
+_SETTINGS_COLS = _BASE_COLS + _ASSISTANT_COLS
 
 
 class OllamaSettingsUpdate(BaseModel):
@@ -68,9 +74,33 @@ class OllamaSettingsUpdate(BaseModel):
     ollama_embed_model: Optional[str] = None
     ollama_enabled: Optional[bool] = None
     ollama_timeout_seconds: Optional[int] = Field(default=None, ge=1, le=3600)
+    assistant_thinking: Optional[bool] = None
+    assistant_context_tokens: Optional[int] = Field(default=None, ge=2048, le=131072)
+    assistant_max_lookups: Optional[int] = Field(default=None, ge=0, le=12)
 
 
-def _row_to_response(row) -> dict:
+def _select_settings(cur):
+    """The settings row, and whether the v1.11 columns exist yet.
+
+    A console upgraded without running db/migrate-v1.11-assistant.sql still
+    gets a working settings page: the assistant columns read as "not
+    overridden" and the page says the migration is needed, rather than the
+    whole Ollama panel failing to load."""
+    try:
+        cur.execute(f"SELECT {', '.join(_SETTINGS_COLS)}, updated_at, updated_by "
+                    "FROM app_settings WHERE id = 1")
+        return cur.fetchone(), True
+    except Exception:  # noqa: BLE001 - psycopg2 UndefinedColumn, before the migration
+        cur.connection.rollback()
+        cur.execute(f"SELECT {', '.join(_BASE_COLS)}, updated_at, updated_by "
+                    "FROM app_settings WHERE id = 1")
+        row = cur.fetchone()
+        if row is None:
+            return None, False
+        return tuple(row[: len(_BASE_COLS)]) + (None,) * len(_ASSISTANT_COLS) + tuple(row[len(_BASE_COLS):]), False
+
+
+def _row_to_response(row, migrated: bool = True) -> dict:
     if row is None:
         overrides = {c: None for c in _SETTINGS_COLS}
         updated_at = updated_by = None
@@ -86,23 +116,28 @@ def _row_to_response(row) -> dict:
             "overridden": override is not None,
             "env_default": ENV_DEFAULTS[col],
         }
-    return {"fields": fields, "updated_at": updated_at, "updated_by": updated_by}
+    return {"fields": fields, "updated_at": updated_at, "updated_by": updated_by,
+            "assistant_settings_available": migrated}
 
 
 @router.get("/ollama-settings")
 def get_ollama_settings(user: dict = Depends(auth.require_admin)):
     with db_cursor() as cur:
-        cur.execute(
-            f"SELECT {', '.join(_SETTINGS_COLS)}, updated_at, updated_by "
-            "FROM app_settings WHERE id = 1"
-        )
-        row = cur.fetchone()
-    return _row_to_response(row)
+        row, migrated = _select_settings(cur)
+    return _row_to_response(row, migrated)
 
 
 @router.patch("/ollama-settings")
 def update_ollama_settings(payload: OllamaSettingsUpdate, user: dict = Depends(auth.require_admin)):
     updates = payload.model_dump(exclude_unset=True)
+    if any(k in updates for k in _ASSISTANT_COLS):
+        with db_cursor() as cur:
+            _, migrated = _select_settings(cur)
+        if not migrated:
+            raise HTTPException(
+                status_code=409,
+                detail="These assistant settings need the v1.11 database update first: run "
+                       "db/migrate-v1.11-assistant.sql (see docs/how-to/upgrade.md).")
     with db_cursor(commit=True) as cur:
         # Ensure the singleton row exists before UPDATEing it -- harmless
         # no-op on every call after the first.
@@ -113,17 +148,13 @@ def update_ollama_settings(payload: OllamaSettingsUpdate, user: dict = Depends(a
                 f"UPDATE app_settings SET {set_clause}, updated_at = %s, updated_by = %s WHERE id = 1",
                 [*updates.values(), datetime.now(timezone.utc), user["id"]],
             )
-        cur.execute(
-            f"SELECT {', '.join(_SETTINGS_COLS)}, updated_at, updated_by "
-            "FROM app_settings WHERE id = 1"
-        )
-        row = cur.fetchone()
+        row, migrated = _select_settings(cur)
     # Values, not just names: which Ollama host this instance talks to and
     # which model it runs are configuration, not case data, and knowing what
     # they were changed *to* is the whole point of auditing the change.
     audit.record("settings.update", user=user, object_type="settings", object_id="ollama",
                  detail={"changes": {k: str(v) for k, v in updates.items()}})
-    return _row_to_response(row)
+    return _row_to_response(row, migrated)
 
 
 # ----------------------------------------------------------------------------

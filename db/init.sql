@@ -1220,6 +1220,22 @@ CREATE TABLE IF NOT EXISTS app_settings (
     -- thing actually running?" is answerable without reading worker logs.
     retention_last_run TIMESTAMPTZ,
 
+    -- The AI Assistant (see api/assistant_agent.py). Same NULL-means-.env
+    -- convention as the Ollama columns.
+    --
+    -- assistant_thinking lets a model that can reason (Qwen3, gpt-oss,
+    -- DeepSeek-R1) work through a question before answering. Better answers,
+    -- several times slower; a team on a small GPU may want it off.
+    -- assistant_context_tokens is how much text the model reads at once —
+    -- Ollama's own default is small enough that the case data can silently
+    -- fall out of the prompt. assistant_max_lookups is how many times it may
+    -- search the case file per question; 0 means the old single search.
+    assistant_thinking BOOLEAN,
+    assistant_context_tokens INTEGER
+        CHECK (assistant_context_tokens IS NULL OR assistant_context_tokens BETWEEN 2048 AND 131072),
+    assistant_max_lookups INTEGER
+        CHECK (assistant_max_lookups IS NULL OR assistant_max_lookups BETWEEN 0 AND 12),
+
     updated_at TIMESTAMPTZ,
     updated_by INTEGER REFERENCES users(id)
 );
@@ -1246,6 +1262,9 @@ CREATE TABLE IF NOT EXISTS assistant_messages (
     role TEXT NOT NULL CHECK (role IN ('user', 'assistant')),
     content TEXT NOT NULL,
     citations JSONB,
+    -- The lookups behind an answer, and the model's reasoning when it
+    -- thought first: {"steps": [{"tool", "label", "summary"}], "thinking": "..."}.
+    steps JSONB,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 

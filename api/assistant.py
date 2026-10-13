@@ -1,50 +1,48 @@
 """Case-data-aware AI assistant — the app-wide side panel (see the "AI
-Assistant" section of README.md).
+Assistant" section of docs/DESIGN.md).
 
-This is deliberately NOT a general-purpose chatbot bolted onto the app: every
-question is answered only from a small bundle of case data ("context")
-retrieved fresh for that specific question, handed to Ollama as an
-extra-strength system prompt alongside the running conversation. The design
-question this module answers is "what goes in that bundle, and how is it
-found" — see build_context() below.
+Since v1.11 the work happens in assistant_agent.py: the model is given the
+read-only lookups in assistant_tools.py and works in a loop until it can
+answer. This module is the HTTP side of that — the streaming /ask endpoint
+the panel uses, the one-shot /messages kept for scripts, saving each answer
+with the trail of lookups behind it, and the audit entry.
 
-Retrieval has two tiers, chosen per-question, not per-deployment:
+The single search below (build_context) is the pre-v1.11 retrieval, still
+used when "Lookups per question" is set to 0 or the model cannot call tools.
+It has two tiers, chosen per question:
 
 1. Embedding similarity, when OLLAMA_EMBED_MODEL is configured. The question
    itself is embedded via the same Ollama embed endpoint worker/correlate.py
    already uses to embed entities/reports for the correlation queue, then
    compared (plain-Python cosine similarity, same math as correlate.py) against
-   every already-embedded entity/report. This is the good path: it can surface
-   a relevant record even when the question doesn't share any exact words with
-   it.
+   every already-embedded entity/report. It can surface a relevant record even
+   when the question doesn't share any exact words with it. The lookup loop's
+   search uses the same similarity as its fallback when no words match.
 2. Keyword fallback, used whenever tier 1 isn't available (no embed model
    configured) or simply turns up nothing above the similarity floor. Plain
    ILIKE matching of the question's meaningful words against entity
    name/description and report title/body, ranked by how many distinct
-   keywords matched. Cruder, but means the assistant still works in the very
-   common deployment shape where extraction/chat is configured but a separate
-   embedding model was never pulled (embeddings are a second, optional model
-   pull — see "Which model, and how it's configured" in README.md).
+   keywords matched.
 
 Either way, once a shortlist of entity/report ids is chosen, the actual
 context text reuses entities.get_entity() / reports._report_dict() — the same
-functions the regular detail-view endpoints use — rather than re-querying
-those tables from scratch, so the assistant always sees exactly the same
-shape of data (details, relationships, linked reports) an analyst would see
-by clicking into that record themselves.
+functions the regular detail-view endpoints use — so the assistant sees the
+same shape of data an analyst would see by clicking into that record.
 
-Nothing here ever writes to entities/relationships/reports — same review-
-queue-free but still read-only spirit as the dashboard and map endpoints.
-The only writes this module makes are to assistant_messages, which is purely
-a per-user conversation log, not case data.
+Nothing here ever writes to entities/relationships/reports. The only writes
+this module makes are to assistant_messages, which is purely a per-user
+conversation log, not case data.
 """
 
 import json
+import logging
 import re
 
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
+import assistant_agent
 import audit
 import auth
 import ollama_usage
@@ -52,7 +50,9 @@ import entities as entities_module
 import reports as reports_module
 from db import db_cursor
 from ollama_client import OllamaClient
-from ollama_config import get_effective_ollama_config
+from ollama_config import get_assistant_settings, get_effective_ollama_config
+
+logger = logging.getLogger("api.assistant")
 
 router = APIRouter(prefix="/api/assistant", tags=["assistant"])
 
@@ -312,23 +312,31 @@ def _load_history(cur, user_id: int) -> list[dict]:
 @router.get("/messages")
 def list_messages(user: dict = Depends(auth.require_user)):
     with db_cursor() as cur:
-        cur.execute(
+        try:
             # See _load_history's comment above on why `id`, not `created_at`.
-            "SELECT id, role, content, citations, created_at FROM assistant_messages "
-            "WHERE user_id = %s ORDER BY id ASC",
-            (user["id"],),
-        )
+            cur.execute(
+                "SELECT id, role, content, citations, created_at, steps FROM assistant_messages "
+                "WHERE user_id = %s ORDER BY id ASC",
+                (user["id"],),
+            )
+        except Exception:  # noqa: BLE001 - no `steps` column before the v1.11 migration
+            cur.connection.rollback()
+            cur.execute(
+                "SELECT id, role, content, citations, created_at, NULL FROM assistant_messages "
+                "WHERE user_id = %s ORDER BY id ASC",
+                (user["id"],),
+            )
         rows = cur.fetchall()
     return {
         "items": [
-            {"id": r[0], "role": r[1], "content": r[2], "citations": r[3] or [], "created_at": r[4]}
+            {"id": r[0], "role": r[1], "content": r[2], "citations": r[3] or [], "created_at": r[4],
+             "trail": r[5]}
             for r in rows
         ]
     }
 
 
-@router.post("/messages", status_code=201)
-def ask_assistant(payload: AssistantQuestion, user: dict = Depends(auth.require_user)):
+def _client_for(user: dict) -> OllamaClient:
     # Chat and its context-building embedding are the only Ollama work in this
     # app done on behalf of a named person, so they are the only calls
     # attributed to one. See the ollama_calls comment in db/init.sql.
@@ -341,51 +349,138 @@ def ask_assistant(payload: AssistantQuestion, user: dict = Depends(auth.require_
             status_code=503,
             detail="The AI assistant is disabled — an admin can enable Ollama under Admin → Ollama Settings.",
         )
+    return ollama
 
-    with db_cursor() as cur:
-        context_text, citations = build_context(cur, ollama, payload.question, user)
-        history = _load_history(cur, user["id"])
 
-    if context_text:
-        system_prompt = f"{ASSISTANT_SYSTEM_PROMPT}\n\nRelevant case data:\n\n{context_text}"
-    else:
-        system_prompt = (
-            f"{ASSISTANT_SYSTEM_PROMPT}\n\nRelevant case data: none found for this question. "
-            "Say plainly that nothing matching this was found in the case file, rather than "
-            "guessing or answering from general knowledge."
-        )
+UNREACHABLE = ("Couldn't reach Ollama, or the configured model isn't available — check "
+               "Admin → Ollama Settings and confirm the model has been pulled.")
 
-    answer = ollama.chat(system_prompt, history, payload.question)
-    if answer is None:
-        raise HTTPException(
-            status_code=502,
-            detail="Couldn't reach Ollama, or the configured model isn't available — check "
-            "Admin → Ollama Settings and confirm the model has been pulled.",
-        )
 
-    # Nothing is persisted until there's a real answer to go with it -- a
-    # failed call above leaves assistant_messages untouched, so retrying a
-    # question never leaves an orphaned, unanswered entry in the history.
+def _semantic_for(ollama: OllamaClient):
+    """search_case's fallback when no words match: the same embedding
+    similarity the single search uses. None when no embed model is set."""
+    if not ollama.embed_model:
+        return None
+
+    def semantic(query: str):
+        vec = ollama.embed(query)
+        if vec is None:
+            return []
+        out = []
+        with db_cursor() as cur:
+            for _, eid in _embedding_entities(cur, vec, 6):
+                cur.execute("SELECT entity_type, name FROM entities WHERE id = %s", (eid,))
+                row = cur.fetchone()
+                if row:
+                    out.append(("entity", eid, f"{row[0].capitalize()}: {row[1]}"))
+            for _, rid in _embedding_reports(cur, vec, 4):
+                cur.execute("SELECT title FROM reports WHERE id = %s", (rid,))
+                row = cur.fetchone()
+                if row:
+                    out.append(("report", rid, f"Report: {row[0]}"))
+        return out
+    return semantic
+
+
+def _save(user: dict, question: str, done: dict) -> dict:
+    """Persist one finished turn. Nothing is written until there is a real
+    answer, so a failed question never leaves an orphan in the history."""
+    trail = {"steps": done["steps"], "thinking": done["thinking"], "seconds": done["seconds"],
+             "lookups": done["lookups"], "mode": done["mode"], "notes": done.get("notes") or []}
     with db_cursor(commit=True) as cur:
         cur.execute(
             "INSERT INTO assistant_messages (user_id, role, content) VALUES (%s, 'user', %s)",
-            (user["id"], payload.question),
+            (user["id"], question),
         )
-        cur.execute(
-            "INSERT INTO assistant_messages (user_id, role, content, citations) "
-            "VALUES (%s, 'assistant', %s, %s) RETURNING id, created_at",
-            (user["id"], answer, json.dumps(citations)),
-        )
+        try:
+            cur.execute("SAVEPOINT trail")
+            cur.execute(
+                "INSERT INTO assistant_messages (user_id, role, content, citations, steps) "
+                "VALUES (%s, 'assistant', %s, %s, %s) RETURNING id, created_at",
+                (user["id"], done["answer"], json.dumps(done["citations"]), json.dumps(trail)),
+            )
+        except Exception:  # noqa: BLE001 - no `steps` column before the v1.11 migration
+            cur.execute("ROLLBACK TO SAVEPOINT trail")
+            cur.execute(
+                "INSERT INTO assistant_messages (user_id, role, content, citations) "
+                "VALUES (%s, 'assistant', %s, %s) RETURNING id, created_at",
+                (user["id"], done["answer"], json.dumps(done["citations"])),
+            )
         new_id, created_at = cur.fetchone()
 
-    # The assistant reads case data on the user's behalf, so what it retrieved
-    # is an access event. The question text itself is not recorded here -- it
-    # is already stored in assistant_messages, and copying it into a log with
-    # different access rules would spread the case data further, not audit it.
+    # The assistant reads case data on the user's behalf, so what it looked at
+    # is an access event. Neither the question nor what it searched FOR is
+    # copied here -- both are already in that user's own conversation, and
+    # copying them into a log with different access rules would spread the
+    # case data further, not audit it. Recorded: which lookups ran, every
+    # record they returned (what the model read), and the ones the answer
+    # cites.
     audit.record("assistant.query", user=user, object_type="assistant",
-                 detail={"retrieved": [c["id"] for c in citations],
-                         "retrieved_count": len(citations)})
-    return {"id": new_id, "role": "assistant", "content": answer, "citations": citations, "created_at": created_at}
+                 detail={"retrieved": (done.get("seen") or [])[:200],
+                         "retrieved_count": len(done.get("seen") or []),
+                         "cited": [c["id"] for c in done["citations"]],
+                         "lookups": [s["tool"] for s in done["steps"]],
+                         "mode": done["mode"]})
+    return {"id": new_id, "role": "assistant", "content": done["answer"],
+            "citations": done["citations"], "trail": trail,
+            "created_at": created_at.isoformat() if created_at else None}
+
+
+def _run(user: dict, question: str):
+    """The agent for this user and question, as an event generator."""
+    ollama = _client_for(user)
+    settings = get_assistant_settings()
+    with db_cursor() as cur:
+        history = _load_history(cur, user["id"])
+
+    def single_search(q):
+        with db_cursor() as cur:
+            return build_context(cur, ollama, q, user)
+
+    return assistant_agent.run(ollama, question, history, settings, user,
+                               semantic=_semantic_for(ollama), single_search=single_search)
+
+
+@router.post("/ask")
+def ask_streaming(payload: AssistantQuestion, user: dict = Depends(auth.require_user)):
+    """The panel's endpoint. Streams newline-delimited JSON: one event per
+    lookup as it runs, the model's reasoning when it thinks, and finally the
+    saved answer — so an analyst watches the work happen rather than staring
+    at "Thinking…" for a minute."""
+    events = _run(user, payload.question)   # raises 503 here, before streaming, if disabled
+
+    def stream():
+        try:
+            for event in events:
+                if event["type"] == "done":
+                    message = _save(user, payload.question, event)
+                    yield json.dumps({"type": "answer", "message": message}, default=str) + "\n"
+                    return
+                if event["type"] == "error":
+                    detail = UNREACHABLE if event["detail"] == "unreachable" else event["detail"]
+                    yield json.dumps({"type": "error", "detail": detail}) + "\n"
+                    return
+                yield json.dumps(event, default=str) + "\n"
+        except Exception:  # noqa: BLE001 - reported to the panel, logged in full here
+            logger.exception("Assistant run failed")
+            yield json.dumps({"type": "error",
+                              "detail": "The assistant hit an error. The details are in the api log."}) + "\n"
+
+    return StreamingResponse(stream(), media_type="application/x-ndjson",
+                             headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"})
+
+
+@router.post("/messages", status_code=201)
+def ask_assistant(payload: AssistantQuestion, user: dict = Depends(auth.require_user)):
+    """The same work as /ask, answered in one response. Kept for scripts and
+    anything older than the streaming panel."""
+    for event in _run(user, payload.question):
+        if event["type"] == "done":
+            return _save(user, payload.question, event)
+        if event["type"] == "error":
+            raise HTTPException(status_code=502,
+                                detail=UNREACHABLE if event["detail"] == "unreachable" else event["detail"])
+    raise HTTPException(status_code=502, detail=UNREACHABLE)
 
 
 @router.delete("/messages")

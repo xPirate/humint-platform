@@ -12118,6 +12118,18 @@ const OLLAMA_SETTINGS_FIELDS = [
     hint: "Off skips extraction and correlation. Documents are still read and stored." },
   { key: "ollama_timeout_seconds", label: "Timeout (seconds)", type: "number",
     hint: "How long to wait for one Ollama call." },
+  // How the assistant uses the model (v1.11). What a team can afford here
+  // depends on its hardware, which is why these are settings at all.
+  { key: "assistant_thinking", label: "Let the assistant think first", type: "checkbox",
+    section: "AI Assistant", assistant: true,
+    hint: "A model that can reason (Qwen3, gpt-oss, DeepSeek-R1) works each question through before it looks something up or answers. Better answers, several times slower. Turn it off on a small GPU or a machine without one. Models that can't think ignore it." },
+  { key: "assistant_max_lookups", label: "Lookups per question", type: "number", min: 0, max: 12, assistant: true,
+    hint: "How many times the assistant may search the case file before answering. More lets it follow links and check dates; each one is another call to the model. 0 means one quick search, as before." },
+  { key: "assistant_context_tokens", label: "Context window", type: "select", assistant: true,
+    options: [[4096, "4K — smallest; short answers only"], [8192, "8K — default"],
+              [16384, "16K — comfortable for an 8B model on a 12 GB GPU"],
+              [32768, "32K — needs a larger GPU"], [65536, "64K"], [131072, "128K"]],
+    hint: "How much the model reads at once. Bigger lets it keep more of what it found in mind, and uses more GPU memory. Ollama's own default is smaller than any of these, which cut the case data out of the prompt without saying so." },
 ];
 
 // Sentinel <option> value meaning "I want to type something that isn't in the
@@ -12242,14 +12254,26 @@ function missingModelWarningHtml(data) {
 
 function renderOllamaSettingsPanel(data) {
   const el = document.getElementById("ollama-settings-panel");
+  // Before the v1.11 migration the assistant's three settings exist only as
+  // their .env values; they are shown, locked, with a note saying why.
+  const assistantLocked = data.assistant_settings_available === false;
   const rows = OLLAMA_SETTINGS_FIELDS.map((f) => {
     const field = data.fields[f.key];
+    if (!field) return "";
+    const locked = f.assistant && assistantLocked ? " disabled" : "";
     const badge = field.overridden
       ? '<span class="status-pill">override saved</span>'
       : `<span class="card-meta">using .env default${f.type === "checkbox" ? "" : ": " + escapeHtml(String(field.env_default))}</span>`;
     let input;
     if (f.type === "checkbox") {
-      input = `<input type="checkbox" data-setting="${f.key}" ${field.value ? "checked" : ""}>`;
+      input = `<input type="checkbox" data-setting="${f.key}" ${field.value ? "checked" : ""}${locked}>`;
+    } else if (f.type === "select") {
+      const opts = f.options.slice();
+      if (!opts.some(([v]) => v === field.value)) opts.push([field.value, String(field.value)]);
+      input = `<select data-setting="${f.key}"${locked}>${opts.map(([v, label]) =>
+        `<option value="${escapeHtml(String(v))}"${v === field.value ? " selected" : ""}>${escapeHtml(label)}</option>`).join("")}</select>`;
+    } else if (f.type === "number" && f.min !== undefined) {
+      input = `<input type="number" data-setting="${f.key}" value="${escapeHtml(String(field.value))}" step="1" min="${f.min}" max="${f.max}"${locked}>`;
     } else if (f.type === "model-picker" && ollamaModelData && ollamaModelData.reachable) {
       input = modelPickerHtml(f, String(field.value == null ? "" : field.value));
     } else {
@@ -12261,13 +12285,17 @@ function renderOllamaSettingsPanel(data) {
     const extra = f.key === "ollama_base_url"
       ? `<div class="conn-row">${ollamaConnectionHtml()}<button type="button" class="btn-link btn-sm" id="ollama-refresh-models">Check connection &amp; refresh models</button></div>`
       : "";
+    const section = f.section ? `
+      <h4 class="settings-section-title">${escapeHtml(f.section)}</h4>
+      ${f.assistant && assistantLocked ? `<div class="warn-banner">These need the v1.11 database update before they can be changed: run <code>db/migrate-v1.11-assistant.sql</code>. Until then the assistant uses the .env values shown.</div>` : ""}` : "";
     return `
+      ${section}
       <div class="form-row">
         <label>${escapeHtml(f.label)} ${badge}</label>
         ${input}
         ${extra}
         <p class="field-hint">${escapeHtml(f.hint)}</p>
-        ${field.overridden ? `<button type="button" class="btn-link btn-sm" data-reset="${f.key}">Reset to .env default</button>` : ""}
+        ${field.overridden && !locked ? `<button type="button" class="btn-link btn-sm" data-reset="${f.key}">Reset to .env default</button>` : ""}
       </div>
     `;
   }).join("");
@@ -12295,8 +12323,9 @@ function renderOllamaSettingsPanel(data) {
       </div>
       <div class="pull-suggestions">
         Common choices:
+        <button type="button" class="btn-link btn-sm" data-suggest="qwen3:8b">qwen3:8b</button>
+        <button type="button" class="btn-link btn-sm" data-suggest="qwen3:14b">qwen3:14b</button>
         <button type="button" class="btn-link btn-sm" data-suggest="llama3.1:8b">llama3.1:8b</button>
-        <button type="button" class="btn-link btn-sm" data-suggest="mistral:7b">mistral:7b</button>
         <button type="button" class="btn-link btn-sm" data-suggest="nomic-embed-text">nomic-embed-text</button>
         <span class="card-meta">(the last one is an embedding model, for correlation)</span>
       </div>
@@ -12350,6 +12379,7 @@ function renderOllamaSettingsPanel(data) {
     // than re-saving every field's current value as a fresh override.
     const body = {};
     OLLAMA_SETTINGS_FIELDS.forEach((f) => {
+      if (!data.fields[f.key] || (f.assistant && assistantLocked)) return;
       const newVal = readOllamaFieldValue(f);
       if (newVal === undefined) return;
       if (newVal !== data.fields[f.key].value) body[f.key] = newVal;
@@ -12357,7 +12387,7 @@ function renderOllamaSettingsPanel(data) {
     if (!Object.keys(body).length) { showToast("No changes to save"); return; }
     try {
       await api("/api/admin/ollama-settings", { method: "PATCH", body });
-      showToast("Ollama settings saved — the worker picks this up within about 20 seconds");
+      showToast("Ollama settings saved — the assistant uses them from the next question, the worker within about 20 seconds");
       loadOllamaSettings();
     } catch (err) {
       document.getElementById("ollama-settings-error").textContent = err.message;
@@ -12378,7 +12408,7 @@ function readOllamaFieldValue(f) {
   const input = document.querySelector(`[data-setting="${f.key}"]`);
   if (!input) return undefined;
   if (f.type === "checkbox") return input.checked;
-  if (f.type === "number") return input.value === "" ? null : parseInt(input.value, 10);
+  if (f.type === "number" || f.type === "select") return input.value === "" ? null : parseInt(input.value, 10);
   if (f.type === "model-picker" && input.tagName === "SELECT") {
     if (input.value !== MODEL_CUSTOM_VALUE) return input.value;
     const custom = document.querySelector(`[data-model-custom="${f.key}"]`);
@@ -12400,6 +12430,7 @@ function applyOllamaFormValues(values) {
     const input = document.querySelector(`[data-setting="${f.key}"]`);
     if (!input) return;
     if (f.type === "checkbox") { input.checked = !!value; return; }
+    if (f.type === "select") { input.value = value == null ? "" : String(value); return; }
     if (f.type === "model-picker" && input.tagName === "SELECT") {
       const known = Array.from(input.options).some((o) => o.value === value);
       if (known) { input.value = value; return; }
@@ -12856,7 +12887,10 @@ function renderRestoreSummary(result) {
  * ========================================================================== */
 
 const ASSISTANT_EMPTY_HINT_HTML =
-  '<p class="assistant-empty-hint" id="assistant-empty-hint">Ask about anything in this case file, ' + 'e.g. “what do we know about John Smith”. Answers come only from your case data.</p>';
+  '<p class="assistant-empty-hint" id="assistant-empty-hint">Ask about anything in this case file — '
+  + '“how is John Smith connected to Acme?”, “what came in from the field this week?”, '
+  + '“what is still missing for our open priorities?”. It looks things up as it goes and shows you '
+  + 'what it checked. Answers come only from your case data.</p>';
 
 // The assistant panel is anchored below the topbar so the nav and account
 // menu stay reachable while it's open (see styles.css). The topbar's height
@@ -12886,6 +12920,39 @@ function toggleAssistantPanel(open) {
 document.getElementById("assistant-tab-btn").addEventListener("click", () => toggleAssistantPanel(true));
 document.getElementById("assistant-close-btn").addEventListener("click", () => toggleAssistantPanel(false));
 
+function formatSeconds(sec) {
+  const n = Math.round(Number(sec) || 0);
+  return n < 60 ? `${n} s` : `${Math.floor(n / 60)} min ${n % 60} s`;
+}
+
+/* What the assistant looked up on its way to an answer, and its reasoning when
+ * the model thought first. Folded away under the answer: the answer is what
+ * you came for, and the trail is there to check it against. */
+function assistantTrailHtml(trail) {
+  if (!trail || !(trail.steps || []).length && !trail.thinking) return "";
+  const steps = trail.steps || [];
+  const n = trail.lookups != null ? trail.lookups : steps.length;
+  const what = trail.mode === "single"
+    ? "Answered from one search"
+    : n ? `Looked up ${n} thing${n === 1 ? "" : "s"}` : "Answered without looking anything up";
+  const how = trail.thinking ? `thought for ${formatSeconds(trail.seconds)}` : `${formatSeconds(trail.seconds)}`;
+  return `
+    ${(trail.notes || []).map((t) => `<p class="assistant-note">${escapeHtml(t)}</p>`).join("")}
+    <details class="assistant-trail">
+      <summary>${escapeHtml(what)} · ${escapeHtml(how)}</summary>
+      ${steps.length ? `<ol class="assistant-steps">${steps.map(assistantStepHtml).join("")}</ol>` : ""}
+      ${trail.thinking ? `<details class="assistant-reasoning"><summary>Reasoning</summary>
+        <div class="assistant-thinking">${escapeHtml(trail.thinking)}</div></details>` : ""}
+    </details>`;
+}
+
+function assistantStepHtml(step) {
+  return `<li class="assistant-step${step.running ? " running" : ""}">
+    <span class="assistant-step-label">${escapeHtml(step.label || "")}</span>
+    ${step.summary ? `<span class="assistant-step-summary">${escapeHtml(step.summary)}</span>` : ""}
+  </li>`;
+}
+
 function assistantMessageHtml(msg) {
   const isUser = msg.role === "user";
   const bodyHtml = isUser ? escapeHtml(msg.content) : renderMarkdown(msg.content);
@@ -12896,8 +12963,92 @@ function assistantMessageHtml(msg) {
     <div class="assistant-msg assistant-msg-${isUser ? "user" : "assistant"}">
       ${bodyHtml}
       ${citationsHtml ? `<div class="assistant-msg-citations">${citationsHtml}</div>` : ""}
+      ${isUser ? "" : assistantTrailHtml(msg.trail)}
     </div>
   `;
+}
+
+/* The bubble shown while the assistant works: each lookup appears as it runs,
+ * then gains a one-line result, and the model's reasoning (when it thinks)
+ * can be opened and watched. Replaced by the finished answer. */
+function assistantWorkingBubble() {
+  const el = document.getElementById("assistant-messages");
+  const hint = document.getElementById("assistant-empty-hint");
+  if (hint) hint.remove();
+  el.insertAdjacentHTML("beforeend", `
+    <div class="assistant-msg assistant-msg-assistant assistant-working" id="assistant-working">
+      <div class="assistant-working-head"><span class="assistant-pulse" aria-hidden="true"></span>
+        <span class="assistant-working-text">Starting…</span>
+        <span class="assistant-working-time">0 s</span></div>
+      <ol class="assistant-steps"></ol>
+      <details class="assistant-reasoning" hidden><summary>Reasoning</summary>
+        <div class="assistant-thinking"></div></details>
+    </div>`);
+  el.scrollTop = el.scrollHeight;
+  const bubble = document.getElementById("assistant-working");
+  const started = Date.now();
+  const timer = setInterval(() => {
+    const t = bubble.querySelector(".assistant-working-time");
+    if (t) t.textContent = formatSeconds((Date.now() - started) / 1000);
+  }, 1000);
+  const stick = () => {
+    // Follow the work only if the reader hasn't scrolled up to read something.
+    if (el.scrollHeight - el.scrollTop - el.clientHeight < 80) el.scrollTop = el.scrollHeight;
+  };
+  return {
+    status(text) { bubble.querySelector(".assistant-working-text").textContent = text; stick(); },
+    step(ev) {
+      const list = bubble.querySelector(".assistant-steps");
+      const running = list.querySelector(".assistant-step.running");
+      const html = assistantStepHtml(ev);
+      if (running) running.outerHTML = html; else list.insertAdjacentHTML("beforeend", html);
+      stick();
+    },
+    thinking(text) {
+      const box = bubble.querySelector(".assistant-reasoning");
+      box.hidden = false;
+      const body = box.querySelector(".assistant-thinking");
+      body.textContent = (body.textContent ? body.textContent + "\n\n" : "") + text;
+      body.scrollTop = body.scrollHeight;
+      stick();
+    },
+    note(text) {
+      bubble.insertAdjacentHTML("beforeend", `<p class="assistant-note">${escapeHtml(text)}</p>`);
+    },
+    done() { clearInterval(timer); bubble.remove(); },
+  };
+}
+
+/* POST the question and read the reply as it streams: one JSON object per
+ * line (see api/assistant.py's /ask). Falls back to reading the whole body
+ * at once on a browser without streaming fetch. */
+async function streamAssistant(question, onEvent) {
+  const res = await fetch("/api/assistant/ask", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ question }),
+  });
+  if (res.status === 401 && state.user) handleSessionExpired();
+  if (!res.ok) {
+    let detail = `HTTP ${res.status}`;
+    try { const data = await res.json(); if (data && data.detail) detail = typeof data.detail === "string" ? data.detail : JSON.stringify(data.detail); } catch (e) { /* keep the status */ }
+    throw new Error(detail);
+  }
+  const handle = (line) => { if (line.trim()) onEvent(JSON.parse(line)); };
+  if (!res.body || !res.body.getReader) {
+    (await res.text()).split("\n").forEach(handle);
+    return;
+  }
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buf = "";
+  for (;;) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buf += decoder.decode(value, { stream: true });
+    let i;
+    while ((i = buf.indexOf("\n")) >= 0) { handle(buf.slice(0, i)); buf = buf.slice(i + 1); }
+  }
+  handle(buf);
 }
 
 // `mousedown` isn't needed here the way the global search dropdown needs it
@@ -12968,19 +13119,33 @@ document.getElementById("assistant-form").addEventListener("submit", async (e) =
   input.value = "";
   input.disabled = true;
   submitBtn.disabled = true;
-  statusEl.hidden = false;
+  statusEl.hidden = true;
   statusEl.classList.remove("error");
-  statusEl.textContent = "Thinking…";
+  const working = assistantWorkingBubble();
 
   try {
-    const reply = await api("/api/assistant/messages", { method: "POST", body: { question } });
-    appendAssistantMessage(reply);
-    statusEl.hidden = true;
+    let answered = false;
+    await streamAssistant(question, (ev) => {
+      if (ev.type === "status") working.status(ev.text);
+      else if (ev.type === "step") working.step(ev);
+      else if (ev.type === "thinking") working.thinking(ev.text);
+      else if (ev.type === "note") working.note(ev.text);
+      else if (ev.type === "answer") {
+        answered = true;
+        working.done();
+        appendAssistantMessage(ev.message);
+      } else if (ev.type === "error") {
+        throw new Error(ev.detail);
+      }
+    });
+    if (!answered) throw new Error("The assistant stopped before answering. Try again.");
   } catch (err) {
     // The question itself is never persisted server-side when the call
     // fails (see api/assistant.py) -- surfacing the error here without
     // rendering a fake assistant bubble keeps the visible transcript
     // matching exactly what's actually saved.
+    working.done();
+    statusEl.hidden = false;
     statusEl.classList.add("error");
     statusEl.textContent = err.message;
   } finally {
