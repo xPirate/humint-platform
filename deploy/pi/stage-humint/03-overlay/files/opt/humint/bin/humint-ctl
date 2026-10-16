@@ -32,6 +32,11 @@ humint-ctl — HUMINT field server
   net client SSID [PSK]  join an existing Wi-Fi and serve on it
   net wired              Ethernet only, Wi-Fi off
   pin                    change the unlock PIN
+  tls                    HTTPS status and the certificate fingerprint
+  tls renew              issue a fresh server certificate now
+  tls on | off           serve HTTPS (default) or plain HTTP
+  battery                charge, voltage and current (UPS HAT)
+  screen-detect          what screen is attached, and what it will show
 
   shutdown | reboot      power off / restart safely
   logs [api|worker|db|firstboot|unlock]   follow a service's log
@@ -39,12 +44,13 @@ EOF
 }
 
 cmd_status() {
-    local ip port url ssid
-    ip="$(hostname -I 2>/dev/null | awk '{print $1}')"
-    port=""; [ "${API_PORT:-80}" != "80" ] && port=":${API_PORT}"
-    url="http://${ip}${port}"
+    local url
+    url="$(console_url)"
     echo "Host     : $(hostname) (${HOSTNAME}.local)"
     echo "URL      : $url"
+    if [ "${TLS:-on}" = on ]; then
+        echo "Trust    : http://${HOSTNAME}.local/trust  (install the certificate once per device)"
+    fi
     case "${NET_MODE:-}" in
         hotspot) echo "Network  : hotspot — SSID '${AP_SSID}' (${AP_BAND})";;
         client)  echo "Network  : client — '${CLIENT_SSID}'";;
@@ -59,9 +65,18 @@ cmd_status() {
     fi
     echo "Services :"
     local unit
-    for unit in "$PG_UNIT" humint-api.service humint-worker.service; do
+    for unit in "$PG_UNIT" humint-api.service humint-worker.service humint-http.service; do
         printf '  %-26s %s\n' "$unit" "$(systemctl is-active "$unit" 2>/dev/null || true)"
     done
+    if [ -f /run/humint/battery.json ]; then
+        /usr/bin/python3 - <<'PY2'
+import json
+b = json.load(open("/run/humint/battery.json"))
+if b.get("present"):
+    state = "charging" if b.get("charging") else "on battery"
+    print(f"Battery  : {b['percent']:.0f}% ({state}, {b['voltage']:.2f} V, {b['current_ma']:+.0f} mA)")
+PY2
+    fi
     local t; t="$(cat /sys/class/thermal/thermal_zone0/temp 2>/dev/null || true)"
     [ -n "$t" ] && echo "Temp     : $((t / 1000)) C"
 }
@@ -121,13 +136,46 @@ cmd_backup() {
     echo " page exports database + files together.)"
 }
 
+set_setting() {  # set_setting KEY VALUE — in the saved config and the store's settings
+    local k="$1" v="$2" f
+    for f in "$HUMINT_ENV" "$APP_ENV"; do
+        [ -f "$f" ] || continue
+        if grep -q "^${k}=" "$f"; then sed -i "s|^${k}=.*|${k}=${v}|" "$f"
+        else printf '%s=%s\n' "$k" "$v" >>"$f"; fi
+    done
+}
+
+cmd_tls() {
+    case "${1:-}" in
+        "")
+            echo "HTTPS    : ${TLS:-on}"
+            if [ "${TLS:-on}" = on ]; then
+                echo "CA       : $(/opt/humint/bin/humint-tls.sh fingerprint 2>/dev/null || echo 'not created yet — unlock first')"
+                if [ -f "$HUMINT_DATA/tls/server.crt" ]; then
+                    openssl x509 -in "$HUMINT_DATA/tls/server.crt" -noout -enddate -ext subjectAltName 2>/dev/null |
+                        sed 's/^notAfter=/Expires  : /; s/^ *DNS/Covers   : DNS/' | grep -v "Subject Alternative"
+                fi
+                echo "Devices install the CA once from http://${HOSTNAME}.local/trust"
+            fi ;;
+        renew) /opt/humint/bin/humint-tls.sh renew; echo "New server certificate issued." ;;
+        on|off)
+            data_ready || die "unlock the case file first"
+            set_setting TLS "$1"
+            set_setting SESSION_COOKIE_SECURE "$([ "$1" = on ] && echo true || echo false)"
+            systemctl restart humint-api.service
+            if [ "$1" = on ]; then systemctl start humint-http.service; else systemctl stop humint-http.service; fi
+            echo "HTTPS $1. Console: $(TLS=$1 console_url)" ;;
+        *) die "tls needs: (nothing) | renew | on | off" ;;
+    esac
+}
+
 cmd_logs() {
     case "${1:-api}" in
         firstboot) tail -n 200 -F "$HUMINT_STATE/firstboot.log" ;;
         unlock)    journalctl -u humint-unlock -n 200 -f ;;
         db)        journalctl -u "$PG_UNIT" -n 200 -f ;;
-        api|worker) journalctl -u "humint-$1" -n 200 -f ;;
-        *) die "logs needs: api | worker | db | firstboot | unlock" ;;
+        api|worker|http|panel|battery) journalctl -u "humint-$1" -n 200 -f ;;
+        *) die "logs needs: api | worker | http | panel | battery | db | firstboot | unlock" ;;
     esac
 }
 
@@ -144,6 +192,9 @@ main() {
         lock)     cmd_lock "$@" ;;
         net)      cmd_net "$@" ;;
         pin)      cmd_pin "$@" ;;
+        tls)      cmd_tls "$@" ;;
+        battery)  /opt/humint/venv/bin/python3 /opt/humint/bin/humint-battery.py --once ;;
+        screen-detect) /usr/bin/python3 /opt/humint/bin/humint-display.py detect --explain ;;
         shutdown) need_root "$@"; systemctl poweroff ;;
         reboot)   need_root "$@"; systemctl reboot ;;
         logs)     cmd_logs "$@" ;;

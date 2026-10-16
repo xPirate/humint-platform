@@ -94,6 +94,10 @@ BACKUP_FORMAT_VERSION = 1
 # See the module docstring — excluded from backups AND always wiped on
 # restore, which is why this is a set of its own rather than just an omission.
 EXCLUDED_TABLES = {"sessions"}
+# Describes THIS machine, not the case file: never written to a backup and
+# never wiped by a restore. A field server seeded from an HQ backup must keep
+# its own identity, or every package it sends home would claim to be HQ.
+PRESERVED_TABLES = {"instance_identity"}
 
 # Typed into the restore form to confirm the destructive action. Matched
 # exactly (after stripping surrounding whitespace) — an accidental click can
@@ -267,7 +271,7 @@ def _safe_upload_path(storage_path: str):
 @router.get("/backup")
 def download_backup(user: dict = Depends(auth.require_admin)):
     with db_cursor() as cur:
-        tables = [t for t in _all_tables(cur) if t not in EXCLUDED_TABLES]
+        tables = [t for t in _all_tables(cur) if t not in EXCLUDED_TABLES | PRESERVED_TABLES]
         table_blocks = {}
         for table in tables:
             columns = list(_table_columns(cur, table).keys())
@@ -530,7 +534,7 @@ def _validate_against_schema(payload: dict, db_tables: set, column_types: dict) 
     is better -- the admin gets a specific reason instead of a rolled-back
     attempt to interpret."""
     for table, block in payload["tables"].items():
-        if table in EXCLUDED_TABLES:
+        if table in EXCLUDED_TABLES or table in PRESERVED_TABLES:
             continue
         if table not in db_tables:
             raise HTTPException(
@@ -696,14 +700,15 @@ def restore_backup(
         renamed = _apply_column_renames(payload) + _apply_value_upgrades(payload)
         _validate_against_schema(payload, db_tables, column_types)
 
-        backup_tables = {t: b for t, b in payload["tables"].items() if t not in EXCLUDED_TABLES}
+        backup_tables = {t: b for t, b in payload["tables"].items()
+                         if t not in EXCLUDED_TABLES | PRESERVED_TABLES}
         insert_order = [t for t in _insertion_order(sorted(db_tables), edges) if t in backup_tables]
         # Tables this database has that the backup doesn't mention: they get
         # truncated like everything else and simply end up empty, which is the
         # honest reading of "replace everything with this backup" when
         # restoring one taken before a feature existed. Reported back so the
         # admin isn't surprised by it.
-        emptied_not_in_backup = sorted(db_tables - set(backup_tables) - EXCLUDED_TABLES)
+        emptied_not_in_backup = sorted(db_tables - set(backup_tables) - EXCLUDED_TABLES - PRESERVED_TABLES)
 
         os.makedirs(staging_dir, exist_ok=True)
         files_extracted, files_rejected = _extract_uploads(zip_path, staging_dir, zip_prefix)
@@ -717,7 +722,7 @@ def restore_backup(
         restored_counts = {}
         try:
             with db_cursor(commit=True) as cur:
-                wipe = ", ".join(f'"{t}"' for t in sorted(db_tables))
+                wipe = ", ".join(f'"{t}"' for t in sorted(db_tables - PRESERVED_TABLES))
                 # sessions is in db_tables and gets wiped here too, on purpose:
                 # see the module docstring. RESTART IDENTITY resets sequences for
                 # tables the backup has no rows for; _reset_sequences fast-forwards
@@ -764,6 +769,14 @@ def restore_backup(
                     f"exactly the data it had before. Postgres rejected the backup's contents: {message}"
                 ),
             )
+
+        # A console loaded from a backup already holds everything that backup
+        # did; a field server's first package home starts from here.
+        try:
+            import field_sync
+            field_sync.mark_seeded()
+        except Exception:
+            pass
 
         # --- committed; now the filesystem half ---
         referenced = set(_stored_file_paths(backup_tables))

@@ -61,23 +61,63 @@ WIRED_DHCP_SERVER=true
 # lives in one
 # encrypted volume this large. It is created once, at setup, and cannot be
 # grown later without rebuilding, so size it for the deployment. Suffix with
-# G for gigabytes. Leave room on the card: this plus the OS plus any Kiwix
-# content must fit.
+# G for gigabytes. Leave room on the card for the OS (about 4 GB) beside it.
 DATA_SIZE=16G
 
-# ---- the console's web port ----------------------------------------------
-# 80 lets phones use a plain http://<ip> with no port. Change only if
-# something else needs port 80.
+# ---- HTTPS ----------------------------------------------------------------
+# on  : the console is served over HTTPS (port 443) with a certificate the
+#       box issues itself. Each phone and laptop installs the box's
+#       certificate ONCE, from http://<HOSTNAME>.local/trust (the screen and
+#       `humint-ctl tls` show its fingerprint to check). That certificate is
+#       restricted to local names and private addresses, so it cannot be
+#       used to impersonate any other site. Port 80 then only hands out the
+#       certificate and redirects to https://.
+# off : plain HTTP on API_PORT, as on a home LAN.
+TLS=on
+
+# The plain-HTTP port, used only with TLS=off. 80 lets phones use
+# http://<ip> with no port.
 API_PORT=80
 
-# ---- the little screen ----------------------------------------------------
-# auto    : use an SSD1306 OLED if one is wired to the I2C pins, else nothing.
-# ssd1306 : require the OLED (log loudly if it is missing).
-# none    : no screen; the unlock PIN is typed blind at the keyboard.
+# ---- screens ---------------------------------------------------------------
+# What is attached, and so what the box shows:
+#   auto     : find out (default). An HDMI/DSI screen gets the touch control
+#              panel; an SSD1306 OLED gets the status pages; both if both.
+#   elecrow5 : the 5" 800x480 HDMI screen with resistive touch on the GPIO
+#              header (Elecrow; also the Waveshare 5" (B) and others wired
+#              the same way). Set this if auto does not find it — these
+#              screens often do not identify themselves. The box sets up the
+#              touch driver and reboots once on first boot.
+#   hdmi     : any other HDMI or DSI screen (official Pi Touch Display,
+#              USB-touch HDMI screens).
+#   oled     : only the 0.96" OLED.
+#   none     : no screen; the PIN is typed blind on the keyboard.
+# With a touch screen the PIN is entered on screen, so no keyboard is needed
+# in the field. Calibrate a resistive screen once: Menu → Calibrate touch.
+SCREEN=auto
+# The OLED on its own: auto / ssd1306 / none.
 OLED=auto
-# Seconds each status page stays up before the next.
+# Seconds each OLED status page stays up before the next.
 STATUS_ROTATE_SECONDS=6
+# Blank the touch screen after this many idle minutes (0 = never). A touch
+# wakes it. Saves battery.
+SCREEN_SLEEP_MINUTES=5
+# 180 if the screen is mounted upside down in its case.
+SCREEN_ROTATE=0
+
+# ---- battery ---------------------------------------------------------------
+#   auto      : use a Waveshare UPS HAT if one is fitted (default)
+#   waveshare : require it
+#   none      : no gauge
+# The screens show the charge; when it falls to BATTERY_SHUTDOWN_PERCENT on
+# battery power, the box stops the console, re-locks the case file and powers
+# off cleanly rather than dying mid-write.
+BATTERY=auto
+# 18650 cells in series: 2 for the UPS HAT / UPS HAT (B), 1 for UPS HAT (C).
+BATTERY_CELLS=2
+BATTERY_SHUTDOWN_PERCENT=8
 # Optional push-button for the screen: the BCM GPIO number it is wired to
 # (button between that pin and ground). A tap shows the next page; holding it
 # for 2 seconds shuts the box down safely. Leave empty for no button.
+# (Not GPIO 25 with the 5" touch screen — its touch controller uses it.)
 STATUS_BUTTON_GPIO=

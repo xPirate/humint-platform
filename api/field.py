@@ -1044,6 +1044,11 @@ def accept_submission(submission_id: int, payload: HandleRequest,
         cur.execute("DELETE FROM field_submission_files WHERE submission_id = %s",
                     (submission_id,))
 
+        # A report written on a field server comes home with the records it
+        # was linked to there; link them again, to whatever HQ now knows them as.
+        import field_sync
+        field_sync.link_promoted_report(cur, submission_id, report_id)
+
         # The record the report is about, pre-filled from the template, linked
         # to the draft so the analyst lands on both at once. Still theirs to
         # correct or delete — but nobody retypes a plate.

@@ -32,13 +32,15 @@ _SUGGESTION_COLS = [
     "suggested_relationship_type", "suggested_from_name", "suggested_to_name",
     "suggested_from_entity_id", "suggested_to_entity_id", "evidence",
     "details", "confidence", "status", "resolved_entity_id", "reviewed_by", "reviewed_at", "created_at",
+    "field_import_id",
 ]
 
 # Where a suggestion came from. See the `source` column comment in db/init.sql.
 # "manual" is a record a person made while reading a document — see
 # POST /api/documents/{id}/record. It is never pending: it exists only as
 # the accepted provenance row linking a hand-made record to its source.
-SUGGESTION_SOURCES = ("extraction", "signal", "assistant", "manual")
+# "field" came home in a field server's package — see api/field_sync.py.
+SUGGESTION_SOURCES = ("extraction", "signal", "assistant", "manual", "field")
 
 
 class AcceptEntitySuggestion(BaseModel):
@@ -355,6 +357,13 @@ def annotate_relationship_candidates(cur, items: list[dict]) -> None:
         s["from_candidates"] = candidates.get((s.get("suggested_from_name") or "").strip().lower(), [])
         s["to_candidates"] = candidates.get((s.get("suggested_to_name") or "").strip().lower(), [])
         s.update(_endpoint_hints(s.get("suggested_relationship_type")))
+        if s.get("source") == "field":
+            # A field server knew what each end was; that beats guessing from
+            # the relationship type.
+            ev = s.get("evidence") or {}
+            for side in ("from", "to"):
+                if ev.get(f"{side}_type") in entities_module.ENTITY_TYPES:
+                    s[f"{side}_entity_type_hint"] = ev[f"{side}_type"]
 
 
 @router.get("/extraction-suggestions/facets")
@@ -440,6 +449,17 @@ def accept_extraction_suggestion(
         if suggestion["status"] != "pending":
             raise HTTPException(status_code=409, detail=f"Suggestion already {suggestion['status']}")
 
+        # A field server's proposal: a new record may be accepted as one HQ
+        # already has, and a change to an HQ record is applied rather than
+        # created. A relationship only has its ends and grading filled in
+        # here, and then takes the ordinary path below.
+        if suggestion.get("source") == "field":
+            import field_sync
+            payload = dict(payload or {})
+            handled = field_sync.accept_in_queue(cur, suggestion, payload, user)
+            if handled is not None:
+                return handled
+
         if suggestion["suggestion_type"] == "entity":
             try:
                 overrides = AcceptEntitySuggestion(**payload)
@@ -498,6 +518,9 @@ def accept_extraction_suggestion(
                 _resolve_pending_entity_suggestion(
                     cur, suggestion.get("attachment_id"),
                     create.name or fallback_name, new_id, user)
+                if suggestion.get("source") == "field":
+                    import field_sync
+                    field_sync.adopt_created_end(cur, suggestion, side, new_id, user)
 
             if not overrides.from_entity_id or not overrides.to_entity_id:
                 raise HTTPException(

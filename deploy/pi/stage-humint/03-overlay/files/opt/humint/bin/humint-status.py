@@ -55,9 +55,28 @@ def ip_address():
 
 
 def url():
-    port = CONF.get("API_PORT", "80")
     ip = ip_address()
+    if CONF.get("TLS", "on") == "on":
+        return f"https://{ip}"
+    port = CONF.get("API_PORT", "80")
     return f"http://{ip}" + ("" if port == "80" else f":{port}")
+
+
+def battery():
+    try:
+        import json
+        b = json.load(open("/run/humint/battery.json"))
+        return b if b.get("present") else None
+    except Exception:
+        return None
+
+
+def fingerprint_short():
+    try:
+        fp = open("/var/lib/humint/ca.fingerprint").read().strip().split(":")
+        return ":".join(fp[:4]), ":".join(fp[4:8])
+    except OSError:
+        return None
 
 
 def case_state():
@@ -129,12 +148,21 @@ def pages():
     free, total = disk_free()
     t = cpu_temp()
     sysp = ["System"]
+    b = battery()
+    if b:
+        sysp.append(f"Batt {b['percent']:.0f}%" + (" chg" if b.get("charging") else ""))
     if free is not None:
         sysp.append(f"Disk {free:.1f}/{total:.0f} GB")
     if t is not None:
         sysp.append(f"Temp {t:.0f} C")
     sysp.append(f"Up {uptime()}")
-    return [net, svc, sysp]
+    pages_out = [net, svc, sysp]
+    fp = fingerprint_short() if CONF.get("TLS", "on") == "on" else None
+    if fp:
+        # Enough of the CA fingerprint to check a phone downloaded the right
+        # certificate from http://<box>/trust.
+        pages_out.append(["Trust", f"{CONF.get('HOSTNAME', 'humint')}.local/trust", fp[0], fp[1]])
+    return pages_out
 
 
 def open_device():

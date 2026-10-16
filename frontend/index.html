@@ -876,6 +876,7 @@
             <option value="signal">From signals</option>
             <option value="assistant">From the assistant</option>
             <option value="manual">Added by hand</option>
+            <option value="field">From a field server</option>
           </select>
           <!-- Entities before relationships is the working order, because a
                relationship can only be accepted once both its ends exist. The
@@ -1015,6 +1016,7 @@
           <button type="button" class="admin-nav-btn" data-admin-section="retention">Retention</button>
           <button type="button" class="admin-nav-btn" data-admin-section="audit">Audit log</button>
           <button type="button" class="admin-nav-btn" data-admin-section="backup">Backup & restore</button>
+          <button type="button" class="admin-nav-btn" data-admin-section="fieldsync">Field sync</button>
         </nav>
         <div class="admin-panel">
         <div class="admin-section" data-admin-panel="users" hidden>
@@ -1250,6 +1252,39 @@
           <button type="button" id="restore-start-btn" class="btn-danger">Restore from this file…</button>
           <div id="restore-result" class="restore-result" hidden></div>
         </div>
+      </div>
+        </div>
+
+        <div class="admin-section" data-admin-panel="fieldsync" hidden>
+<div class="section-title">Field sync</div>
+      <p class="view-hint">Bring a field server's work home without overwriting HQ's. The field server exports a package; HQ imports it, and every record, change and link in it waits in the Review queue for someone to accept &mdash; reports wait in the Field inbox.</p>
+      <div class="backup-panel">
+        <div class="backup-block">
+          <h4>Send home <span class="field-hint">(on the field server)</span></h4>
+          <p class="field-hint" id="fieldsync-status">Loading&hellip;</p>
+          <div class="form-row">
+            <label for="fieldsync-mode">What to include</label>
+            <select id="fieldsync-mode">
+              <option value="since_last">Changes since the last package</option>
+              <option value="since_seeded">Everything since this server was loaded from HQ</option>
+              <option value="everything">Everything on this server</option>
+            </select>
+          </div>
+          <button type="button" id="fieldsync-export-btn" class="btn-primary">Export field package</button>
+          <p class="field-hint">Carry the .zip home on a USB stick. It holds case data &mdash; treat it like a backup.</p>
+        </div>
+
+        <div class="backup-block">
+          <h4>Take in <span class="field-hint">(at HQ)</span></h4>
+          <p class="field-hint">Nothing changes in the case file until each item is accepted. Importing the same package twice is refused.</p>
+          <input type="file" id="fieldsync-file" accept=".zip,application/zip">
+          <button type="button" id="fieldsync-import-btn" class="btn-primary">Import field package</button>
+          <div id="fieldsync-result" class="restore-result" hidden></div>
+        </div>
+      </div>
+      <div class="retention-block">
+        <h4>Packages taken in</h4>
+        <div id="fieldsync-imports" class="stack"></div>
       </div>
         </div>
         </div>

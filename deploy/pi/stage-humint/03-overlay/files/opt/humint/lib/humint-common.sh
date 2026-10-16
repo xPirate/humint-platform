@@ -56,7 +56,9 @@ load_config() {
     WIRED_DHCP_SERVER=true
     DATA_SIZE=16G
     API_PORT=80
-    OLED=auto ; STATUS_ROTATE_SECONDS=6
+    TLS=on
+    SCREEN=auto ; OLED=auto ; STATUS_ROTATE_SECONDS=6 ; SCREEN_SLEEP_MINUTES=5
+    BATTERY=auto ; BATTERY_SHUTDOWN_PERCENT=8 ; BATTERY_CELLS=2
 
     local f="$1"
     if [ -r "$f" ]; then
@@ -64,6 +66,18 @@ load_config() {
         # shellcheck disable=SC1090
         . "$f"
         set +a
+    fi
+}
+
+# The address to hand the team: https://<ip> with TLS on, else http://<ip>[:port].
+console_url() {
+    local ip="${1:-}"
+    [ -n "$ip" ] || ip="$(hostname -I 2>/dev/null | awk '{print $1}')"
+    if [ "${TLS:-on}" = "on" ]; then
+        echo "https://${ip}"
+    else
+        local port=""; [ "${API_PORT:-80}" != "80" ] && port=":${API_PORT}"
+        echo "http://${ip}${port}"
     fi
 }
 
@@ -75,6 +89,40 @@ mount_store() {
     mkdir -p "$HUMINT_DATA"
     mountpoint -q "$HUMINT_DATA" || mount "/dev/mapper/$HUMINT_MAP" "$HUMINT_DATA"
     touch "$HUMINT_READY"
+}
+
+# One wrong-PIN count for every way a PIN can be entered (keyboard, touch
+# screen), so having two inputs never means twice the guesses. Kept in /run:
+# a reboot starts the count again, as it always has.
+UNLOCK_TRIES_FILE=/run/humint/unlock-tries
+UNLOCK_MAX_TRIES="${HUMINT_UNLOCK_TRIES:-5}"
+
+unlock_tries() { cat "$UNLOCK_TRIES_FILE" 2>/dev/null || echo 0; }
+unlock_locked_out() { [ "$(unlock_tries)" -ge "$UNLOCK_MAX_TRIES" ]; }
+
+# try_unlock: PIN on stdin. 0 opened and console starting, 1 wrong PIN,
+# 3 locked out (too many tries), 4 no store yet, 5 already open.
+try_unlock() {
+    mkdir -p /run/humint
+    exec 9>/run/humint/unlock.lock
+    flock 9
+    [ -f "$HUMINT_IMG" ] || return 4
+    if [ -e "/dev/mapper/$HUMINT_MAP" ]; then return 5; fi
+    unlock_locked_out && return 3
+    local pin
+    IFS= read -r pin || true
+    [ -n "$pin" ] || return 1
+    if printf '%s' "$pin" | cryptsetup open --key-file=- "$HUMINT_IMG" "$HUMINT_MAP" 2>/dev/null; then
+        unset pin
+        echo 0 >"$UNLOCK_TRIES_FILE"
+        mount_store
+        start_console
+        return 0
+    fi
+    unset pin
+    echo $(( $(unlock_tries) + 1 )) >"$UNLOCK_TRIES_FILE"
+    unlock_locked_out && return 3
+    return 1
 }
 
 # Bring the console up: database, then API and worker (ordering is in the

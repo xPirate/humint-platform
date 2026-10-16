@@ -1,0 +1,17 @@
+[Unit]
+Description=HUMINT field server — find the attached screen (and set up the 5" touch driver once)
+# Early, so a screen that needs its driver loaded reboots before first-boot
+# setup starts, and so the panel and unlock know what they are working with.
+After=systemd-modules-load.service systemd-udev-settle.service
+Wants=systemd-udev-settle.service
+Before=humint-panel.service humint-unlock.service humint-firstboot.service humint-status.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+# The GPU driver can take a few seconds to register its connectors.
+ExecStartPre=/bin/sh -c 'for i in 1 2 3 4 5 6 7 8; do ls /sys/class/drm/card*-* >/dev/null 2>&1 && break; sleep 1; done; true'
+ExecStart=/usr/bin/python3 /opt/humint/bin/humint-display.py boot
+
+[Install]
+WantedBy=multi-user.target

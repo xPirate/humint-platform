@@ -1,0 +1,11 @@
+#!/bin/sh
+# The box got a new address (a different Wi-Fi, a cable, a new DHCP lease):
+# reissue the console's certificate to cover it, if it does not already.
+# Cheap when nothing changed — humint-tls.sh checks before it issues.
+case "$2" in
+    up|dhcp4-change|connectivity-change) ;;
+    *) exit 0 ;;
+esac
+[ -f /run/humint-data.ready ] || exit 0
+/opt/humint/bin/humint-tls.sh enabled || exit 0
+/opt/humint/bin/humint-tls.sh ensure --restart >/dev/null 2>&1 || true

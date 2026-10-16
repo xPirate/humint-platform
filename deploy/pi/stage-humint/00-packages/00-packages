@@ -19,3 +19,7 @@ fonts-dejavu-core
 tesseract-ocr
 poppler-utils
 postgresql-common
+# touch control panel: drawn with SDL on KMS, touch/keys via evdev, QR codes
+python3-pygame
+python3-evdev
+python3-qrcode

@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+# Start the console's web server: HTTPS on 443 when TLS is on (the default),
+# plain HTTP on API_PORT when it is off. Runs as humintd; the settings come
+# from the store's humint.env via the unit's EnvironmentFile.
+set -euo pipefail
+cd /opt/humint-platform/api
+TLS_DIR=/srv/humint-data/tls
+if [ "${TLS:-on}" = "on" ]; then
+    exec /opt/humint/venv/bin/uvicorn main:app --host 0.0.0.0 --port "${HTTPS_PORT:-443}" \
+        --ssl-keyfile "$TLS_DIR/server.key" --ssl-certfile "$TLS_DIR/server.crt"
+fi
+exec /opt/humint/venv/bin/uvicorn main:app --host 0.0.0.0 --port "${API_PORT:-80}"

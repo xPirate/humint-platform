@@ -26,6 +26,7 @@ import audit
 import audit_api
 import auth
 import backup
+import field_sync
 import branding
 import bulk_import
 import contacts
@@ -143,6 +144,7 @@ app.include_router(preferences.router)
 app.include_router(assistant.router)
 app.include_router(destroy.router)
 app.include_router(backup.router)
+app.include_router(field_sync.router)
 app.include_router(audit_api.router)
 
 class RevalidatingStatic(StaticFiles):

@@ -13,8 +13,12 @@ Group=humintd
 # Settings and the database password live INSIDE the encrypted store.
 EnvironmentFile=/srv/humint-data/humint.env
 WorkingDirectory=/opt/humint-platform/api
-ExecStart=/opt/humint/venv/bin/uvicorn main:app --host 0.0.0.0 --port ${API_PORT} --proxy-headers
-# Lets an unprivileged account serve on port 80, so phones need no :port.
+# With TLS on (the default): make sure the certificate exists and covers this
+# box's current addresses — as root ("+"), since the CA key is root-only —
+# then serve HTTPS on 443. humint-api-run picks HTTPS or HTTP from TLS=.
+ExecStartPre=+/bin/sh -c 'if [ "$${TLS:-on}" = on ]; then /opt/humint/bin/humint-tls.sh ensure; fi'
+ExecStart=/opt/humint/bin/humint-api-run
+# Lets an unprivileged account serve on 443 (or 80), so phones need no :port.
 AmbientCapabilities=CAP_NET_BIND_SERVICE
 CapabilityBoundingSet=CAP_NET_BIND_SERVICE
 NoNewPrivileges=yes

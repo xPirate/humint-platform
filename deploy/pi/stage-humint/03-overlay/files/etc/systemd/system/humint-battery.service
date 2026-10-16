@@ -1,0 +1,14 @@
+[Unit]
+Description=HUMINT field server — battery gauge and low-battery shutdown (Waveshare UPS HAT)
+After=local-fs.target
+
+[Service]
+Type=simple
+ExecStart=/opt/humint/venv/bin/python3 /opt/humint/bin/humint-battery.py
+# Exits 0 when no UPS HAT is fitted (BATTERY=auto), so it does not respawn
+# on a box running from mains or a plain power bank.
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

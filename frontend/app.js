@@ -8924,6 +8924,7 @@ const SUGGESTION_SOURCE_LABELS = {
   signal: { label: "Correlation signal", hint: "A rule matched existing entities. No model involved." },
   assistant: { label: "Assistant", hint: "Proposed by the assistant." },
   manual: { label: "Added by hand", hint: "Added by hand from this document." },
+  field: { label: "Field server", hint: "Came home in a field server's package. Nothing is in the case file until you accept it." },
 };
 
 function sourcePillHtml(source) {
@@ -8955,6 +8956,7 @@ function signalLabel(name) {
 function evidenceHtml(s) {
   const ev = s.evidence;
   if (!ev || typeof ev !== "object") return "";
+  if (s.source === "field") return fieldEvidenceHtml(s);
   const headline = ev.rule ? `<div class="evidence-headline">${escapeHtml(ev.rule)}</div>` : "";
   const chips = (ev.signals || []).map((name) =>
     `<span class="signal-chip">${escapeHtml(signalLabel(name))}</span>`).join("");
@@ -9180,6 +9182,7 @@ async function acceptDocumentRelationship(s, reload) {
 }
 
 function extractionCardHtml(s) {
+  if (s.source === "field" && s.suggestion_type === "entity") return fieldEntityCardHtml(s);
   if (s.suggestion_type === "relationship" && s.suggested_from_entity_id && s.suggested_to_entity_id) {
     return resolvedRelationshipCardHtml(s);
   }
@@ -9215,9 +9218,10 @@ function extractionCardHtml(s) {
   return `
     <div class="queue-card" data-suggestion-id="${s.id}">
       <div class="queue-card-head">
-        <span><strong>${escapeHtml(s.suggested_from_name)}</strong> &mdash; ${escapeHtml(s.suggested_relationship_type)} → <strong>${escapeHtml(s.suggested_to_name)}</strong></span>
-        <span class="queue-score">${Math.round((s.confidence || 0) * 100)}% confidence</span>
+        <span>${sourcePillHtml(s.source)}<strong>${escapeHtml(s.suggested_from_name)}</strong> &mdash; ${escapeHtml(s.suggested_relationship_type)} → <strong>${escapeHtml(s.suggested_to_name)}</strong></span>
+        <span class="queue-score">${s.confidence == null ? "" : Math.round(s.confidence * 100) + "% confidence"}</span>
       </div>
+      ${s.source === "field" ? evidenceHtml(s) : ""}
       ${s.status === "pending" ? `
         <div id="rel-accept-${s.id}">
           ${endpointHtml(s, "from")}
@@ -9237,6 +9241,7 @@ function wireExtractionCard(s) {
     a.addEventListener("click", (e) => { e.preventDefault(); openEntityDetail(a.dataset.openEntity); });
   });
   if (s.status !== "pending") return;
+  if (s.source === "field" && s.suggestion_type === "entity") { wireFieldEntityCard(s); return; }
 
   const resolvedBtn = document.querySelector(`[data-accept-resolved="${s.id}"]`);
   if (resolvedBtn) {
@@ -11685,6 +11690,7 @@ const ADMIN_LOADERS = {
   retention: () => loadRetention(),
   audit: () => {},
   backup: () => {},
+  fieldsync: () => loadFieldSync(),
 };
 
 function showAdminSection(key, remember) {
@@ -12765,6 +12771,225 @@ document.getElementById("audit-export-btn").addEventListener("click", () => {
 // handler above, driven by data-back — giving this button its own click
 // handler as well would fire switchView twice, once with an undefined view.
 document.getElementById("admin-open-audit").addEventListener("click", () => switchView("audit"));
+
+/* ============================================================================
+ * Field server proposals in the Review queue
+ *
+ * Two shapes. A record the field server MADE: accept it as new, or say it is
+ * one HQ already has (the matches the server found are offered, best first,
+ * and an exact one is preselected — a duplicate is the likelier mistake).
+ * A record HQ already had and the field CHANGED: each changed field, HQ's
+ * value beside the field's, ticked by default; apply the ones you agree with.
+ * ========================================================================== */
+
+const FIELD_LABELS = { name: "Name", description: "Description", is_active: "Active" };
+
+function fieldLabel(key) {
+  if (FIELD_LABELS[key]) return FIELD_LABELS[key];
+  const k = key.startsWith("details.") ? key.slice(8) : key;
+  return k.replace(/_/g, " ").replace(/^./, (c) => c.toUpperCase());
+}
+
+function fieldValueHtml(v) {
+  if (v === null || v === undefined || v === "") return '<span class="muted">—</span>';
+  if (Array.isArray(v)) return escapeHtml(v.join(", "));
+  if (typeof v === "boolean") return v ? "yes" : "archived";
+  return escapeHtml(String(v));
+}
+
+function fieldEvidenceHtml(s) {
+  const ev = s.evidence || {};
+  const from = ev.origin_name ? `from ${escapeHtml(ev.origin_name)}` : "from a field server";
+  if (s.suggestion_type === "relationship") {
+    const bits = [];
+    if (ev.confidence) bits.push(`graded ${escapeHtml(String(ev.confidence))} there`);
+    if (ev.notes) bits.push(`&ldquo;${escapeHtml(ev.notes)}&rdquo;`);
+    const waiting = !(s.suggested_from_entity_id && s.suggested_to_entity_id)
+      ? `<div class="field-hint">Accept the field server's new records first and this link fills in by itself.</div>` : "";
+    return `<div class="evidence"><div class="evidence-headline">Linked on the field server ${from}${bits.length ? " &mdash; " + bits.join("; ") : ""}</div>${waiting}</div>`;
+  }
+  return "";
+}
+
+function fieldEntityCardHtml(s) {
+  const ev = s.evidence || {};
+  const head = `
+    <div class="queue-card-head">
+      <span>${sourcePillHtml("field")}
+        <span class="type-pill type-${escapeHtml(s.suggested_entity_type)}">${escapeHtml(s.suggested_entity_type)}</span>
+        <strong>${escapeHtml(s.suggested_name)}</strong></span>
+      <span class="queue-score">${escapeHtml(ev.origin_name || "")}</span>
+    </div>`;
+
+  if (ev.kind === "field_edit") {
+    const rows = (ev.changes || []).map((c, i) => `
+      <tr>
+        <td><input type="checkbox" id="fs-${s.id}-${i}" data-field-change="${escapeHtml(c.field)}" checked></td>
+        <td><label for="fs-${s.id}-${i}">${escapeHtml(fieldLabel(c.field))}</label></td>
+        <td class="fs-hq">${fieldValueHtml(c.hq)}</td>
+        <td class="fs-field">${fieldValueHtml(c.field_value)}</td>
+      </tr>`).join("");
+    return `
+      <div class="queue-card field-card" data-suggestion-id="${s.id}">
+        ${head}
+        <p class="field-hint">Changed on the field server. This record is
+          <a href="#" class="entity-link" data-open-entity="${escapeHtml(ev.entity_id)}">already in the case file</a>.</p>
+        <table class="fs-diff">
+          <thead><tr><th></th><th>Field</th><th>HQ now</th><th>Field server</th></tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+        <div class="queue-actions">
+          <button class="btn-primary btn-sm" data-field-apply="${s.id}">Apply ticked changes</button>
+          <button class="btn-danger btn-sm" data-reject="${s.id}">Keep HQ's</button>
+        </div>
+      </div>`;
+  }
+
+  const details = Object.entries(s.details || {}).map(([k, v]) =>
+    `<li>${escapeHtml(fieldLabel(k))}: ${fieldValueHtml(v)}</li>`).join("");
+  const matches = ev.possible_matches || [];
+  const preselect = matches.length && matches[0].likeness >= 1 ? matches[0].id : "";
+  const choices = matches.length ? `
+    <div class="endpoint-choices fs-choices">
+      <label class="endpoint-choice"><input type="radio" name="fs-choice-${s.id}" value=""${preselect ? "" : " checked"}>
+        A new record</label>
+      ${matches.map((m) => `
+        <label class="endpoint-choice"><input type="radio" name="fs-choice-${s.id}" value="${escapeHtml(m.id)}"${m.id === preselect ? " checked" : ""}>
+          Same as <a href="#" class="entity-link" data-open-entity="${escapeHtml(m.id)}">${escapeHtml(m.name)}</a>
+          <span class="muted">(${Math.round((m.likeness || 0) * 100)}% alike)</span></label>`).join("")}
+    </div>` : `<p class="field-hint">Nothing in the case file looks like this. It will be a new record.</p>`;
+  return `
+    <div class="queue-card field-card" data-suggestion-id="${s.id}">
+      ${head}
+      ${ev.description ? `<p class="fs-desc">${escapeHtml(ev.description)}</p>` : ""}
+      ${details ? `<ul class="queue-detail-list">${details}</ul>` : ""}
+      ${ev.is_active === false ? `<p class="field-hint">Archived on the field server.</p>` : ""}
+      ${choices}
+      <div class="queue-actions">
+        <button class="btn-primary btn-sm" data-field-accept="${s.id}">Accept</button>
+        <button class="btn-danger btn-sm" data-reject="${s.id}">Reject</button>
+      </div>
+    </div>`;
+}
+
+function wireFieldEntityCard(s) {
+  const done = (msg) => { showToast(msg); loadExtractionQueue(); refreshQueueBadges(); };
+  const apply = document.querySelector(`[data-field-apply="${s.id}"]`);
+  if (apply) apply.addEventListener("click", async () => {
+    const chosen = [...document.querySelectorAll(`[data-suggestion-id="${s.id}"] [data-field-change]`)]
+      .filter((b) => b.checked).map((b) => b.dataset.fieldChange);
+    if (!chosen.length) { showToast("Tick at least one change, or keep HQ's", true); return; }
+    try {
+      await api(`/api/extraction-suggestions/${s.id}/accept`, { method: "POST", body: { apply: chosen } });
+      done(`Applied ${chosen.length} change${chosen.length > 1 ? "s" : ""}`);
+    } catch (err) { showToast(err.message, true); }
+  });
+  const accept = document.querySelector(`[data-field-accept="${s.id}"]`);
+  if (accept) accept.addEventListener("click", async () => {
+    const picked = document.querySelector(`input[name="fs-choice-${s.id}"]:checked`);
+    const existing = picked ? picked.value : "";
+    try {
+      await api(`/api/extraction-suggestions/${s.id}/accept`, {
+        method: "POST", body: existing ? { use_existing_entity_id: existing } : {} });
+      done(existing ? "Matched to the existing record" : "Accepted as a new record");
+    } catch (err) { showToast(err.message, true); }
+  });
+  const reject = document.querySelector(`[data-reject="${s.id}"]`);
+  if (reject) reject.addEventListener("click", async () => {
+    try {
+      await api(`/api/extraction-suggestions/${s.id}/reject`, { method: "POST" });
+      done("Dismissed");
+    } catch (err) { showToast(err.message, true); }
+  });
+}
+
+/* ============================================================================
+ * Field sync (Admin page)
+ * ========================================================================== */
+
+function fsWhen(v) { return v ? new Date(v).toLocaleString() : "never"; }
+
+async function loadFieldSync() {
+  const statusEl = document.getElementById("fieldsync-status");
+  const listEl = document.getElementById("fieldsync-imports");
+  try {
+    const st = await api("/api/field-sync/status");
+    const p = st.pending_export || {};
+    const total = (p.entities || 0) + (p.relationships || 0) + (p.reports || 0) + (p.submissions || 0);
+    statusEl.innerHTML = `
+      <strong>${escapeHtml(st.instance_name || "This console")}</strong>
+      ${st.seeded_at ? `· loaded from HQ ${escapeHtml(fsWhen(st.seeded_at))}` : "· never loaded from a backup"}<br>
+      Last package: ${escapeHtml(fsWhen(st.exports && st.exports[0] && st.exports[0].exported_at))}.<br>
+      Since then: ${total ? `${p.entities} record(s), ${p.relationships} link(s), ${p.reports} report(s), ${p.submissions} phone report(s)` : "nothing new"}.`;
+    listEl.innerHTML = (st.imports || []).length ? st.imports.map((i) => {
+      const c = i.counts || {}; const e = c.entities || {}; const r = c.relationships || {}; const b = c.inbox || {};
+      return `<div class="feed-item">
+        <strong>${escapeHtml(i.origin_name || "Field server")}</strong>
+        <span class="muted">exported ${escapeHtml(fsWhen(i.exported_at))}, imported ${escapeHtml(fsWhen(i.imported_at))}</span>
+        <div class="field-hint">${e.new || 0} new, ${e.changed || 0} changed, ${r.proposed || 0} links, ${(b.reports || 0) + (b.phone_reports || 0)} reports
+          &mdash; <strong>${i.pending_proposals}</strong> still to review, <strong>${i.pending_reports}</strong> in the inbox</div>
+      </div>`;
+    }).join("") : '<p class="empty-state">No field packages imported here.</p>';
+  } catch (err) {
+    statusEl.textContent = err.message;
+  }
+}
+
+document.getElementById("fieldsync-export-btn").addEventListener("click", async () => {
+  const btn = document.getElementById("fieldsync-export-btn");
+  const mode = document.getElementById("fieldsync-mode").value;
+  btn.disabled = true; btn.textContent = "Building…";
+  try {
+    // POST, so it is a fetch rather than a navigation; a field package is
+    // small next to a backup — the field's own work, not the whole case.
+    const res = await fetch("/api/field-sync/export", {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ mode }) });
+    if (!res.ok) {
+      let msg = `HTTP ${res.status}`;
+      try { msg = (await res.json()).detail || msg; } catch (e) { /* not JSON */ }
+      throw new Error(msg);
+    }
+    const blob = await res.blob();
+    const cd = res.headers.get("Content-Disposition") || "";
+    const m = cd.match(/filename="?([^";]+)"?/);
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = m ? m[1] : "field-package.zip";
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 10000);
+    showToast("Field package downloaded");
+    loadFieldSync();
+  } catch (err) { showToast(err.message, true); }
+  finally { btn.disabled = false; btn.textContent = "Export field package"; }
+});
+
+document.getElementById("fieldsync-import-btn").addEventListener("click", async () => {
+  const input = document.getElementById("fieldsync-file");
+  const out = document.getElementById("fieldsync-result");
+  const file = input.files && input.files[0];
+  out.hidden = false;
+  if (!file) { out.className = "restore-result error"; out.textContent = "Choose a field package .zip first."; return; }
+  const btn = document.getElementById("fieldsync-import-btn");
+  btn.disabled = true; btn.textContent = "Importing…";
+  out.className = "restore-result"; out.textContent = "Uploading…";
+  const fd = new FormData(); fd.append("file", file);
+  try {
+    const r = await apiUpload("/api/field-sync/import", fd);
+    const c = r.counts || {}; const e = c.entities || {}; const l = c.relationships || {}; const b = c.inbox || {};
+    out.className = "restore-result";
+    out.innerHTML = `Imported from <strong>${escapeHtml(r.origin_name || "a field server")}</strong>:
+      ${e.new || 0} new record(s) and ${e.changed || 0} change(s)${e.unchanged ? `, ${e.unchanged} unchanged` : ""};
+      ${l.proposed || 0} link(s)${l.already_known ? `, ${l.already_known} already known` : ""};
+      ${(b.reports || 0) + (b.phone_reports || 0)} report(s) to the Field inbox.
+      <br><a href="#" id="fieldsync-to-review">Open the Review queue</a>`;
+    const go = document.getElementById("fieldsync-to-review");
+    if (go) go.addEventListener("click", (ev) => { ev.preventDefault(); switchView("review"); });
+    input.value = "";
+    refreshQueueBadges();
+    loadFieldSync();
+  } catch (err) { out.className = "restore-result error"; out.textContent = err.message; }
+  finally { btn.disabled = false; btn.textContent = "Import field package"; }
+});
 
 /* ============================================================================
  * Backup & Restore (Admin page)

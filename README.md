@@ -230,6 +230,14 @@ give you an address can very often point at the roof. The pin becomes a
 Location record — with real coordinates — when the report is filed, and
 nothing at all if the debrief is abandoned.
 
+**A field server that brings its work home.** Take a console off-site — on a
+[Raspberry Pi in a bag](deploy/pi/README.md), its own Wi-Fi, the case file
+encrypted — and when the team is back, export one package and import it at
+HQ. Nothing is overwritten: new records arrive as proposals with HQ's
+lookalikes offered beside them, changes to HQ's records arrive field by field
+to apply or not, and reports land in the field inbox. See
+[Field sync](docs/how-to/field-sync.md).
+
 **An audit trail.** Every write, who did it and from where, with optional
 syslog forwarding. Whole-instance backup and restore as a single zip. Admins
 can delete noise permanently, previewed and audited; everyone else archives.
@@ -274,6 +282,7 @@ see [the exercise briefing](docs/exercise/BRIEFING.md).*
 | [Upgrade](docs/how-to/upgrade.md) · [Back up and restore](docs/how-to/backup-and-restore.md) · [Users and profiles](docs/how-to/users-and-profiles.md) | Keeping an instance running. |
 | [Review and merge](docs/how-to/review-and-merge.md) · [Records and links](docs/how-to/records-and-links.md) · [Reports and exports](docs/how-to/reports-and-exports.md) | The analyst's working loop. |
 | [Field devices](docs/how-to/field-devices.md) · [Field reports](docs/how-to/field-reports.md) · [Team relay](docs/how-to/field-relay.md) · [Release the field app](docs/how-to/release-the-field-app.md) | Phones and relay tablets: enrolling, reporting, deploying a relay, and publishing the app on GitHub and Google Play. |
+| [Field server on a Pi](deploy/pi/README.md) · [Field sync](docs/how-to/field-sync.md) | A flashable, offline Pi appliance that is the console on a deployment — encrypted case file, its own hotspot, HTTPS, a touch-screen panel, a battery gauge — and bringing its work home to HQ for review. |
 | [Fix common problems](docs/how-to/troubleshooting.md) | What to check, and the commands to check it. |
 | [The companion app](android/README.md) | Building, testing and signing the Android app, what it keeps on the handset and what it deliberately does not. |
 | [Design notes](docs/DESIGN.md) | The long-form reference: what everything does and why it works that way. Read it when you want to know the reasoning, not the steps. |

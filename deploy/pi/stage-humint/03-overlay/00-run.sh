@@ -18,10 +18,18 @@ install -m 644 files/boot/humint-appliance.conf.example "${BOOT}/humint-applianc
 
 chmod 0755 "${ROOTFS_DIR}"/opt/humint/bin/*.sh \
            "${ROOTFS_DIR}"/opt/humint/bin/*.py \
-           "${ROOTFS_DIR}"/opt/humint/bin/humint-ctl
+           "${ROOTFS_DIR}"/opt/humint/bin/humint-ctl \
+           "${ROOTFS_DIR}"/opt/humint/bin/humint-api-run \
+           "${ROOTFS_DIR}"/opt/humint/bin/humint-unlock-try
+# NetworkManager runs dispatcher scripts only if root-owned and not writable
+# by anyone else.
+chown root:root "${ROOTFS_DIR}"/etc/NetworkManager/dispatcher.d/90-humint-tls
+chmod 0755 "${ROOTFS_DIR}"/etc/NetworkManager/dispatcher.d/90-humint-tls
 ln -sf /opt/humint/bin/humint-ctl "${ROOTFS_DIR}/usr/local/bin/humint-ctl"
 
-install -d -m 700 "${ROOTFS_DIR}/var/lib/humint"
+# Readable directory, private files: env (Wi-Fi passphrase) is 600 on its
+# own; ca.crt and its fingerprint are public by design.
+install -d -m 755 "${ROOTFS_DIR}/var/lib/humint"
 install -d "${ROOTFS_DIR}/srv" "${ROOTFS_DIR}/srv/humint-data"
 
 on_chroot <<'CHROOT'
@@ -32,8 +40,11 @@ systemctl enable ssh.service || true
 systemctl enable humint-firstboot.service
 systemctl enable humint-unlock.service
 systemctl enable humint-status.service
-# Deliberately NOT enabled: humint.target, humint-api, humint-worker and the
-# PostgreSQL cluster. They need the encrypted store, so only humint-unlock
+systemctl enable humint-display.service
+systemctl enable humint-panel.service
+systemctl enable humint-battery.service
+# Deliberately NOT enabled: humint.target, humint-api, humint-worker,
+# humint-http and the PostgreSQL cluster. They need the encrypted store, so only humint-unlock
 # (or first boot) starts them, after the PIN.
 systemctl daemon-reload 2>/dev/null || true
 CHROOT

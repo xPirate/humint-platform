@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+# Try one PIN, read from stdin, against the case store. Used by the touch
+# panel; the keyboard prompt (humint-unlock.sh) goes through the same
+# try_unlock, so both share one count of wrong attempts.
+#   exit 0 opened · 1 wrong · 3 locked out · 4 no store yet · 5 already open
+set -uo pipefail
+# shellcheck source=/dev/null
+. /opt/humint/lib/humint-common.sh
+[ "$(id -u)" -eq 0 ] || { echo "must run as root" >&2; exit 2; }
+try_unlock

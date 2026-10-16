@@ -18,17 +18,38 @@ WIDTH, HEIGHT = 128, 64
 
 
 def mode():
-    """auto / ssd1306 / none, from the saved appliance config."""
+    """auto / ssd1306 / none, from the saved appliance config. SCREEN=none
+    switches the OLED off too."""
+    found = {}
     try:
         for line in open("/var/lib/humint/env"):
-            if line.startswith("OLED="):
-                return line.split("=", 1)[1].strip().strip('"').lower() or "auto"
+            for key in ("OLED", "SCREEN"):
+                if line.startswith(key + "="):
+                    found[key] = line.split("=", 1)[1].strip().strip('"').lower()
     except OSError:
         pass
-    return "auto"
+    if found.get("SCREEN") == "none":
+        return "none"
+    return found.get("OLED") or "auto"
+
+
+def publish(lines):
+    """The same lines, for the touch panel (humint-panel.py), which shows
+    whatever setup and unlock are saying before the console is up."""
+    import json
+    import time
+    try:
+        os.makedirs("/run/humint", exist_ok=True)
+        tmp = "/run/humint/message.json.tmp"
+        with open(tmp, "w") as fh:
+            json.dump({"lines": [str(x) for x in lines if str(x)], "time": time.time()}, fh)
+        os.replace(tmp, "/run/humint/message.json")
+    except OSError:
+        pass
 
 
 def main(lines):
+    publish(lines)
     if mode() == "none":
         return 0
     try:
