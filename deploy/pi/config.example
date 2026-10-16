@@ -1,0 +1,46 @@
+# pi-gen configuration for the HUMINT field-server image.
+#
+# How to build (on a Debian/Ubuntu x86-64 machine or in Docker):
+#
+#   git clone https://github.com/RPi-Distro/pi-gen
+#   cd pi-gen
+#   cp -r /path/to/humint-platform/deploy/pi/stage-humint ./stage-humint
+#   cp /path/to/humint-platform/deploy/pi/config.example ./config
+#   # edit ./config: set HUMINT_SRC_DIR to your humint-platform checkout
+#   sudo ./build.sh            # or ./build-docker.sh
+#
+# The finished .img lands in pi-gen/deploy/. Flash it with Raspberry Pi
+# Imager (or balenaEtcher), then edit humint-appliance.conf on the card's
+# boot partition before the first boot. See deploy/pi/README.md.
+
+IMG_NAME="humint-field"
+RELEASE="bookworm"
+
+# A Lite (headless, no desktop) image: stage0-2 is the base, then our stage.
+# Point STAGE_LIST at wherever you copied stage-humint inside pi-gen.
+STAGE_LIST="stage0 stage1 stage2 ./stage-humint"
+
+# 64-bit. A Pi 4 or Pi 5 is the target.
+ARCH="arm64"
+
+# The operator account on the device.
+FIRST_USER_NAME="humint"
+# Set a password, or (better) configure SSH keys after flashing. Do not ship
+# a shared default into the field.
+FIRST_USER_PASS="change-me-before-building"
+DISABLE_FIRST_BOOT_USER_RENAME=1
+
+# Locale/keyboard — match where it will be used (the keyboard layout matters
+# for typing the PIN).
+TIMEZONE_DEFAULT="Etc/UTC"
+LOCALE_DEFAULT="en_US.UTF-8"
+KEYBOARD_KEYMAP="us"
+KEYBOARD_LAYOUT="English (US)"
+
+# Turn on SSH so you can manage the box without a monitor.
+ENABLE_SSH=1
+
+# ---- HUMINT build settings (read by stage-humint) ----
+# REQUIRED: path to your checkout of the humint-platform repository. Its code
+# is copied into the image; the Docker images are built on the first boot.
+HUMINT_SRC_DIR="/path/to/humint-platform"

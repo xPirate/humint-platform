@@ -19,6 +19,7 @@ by the job you are trying to do.
 | [Set up field devices](field-devices.md) | Enrolling a phone, showing and printing its code, revoking it, putting the app on the handset. |
 | [Configure the instance](configure-the-instance.md) | Admin settings: feeds, maps, boards, link signals, retention, appearance, the model, the audit log. |
 | [Release the field app](release-the-field-app.md) | Building and signing an APK, publishing on GitHub, and publishing on Google Play. |
+| [Field server on a Raspberry Pi](../../deploy/pi/README.md) | A flashable Pi image that is the console in the field: its own Wi-Fi hotspot, the case file encrypted and unlocked by a PIN at boot, a status screen. For extended deployments, runs on a battery. |
 | [Fix common problems](troubleshooting.md) | What to check when something misbehaves, and the commands to check it. |
 
 ## Working the case (analysts)

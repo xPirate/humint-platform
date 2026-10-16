@@ -1,0 +1,17 @@
+[Unit]
+Description=HUMINT field server — start the console containers
+# Only when the case store is actually mounted (unlock succeeded, or first
+# boot set it up). If the PIN was never entered, this never runs.
+ConditionPathExists=/run/humint-data.ready
+After=humint-firstboot.service humint-unlock.service
+Wants=humint-firstboot.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+ExecStart=/opt/humint/bin/humint-compose.sh
+TimeoutStartSec=600
+
+[Install]
+WantedBy=multi-user.target

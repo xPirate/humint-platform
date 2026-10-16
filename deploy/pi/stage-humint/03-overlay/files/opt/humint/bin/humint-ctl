@@ -1,0 +1,124 @@
+#!/usr/bin/env bash
+# Operator command for the HUMINT field server. Run it over SSH or on the
+# console. Everything the little screen shows, plus the things you cannot do
+# from a screen: switch network mode, change the PIN, re-lock the case file
+# without a reboot, and bring the console up or down.
+set -euo pipefail
+# shellcheck source=/dev/null
+. /opt/humint/lib/humint-common.sh
+load_config "$HUMINT_ENV"
+
+need_root() { [ "$(id -u)" -eq 0 ] || exec sudo "$0" "$@"; }
+
+usage() {
+    cat <<EOF
+humint-ctl — HUMINT field server
+
+  status                 network, services and system at a glance
+  url                    just the address to hand the team
+  screen "L1" "L2" ...   write a message to the OLED
+
+  up | down | restart    the console containers
+  lock                   stop the console and re-lock the case file now
+  rebuild                rebuild the console images (needs internet)
+
+  net hotspot            switch to being the Wi-Fi access point
+  net client SSID [PSK]  join an existing Wi-Fi and serve on it
+  net wired              Ethernet only, Wi-Fi off
+  pin                    change the unlock PIN
+
+  shutdown | reboot      power off / restart safely
+  logs [service]         console logs (or firstboot/unlock logs)
+EOF
+}
+
+cmd_status() {
+    local ip port url ssid
+    ip="$(hostname -I 2>/dev/null | awk '{print $1}')"
+    port=""; [ "${API_PORT:-80}" != "80" ] && port=":${API_PORT}"
+    url="http://${ip}${port}"
+    echo "Host     : $(hostname) (${HOSTNAME}.local)"
+    echo "URL      : $url"
+    case "${NET_MODE:-}" in
+        hotspot) echo "Network  : hotspot — SSID '${AP_SSID}' (${AP_BAND})";;
+        client)  echo "Network  : client — '${CLIENT_SSID}'";;
+        wired)   echo "Network  : wired${WIRED_DHCP_SERVER:+ (serving DHCP)}";;
+    esac
+    if mountpoint -q "$HUMINT_DATA"; then
+        echo "Case file: OPEN"
+        local free; free="$(df -h --output=avail "$HUMINT_DATA" 2>/dev/null | tail -1 | tr -d ' ')"
+        echo "Free     : ${free:-?} on the case store"
+    else
+        echo "Case file: LOCKED"
+    fi
+    if command -v docker >/dev/null && docker info >/dev/null 2>&1; then
+        echo "Services :"
+        docker ps --format '  {{.Names}}  {{.Status}}' | grep -Ei 'db|api|worker|ollama' || echo "  (none running)"
+    else
+        echo "Services : Docker not running"
+    fi
+    local t; t="$(cat /sys/class/thermal/thermal_zone0/temp 2>/dev/null || true)"
+    [ -n "$t" ] && echo "Temp     : $((t / 1000)) C"
+}
+
+cmd_net() {
+    need_root "$@"
+    local mode="${1:-}"; shift || true
+    case "$mode" in
+        hotspot) sed -i 's/^NET_MODE=.*/NET_MODE=hotspot/' "$HUMINT_ENV" ;;
+        client)
+            local ssid="${1:-}" psk="${2:-}"
+            [ -n "$ssid" ] || die "net client needs an SSID"
+            sed -i 's/^NET_MODE=.*/NET_MODE=client/' "$HUMINT_ENV"
+            sed -i "s/^CLIENT_SSID=.*/CLIENT_SSID=$ssid/" "$HUMINT_ENV"
+            sed -i "s/^CLIENT_PSK=.*/CLIENT_PSK=$psk/" "$HUMINT_ENV"
+            ;;
+        wired)   sed -i 's/^NET_MODE=.*/NET_MODE=wired/' "$HUMINT_ENV" ;;
+        *) die "net needs: hotspot | client SSID [PSK] | wired" ;;
+    esac
+    /opt/humint/bin/humint-net.sh deploy
+    echo "Network switched to $mode."
+}
+
+cmd_pin() {
+    need_root "$@"
+    mountpoint -q "$HUMINT_DATA" || die "unlock the case file first (it must be open to change its PIN)"
+    echo "Changing the unlock PIN. Enter the current PIN, then the new one."
+    cryptsetup luksChangeKey "$HUMINT_IMG"
+    echo "PIN changed."
+}
+
+cmd_lock() {
+    need_root "$@"
+    cd "$HUMINT_SRC" && docker compose down || true
+    systemctl stop docker docker.socket 2>/dev/null || true
+    umount "$HUMINT_DATA" 2>/dev/null || true
+    cryptsetup close "$HUMINT_MAP" 2>/dev/null || true
+    rm -f "$HUMINT_READY"
+    echo "Case file re-locked. Reboot (or run the unlock service) to open it again."
+}
+
+main() {
+    local c="${1:-status}"; shift || true
+    case "$c" in
+        status)   cmd_status ;;
+        url)      cmd_status | awk -F': ' '/^URL/{print $2}' ;;
+        screen)   oled "$@" ;;
+        up)       need_root "$@"; cd "$HUMINT_SRC" && docker compose up -d ;;
+        down)     need_root "$@"; cd "$HUMINT_SRC" && docker compose down ;;
+        restart)  need_root "$@"; cd "$HUMINT_SRC" && docker compose restart ;;
+        rebuild)  need_root "$@"; cd "$HUMINT_SRC" && docker compose build && docker compose up -d ;;
+        lock)     cmd_lock "$@" ;;
+        net)      cmd_net "$@" ;;
+        pin)      cmd_pin "$@" ;;
+        shutdown) need_root "$@"; systemctl poweroff ;;
+        reboot)   need_root "$@"; systemctl reboot ;;
+        logs)
+            if [ "${1:-}" = "firstboot" ]; then tail -n 200 -F "$HUMINT_STATE/firstboot.log"
+            else cd "$HUMINT_SRC" && docker compose logs -f "${1:-}"; fi ;;
+        -h|--help|help) usage ;;
+        *) usage; exit 2 ;;
+    esac
+}
+
+main "$@"

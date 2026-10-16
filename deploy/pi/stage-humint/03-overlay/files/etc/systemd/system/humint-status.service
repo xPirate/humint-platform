@@ -1,0 +1,16 @@
+[Unit]
+Description=HUMINT field server — OLED status screen
+After=humint-compose.service
+Wants=humint-compose.service
+
+[Service]
+Type=simple
+Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+ExecStart=/opt/humint/venv/bin/python3 /opt/humint/bin/humint-status.py
+# Exits 0 when no screen is attached (so it will not respawn on a bare Pi);
+# restarts only if an attached screen's driver hiccups.
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

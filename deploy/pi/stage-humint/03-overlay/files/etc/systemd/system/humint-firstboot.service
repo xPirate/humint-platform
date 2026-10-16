@@ -1,0 +1,26 @@
+[Unit]
+Description=HUMINT field server — one-time setup (first boot only)
+# Runs only until it has set the device up; the flag file stops it ever again.
+ConditionPathExists=!/var/lib/humint/firstboot.done
+Wants=NetworkManager.service
+After=NetworkManager.service systemd-user-sessions.service time-sync.target
+# Owns the keyboard for the "set a PIN" prompt, so no login prompt fights it.
+Conflicts=getty@tty1.service
+Before=getty@tty1.service humint-unlock.service humint-compose.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+StandardInput=tty-force
+StandardOutput=tty
+StandardError=journal+console
+TTYPath=/dev/tty1
+TTYReset=yes
+TTYVHangup=yes
+ExecStart=/opt/humint/bin/humint-firstboot.sh
+# Setup downloads and builds images; give it room before systemd gives up.
+TimeoutStartSec=3600
+
+[Install]
+WantedBy=multi-user.target
