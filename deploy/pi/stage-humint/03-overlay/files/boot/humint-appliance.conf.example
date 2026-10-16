@@ -7,8 +7,10 @@
 #
 # The first boot reads this once, sets the device up, and renames it to
 # humint-appliance.conf.done so your Wi-Fi passphrase is not left sitting on
-# a partition any computer can read. Everything here can be changed later
-# with `humint-ctl` on the device.
+# a partition any computer can read. The network settings can be changed
+# later with `humint-ctl net` on the device.
+#
+# The first boot needs NO internet: the console is already on the card.
 #
 # This is sourced as a shell file: KEY=value, no spaces around =, quote any
 # value with spaces.
@@ -54,20 +56,9 @@ CLIENT_PSK=
 #       to receive an address from a router already on the wire.
 WIRED_DHCP_SERVER=true
 
-# ---- getting online for the one-time setup build -------------------------
-# The FIRST boot builds the console's software, which needs the internet for
-# a few minutes. This is separate from NET_MODE above (how the team connects
-# in the field): it is only how the Pi reaches the internet during setup.
-#   ethernet : plug the Pi into your normal network for the setup boot.
-#   wifi     : use SETUP_WIFI_* below to join your Wi-Fi for the setup boot.
-#   none     : skip — only if this card was built with the software already
-#              baked in (see the README's offline build note).
-SETUP_UPLINK=ethernet
-SETUP_WIFI_SSID=
-SETUP_WIFI_PSK=
-
 # ---- the case file's encrypted store -------------------------------------
-# All case data (the database, uploaded files, map packs) lives in one
+# All case data (the database, its settings, uploaded files, map packs)
+# lives in one
 # encrypted volume this large. It is created once, at setup, and cannot be
 # grown later without rebuilding, so size it for the deployment. Suffix with
 # G for gigabytes. Leave room on the card: this plus the OS plus any Kiwix
@@ -86,3 +77,7 @@ API_PORT=80
 OLED=auto
 # Seconds each status page stays up before the next.
 STATUS_ROTATE_SECONDS=6
+# Optional push-button for the screen: the BCM GPIO number it is wired to
+# (button between that pin and ground). A tap shows the next page; holding it
+# for 2 seconds shuts the box down safely. Leave empty for no button.
+STATUS_BUTTON_GPIO=

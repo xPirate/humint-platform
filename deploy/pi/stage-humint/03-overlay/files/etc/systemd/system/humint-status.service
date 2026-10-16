@@ -1,7 +1,6 @@
 [Unit]
 Description=HUMINT field server — OLED status screen
-After=humint-compose.service
-Wants=humint-compose.service
+After=humint-unlock.service
 
 [Service]
 Type=simple

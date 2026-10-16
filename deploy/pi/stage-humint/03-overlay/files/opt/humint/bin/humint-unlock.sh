@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 # Unlock the encrypted case store at boot. Runs on every boot AFTER the store
-# exists (first boot creates it). It owns tty1, so the operator types the PIN
-# on the attached keyboard; the OLED tells them when, because a headless box
-# in a bag has no monitor to prompt from.
+# exists (first boot creates it and starts up by itself). It owns tty1, so the
+# operator types the PIN on the attached keyboard; the OLED tells them when,
+# because a headless box in a bag has no monitor to prompt from.
 #
-# On success it mounts the store, starts Docker (whose data-root lives inside
-# it) and leaves the compose + status services to bring the console up. On
-# too many wrong PINs it stops, so the console never comes up on a box whose
-# case file could not be opened.
+# On success it mounts the store and starts humint.target — PostgreSQL (whose
+# data lives inside the store), then the API and worker. On too many wrong
+# PINs it stops, so the console never comes up on a box whose case file could
+# not be opened.
 set -euo pipefail
 # shellcheck source=/dev/null
 . /opt/humint/lib/humint-common.sh
@@ -16,19 +16,6 @@ TRIES="${HUMINT_UNLOCK_TRIES:-5}"
 
 already_open() { [ -e "/dev/mapper/$HUMINT_MAP" ]; }
 
-mount_store() {
-    mkdir -p "$HUMINT_DATA"
-    mountpoint -q "$HUMINT_DATA" || mount "/dev/mapper/$HUMINT_MAP" "$HUMINT_DATA"
-    mkdir -p "$HUMINT_DATA/docker"
-    touch "$HUMINT_READY"
-}
-
-start_docker() {
-    systemctl unmask docker >/dev/null 2>&1 || true
-    systemctl start docker
-    for _ in $(seq 1 30); do docker info >/dev/null 2>&1 && break; sleep 1; done
-}
-
 main() {
     load_config "$HUMINT_ENV"
 
@@ -36,7 +23,7 @@ main() {
         log "no store yet — first boot will create it"; exit 0
     fi
     if already_open; then
-        log "store already open"; mount_store; start_docker; exit 0
+        log "store already open"; mount_store; start_console; exit 0
     fi
 
     local n=0 pin
@@ -50,9 +37,9 @@ main() {
         if printf '%s' "$pin" | cryptsetup open --key-file=- "$HUMINT_IMG" "$HUMINT_MAP" 2>/dev/null; then
             unset pin
             mount_store
-            start_docker
             oled "HUMINT field" "Unlocked" "starting console"
-            log "store unlocked and mounted"
+            start_console
+            log "store unlocked; console started"
             exit 0
         fi
         unset pin

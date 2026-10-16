@@ -6,10 +6,11 @@
 #              "shared" IPv4 method runs its own DHCP/DNS, so joiners get an
 #              address (10.42.0.0/24) and the Pi (10.42.0.1) is the gateway.
 #   client   — the Pi joins an existing Wi-Fi and takes an address from it.
-#   wired     — Ethernet only, Wi-Fi switched off. Optionally the Pi serves
+#   wired    — Ethernet only, Wi-Fi switched off. Optionally the Pi serves
 #              DHCP on the wire for a switch full of laptops.
-#   setup-*   — the same, but used only for the one-time online setup boot;
-#              named apart so they are easy to tear down afterwards.
+#
+# Nothing here needs the internet: the appliance is built complete, so even
+# its first boot runs offline.
 #
 # All connection profiles we create are prefixed "humint-" so switching mode
 # can cleanly remove the previous one without touching anything the operator
@@ -94,32 +95,7 @@ apply_deployment_mode() {
     esac
 }
 
-# A temporary uplink for the one-time setup build only.
-apply_setup_uplink() {
-    case "${SETUP_UPLINK:-ethernet}" in
-        ethernet) log "setup uplink: using Ethernet (plug in a cable)";;
-        wifi)     set_country; mode_client "$SETUP_WIFI_SSID" "$SETUP_WIFI_PSK" humint-setup ;;
-        none)     log "setup uplink: none";;
-        *)        die "unknown SETUP_UPLINK '$SETUP_UPLINK'" ;;
-    esac
-}
-
-remove_setup_uplink() { nm connection delete humint-setup >/dev/null 2>&1 || true; }
-
-# Wait until we can actually reach the internet (for the setup build).
-wait_online() {
-    local tries="${1:-30}"
-    for _ in $(seq 1 "$tries"); do
-        if curl -fsS --max-time 4 https://github.com >/dev/null 2>&1; then return 0; fi
-        sleep 2
-    done
-    return 1
-}
-
 case "${1:-}" in
     deploy)        load_config "$HUMINT_ENV"; apply_deployment_mode ;;
-    setup-uplink)  load_config "$HUMINT_ENV"; apply_setup_uplink ;;
-    remove-setup)  remove_setup_uplink ;;
-    wait-online)   wait_online "${2:-30}" ;;
-    *) echo "usage: humint-net.sh {deploy|setup-uplink|remove-setup|wait-online [tries]}" >&2; exit 2 ;;
+    *) echo "usage: humint-net.sh deploy" >&2; exit 2 ;;
 esac

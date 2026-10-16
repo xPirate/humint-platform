@@ -67,19 +67,21 @@ def case_state():
         return "?"
 
 
-def containers():
-    try:
-        names = subprocess.check_output(
-            ["docker", "ps", "--format", "{{.Names}}"], text=True, timeout=5,
-            stderr=subprocess.DEVNULL).split()
-    except Exception:
-        return {}, 0
-    want = {"db": False, "api": False, "worker": False}
-    for n in names:
-        for key in want:
-            if f"-{key}-" in n or n.endswith(f"-{key}") or f"_{key}_" in n:
-                want[key] = True
-    return want, len([n for n in names if "humint" in n or "platform" in n])
+SERVICES = {"db": "postgresql@16-main", "api": "humint-api", "worker": "humint-worker"}
+
+
+def services():
+    """Which of the console's systemd services are running."""
+    state = {}
+    for key, unit in SERVICES.items():
+        try:
+            r = subprocess.run(["systemctl", "is-active", "--quiet", unit],
+                               timeout=5, stdout=subprocess.DEVNULL,
+                               stderr=subprocess.DEVNULL)
+            state[key] = r.returncode == 0
+        except Exception:
+            state[key] = False
+    return state
 
 
 def cpu_temp():
@@ -118,7 +120,7 @@ def pages():
     else:
         net.append("wired")
 
-    svc_map, _ = containers()
+    svc_map = services()
     svc = ["Services", f"Case file: {case_state()}"]
     svc.append("DB  " + ("up" if svc_map.get("db") else "DOWN"))
     svc.append("API " + ("up" if svc_map.get("api") else "DOWN") +

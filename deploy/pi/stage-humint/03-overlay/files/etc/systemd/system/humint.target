@@ -1,0 +1,8 @@
+[Unit]
+Description=HUMINT field server — the console (database, API, worker)
+# (No ordering against humint-unlock/firstboot: they START this target from
+# inside themselves, so ordering it after them would deadlock.)
+# Never started at boot by itself: humint-unlock (or first boot) starts this
+# once the encrypted case store is open. Stopping it stops all three.
+Wants=postgresql@16-main.service humint-api.service humint-worker.service
+After=postgresql@16-main.service humint-api.service humint-worker.service

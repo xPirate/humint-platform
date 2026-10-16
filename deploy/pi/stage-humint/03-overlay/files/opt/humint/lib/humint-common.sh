@@ -1,8 +1,10 @@
 # Shared helpers for the HUMINT field-server scripts. Sourced, not run.
 # shellcheck shell=bash
+# Variables here are used by the scripts that source this file.
+# shellcheck disable=SC2034
 
 # Where things live on the device.
-HUMINT_HOME=/opt/humint
+HUMINT_HOME=/opt/humint                  # appliance scripts + the Python venv
 HUMINT_SRC=/opt/humint-platform          # the console's code, baked into the image
 HUMINT_BOOT=/boot/firmware               # the readable FAT partition (Bookworm path)
 HUMINT_CONF="$HUMINT_BOOT/humint-appliance.conf"
@@ -15,6 +17,15 @@ HUMINT_MAP=humint                        # /dev/mapper/humint when open
 HUMINT_DATA=/srv/humint-data             # where it mounts
 HUMINT_READY=/run/humint-data.ready      # marker: the store is open and mounted
 HUMINT_FIRSTBOOT_DONE="$HUMINT_STATE/firstboot.done"
+
+# Inside the store: the database cluster and the console's settings (which
+# hold the database password, so they are encrypted at rest too).
+PG_VERSION=16
+PG_CLUSTER=main
+PG_UNIT="postgresql@${PG_VERSION}-${PG_CLUSTER}.service"
+PG_DATA="$HUMINT_DATA/postgresql"
+APP_ENV="$HUMINT_DATA/humint.env"
+APP_USER=humintd
 
 # The OLED helper. Each call draws a frame and returns; it never holds the
 # display, so the unlock script and the status loop can take turns.
@@ -40,20 +51,46 @@ load_config() {
     TIMEZONE=UTC
     WIFI_COUNTRY=""
     NET_MODE=hotspot
-    AP_SSID=humint-field ; AP_PSK=changeme-now ; AP_BAND=bg ; AP_CHANNEL=6 ; AP_HIDDEN=false
+    AP_SSID=humint-field ; AP_PSK=changeme-now ; AP_BAND="bg" ; AP_CHANNEL=6 ; AP_HIDDEN=false
     CLIENT_SSID="" ; CLIENT_PSK=""
     WIRED_DHCP_SERVER=true
-    SETUP_UPLINK=ethernet ; SETUP_WIFI_SSID="" ; SETUP_WIFI_PSK=""
     DATA_SIZE=16G
     API_PORT=80
     OLED=auto ; STATUS_ROTATE_SECONDS=6
 
     local f="$1"
-    if [ -f "$f" ]; then
+    if [ -r "$f" ]; then
+        set -a
         # shellcheck disable=SC1090
-        set -a; . "$f"; set +a
+        . "$f"
+        set +a
     fi
 }
 
 # Is the encrypted store open and mounted?
 data_ready() { [ -f "$HUMINT_READY" ] && mountpoint -q "$HUMINT_DATA"; }
+
+# Mount the (already opened) store and mark it ready.
+mount_store() {
+    mkdir -p "$HUMINT_DATA"
+    mountpoint -q "$HUMINT_DATA" || mount "/dev/mapper/$HUMINT_MAP" "$HUMINT_DATA"
+    touch "$HUMINT_READY"
+}
+
+# Bring the console up: database, then API and worker (ordering is in the
+# units). Only ever called with the store open.
+start_console() {
+    data_ready || die "case store is not open"
+    systemctl start humint.target
+}
+
+# Stop everything that holds files in the store, then unmount and close it.
+lock_store() {
+    systemctl stop humint.target humint-api.service humint-worker.service "$PG_UNIT" 2>/dev/null || true
+    rm -f "$HUMINT_READY"
+    sync
+    if mountpoint -q "$HUMINT_DATA"; then
+        umount "$HUMINT_DATA" || die "store still in use — cannot unmount (see: fuser -vm $HUMINT_DATA)"
+    fi
+    cryptsetup close "$HUMINT_MAP" 2>/dev/null || true
+}

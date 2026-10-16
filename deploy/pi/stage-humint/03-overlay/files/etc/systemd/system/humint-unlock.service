@@ -5,7 +5,7 @@ ConditionPathExists=/var/lib/humint/firstboot.done
 After=humint-firstboot.service systemd-user-sessions.service
 # Owns the keyboard for the PIN prompt, so no login prompt fights it.
 Conflicts=getty@tty1.service
-Before=getty@tty1.service humint-compose.service
+Before=getty@tty1.service
 
 [Service]
 Type=oneshot

@@ -9,7 +9,8 @@
 #   # edit ./config: set HUMINT_SRC_DIR to your humint-platform checkout
 #   sudo ./build.sh            # or ./build-docker.sh
 #
-# The finished .img lands in pi-gen/deploy/. Flash it with Raspberry Pi
+# No Docker on the device: PostgreSQL, the API and the worker run as native
+# systemd services. The finished .img lands in pi-gen/deploy/. Flash it with Raspberry Pi
 # Imager (or balenaEtcher), then edit humint-appliance.conf on the card's
 # boot partition before the first boot. See deploy/pi/README.md.
 
@@ -42,5 +43,6 @@ ENABLE_SSH=1
 
 # ---- HUMINT build settings (read by stage-humint) ----
 # REQUIRED: path to your checkout of the humint-platform repository. Its code
-# is copied into the image; the Docker images are built on the first boot.
+# is copied into the image and its Python dependencies installed there, so
+# the finished card needs no internet. (The BUILD machine does need it.)
 HUMINT_SRC_DIR="/path/to/humint-platform"

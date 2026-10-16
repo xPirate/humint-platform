@@ -60,7 +60,9 @@ import routes as routes_module
 import map_files
 from db import db_cursor
 
-FRONTEND_DIR = "/app/frontend"
+# Where the static frontend lives. /app/frontend inside the Docker image; the
+# bare-metal Pi appliance (deploy/pi) runs from /opt/humint-platform/frontend.
+FRONTEND_DIR = os.environ.get("FRONTEND_DIR", "/app/frontend")
 
 app = FastAPI(title="HUMINT Platform API")
 

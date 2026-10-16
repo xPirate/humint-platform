@@ -21,7 +21,8 @@ chmod 0755 "${ROOTFS_DIR}"/opt/humint/bin/*.sh \
            "${ROOTFS_DIR}"/opt/humint/bin/humint-ctl
 ln -sf /opt/humint/bin/humint-ctl "${ROOTFS_DIR}/usr/local/bin/humint-ctl"
 
-install -d "${ROOTFS_DIR}/var/lib/humint" "${ROOTFS_DIR}/srv"
+install -d -m 700 "${ROOTFS_DIR}/var/lib/humint"
+install -d "${ROOTFS_DIR}/srv" "${ROOTFS_DIR}/srv/humint-data"
 
 on_chroot <<'CHROOT'
 set -e
@@ -30,6 +31,9 @@ systemctl enable avahi-daemon.service || true
 systemctl enable ssh.service || true
 systemctl enable humint-firstboot.service
 systemctl enable humint-unlock.service
-systemctl enable humint-compose.service
 systemctl enable humint-status.service
+# Deliberately NOT enabled: humint.target, humint-api, humint-worker and the
+# PostgreSQL cluster. They need the encrypted store, so only humint-unlock
+# (or first boot) starts them, after the PIN.
+systemctl daemon-reload 2>/dev/null || true
 CHROOT

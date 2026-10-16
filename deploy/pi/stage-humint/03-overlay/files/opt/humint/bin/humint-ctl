@@ -6,9 +6,15 @@
 set -euo pipefail
 # shellcheck source=/dev/null
 . /opt/humint/lib/humint-common.sh
+
+# Almost everything here touches root-only state (the saved config holds the
+# Wi-Fi passphrase), so elevate once, with the full original command line.
+case "${1:-}" in -h|--help|help) ;; *)
+    [ "$(id -u)" -eq 0 ] || exec sudo "$0" "$@" ;;
+esac
 load_config "$HUMINT_ENV"
 
-need_root() { [ "$(id -u)" -eq 0 ] || exec sudo "$0" "$@"; }
+need_root() { :; }   # already root (see above); kept so call sites read clearly
 
 usage() {
     cat <<EOF
@@ -18,9 +24,9 @@ humint-ctl — HUMINT field server
   url                    just the address to hand the team
   screen "L1" "L2" ...   write a message to the OLED
 
-  up | down | restart    the console containers
+  up | down | restart    the console (database, API, worker)
   lock                   stop the console and re-lock the case file now
-  rebuild                rebuild the console images (needs internet)
+  backup [DIR]           dump the case database to DIR (default: the store)
 
   net hotspot            switch to being the Wi-Fi access point
   net client SSID [PSK]  join an existing Wi-Fi and serve on it
@@ -28,7 +34,7 @@ humint-ctl — HUMINT field server
   pin                    change the unlock PIN
 
   shutdown | reboot      power off / restart safely
-  logs [service]         console logs (or firstboot/unlock logs)
+  logs [api|worker|db|firstboot|unlock]   follow a service's log
 EOF
 }
 
@@ -51,12 +57,11 @@ cmd_status() {
     else
         echo "Case file: LOCKED"
     fi
-    if command -v docker >/dev/null && docker info >/dev/null 2>&1; then
-        echo "Services :"
-        docker ps --format '  {{.Names}}  {{.Status}}' | grep -Ei 'db|api|worker|ollama' || echo "  (none running)"
-    else
-        echo "Services : Docker not running"
-    fi
+    echo "Services :"
+    local unit
+    for unit in "$PG_UNIT" humint-api.service humint-worker.service; do
+        printf '  %-26s %s\n' "$unit" "$(systemctl is-active "$unit" 2>/dev/null || true)"
+    done
     local t; t="$(cat /sys/class/thermal/thermal_zone0/temp 2>/dev/null || true)"
     [ -n "$t" ] && echo "Temp     : $((t / 1000)) C"
 }
@@ -90,12 +95,40 @@ cmd_pin() {
 
 cmd_lock() {
     need_root "$@"
-    cd "$HUMINT_SRC" && docker compose down || true
-    systemctl stop docker docker.socket 2>/dev/null || true
-    umount "$HUMINT_DATA" 2>/dev/null || true
-    cryptsetup close "$HUMINT_MAP" 2>/dev/null || true
-    rm -f "$HUMINT_READY"
-    echo "Case file re-locked. Reboot (or run the unlock service) to open it again."
+    lock_store
+    echo "Case file re-locked. Reboot (or: systemctl restart humint-unlock) to open it again."
+}
+
+cmd_up() {
+    need_root "$@"
+    data_ready || die "the case file is locked — reboot, or: systemctl restart humint-unlock"
+    start_console
+}
+
+cmd_backup() {
+    need_root "$@"
+    data_ready || die "the case file is locked"
+    local dir="${1:-$HUMINT_DATA/backups}" f
+    install -d -m 700 "$dir"
+    f="$dir/humint-db-$(date +%Y%m%d-%H%M%S).dump"
+    runuser -u postgres -- pg_dump -Fc humint_platform >"$f"
+    chmod 600 "$f"
+    echo "Database dumped to $f"
+    case "$dir" in "$HUMINT_DATA"*) ;; *)
+        echo "Note: $dir is outside the encrypted store — this copy is NOT encrypted.";;
+    esac
+    echo "(Uploaded files are in $HUMINT_DATA/uploads; the console's own Backup"
+    echo " page exports database + files together.)"
+}
+
+cmd_logs() {
+    case "${1:-api}" in
+        firstboot) tail -n 200 -F "$HUMINT_STATE/firstboot.log" ;;
+        unlock)    journalctl -u humint-unlock -n 200 -f ;;
+        db)        journalctl -u "$PG_UNIT" -n 200 -f ;;
+        api|worker) journalctl -u "humint-$1" -n 200 -f ;;
+        *) die "logs needs: api | worker | db | firstboot | unlock" ;;
+    esac
 }
 
 main() {
@@ -104,18 +137,16 @@ main() {
         status)   cmd_status ;;
         url)      cmd_status | awk -F': ' '/^URL/{print $2}' ;;
         screen)   oled "$@" ;;
-        up)       need_root "$@"; cd "$HUMINT_SRC" && docker compose up -d ;;
-        down)     need_root "$@"; cd "$HUMINT_SRC" && docker compose down ;;
-        restart)  need_root "$@"; cd "$HUMINT_SRC" && docker compose restart ;;
-        rebuild)  need_root "$@"; cd "$HUMINT_SRC" && docker compose build && docker compose up -d ;;
+        up)       cmd_up "$@" ;;
+        down)     need_root "$@"; systemctl stop humint.target humint-api humint-worker "$PG_UNIT" ;;
+        restart)  need_root "$@"; systemctl restart humint-api humint-worker ;;
+        backup)   cmd_backup "$@" ;;
         lock)     cmd_lock "$@" ;;
         net)      cmd_net "$@" ;;
         pin)      cmd_pin "$@" ;;
         shutdown) need_root "$@"; systemctl poweroff ;;
         reboot)   need_root "$@"; systemctl reboot ;;
-        logs)
-            if [ "${1:-}" = "firstboot" ]; then tail -n 200 -F "$HUMINT_STATE/firstboot.log"
-            else cd "$HUMINT_SRC" && docker compose logs -f "${1:-}"; fi ;;
+        logs)     cmd_logs "$@" ;;
         -h|--help|help) usage ;;
         *) usage; exit 2 ;;
     esac

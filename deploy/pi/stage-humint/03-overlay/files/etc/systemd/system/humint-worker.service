@@ -1,0 +1,29 @@
+[Unit]
+Description=HUMINT field server — background worker (OCR, extraction, sweeps)
+PartOf=humint.target
+Requires=postgresql@16-main.service
+After=postgresql@16-main.service
+ConditionPathExists=/run/humint-data.ready
+
+[Service]
+Type=simple
+User=humintd
+Group=humintd
+EnvironmentFile=/srv/humint-data/humint.env
+WorkingDirectory=/opt/humint-platform/worker
+ExecStart=/opt/humint/venv/bin/python main.py
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+# Scratch files (backup bundles, OCR pages) hold case data too: keep them
+# inside the encrypted store, never on the plain SD card.
+Environment=TMPDIR=/srv/humint-data/tmp
+ReadWritePaths=/srv/humint-data/uploads /srv/humint-data/map-packs /srv/humint-data/tmp
+# OCR on a Pi is slow and memory-hungry; keep it from starving the web console.
+Nice=10
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=humint.target
