@@ -175,7 +175,16 @@ NAT, link-local). It cannot be used to impersonate a bank, a mail server or
 any other public site — even by someone holding its private key. (On a network
 that gives the box a public address, use `https://<hostname>.local`.)
 
-`humint-ctl tls` shows the fingerprint and what the certificate covers;
+The trust page puts the visitor's own platform first (read from the browser)
+and folds the rest underneath. It covers Windows (with a `.cer` download, the
+PowerShell one-liner, and a Group Policy / Intune note for managed laptops),
+macOS, Linux (Arch, Ubuntu/Debian, Fedora/RHEL, openSUSE, plus the separate
+step Chrome-family browsers need on Linux), Firefox on any system (it keeps its
+own list), Android and iPhone/iPad. It shows the SHA-256 fingerprint and the
+SHA-1 thumbprint Windows' install dialog displays; the panel's Trust tab and
+`humint-ctl tls` show both, so either can be checked against the box itself.
+
+`humint-ctl tls` shows the fingerprints and what the certificate covers;
 `humint-ctl tls renew` re-issues it; `humint-ctl tls off` goes back to plain
 HTTP.
 

@@ -97,6 +97,10 @@ EOF
 publish_ca() {
     install -m 644 "$CA_CRT" "$PUBLIC_CA"
     fingerprint >"$PUBLIC_FP"
+    # Windows shows a certificate's SHA-1 "Thumbprint", not its SHA-256
+    # fingerprint, so the trust page offers that too for checking.
+    openssl x509 -in "$CA_CRT" -noout -fingerprint -sha1 | sed 's/^.*=//' >"$PUBLIC_FP.sha1"
+    chmod 644 "$PUBLIC_FP.sha1"
     chmod 644 "$PUBLIC_FP"
 }
 

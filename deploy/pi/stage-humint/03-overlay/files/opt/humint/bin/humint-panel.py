@@ -178,6 +178,7 @@ class Status:
             d["uptime"] = "?"
         try:
             d["fingerprint"] = open(FP).read().strip()
+            d["fingerprint_sha1"] = open(FP + ".sha1").read().strip() if os.path.exists(FP + ".sha1") else ""
         except OSError:
             d["fingerprint"] = ""
         with self.lock:
@@ -1093,18 +1094,25 @@ class Panel:
         w = self.W - x - int(20 * s)
         text(surf, "Once per phone or laptop", (x, top + int(10 * s)), int(22 * s), kind="bold")
         y = top + int(48 * s)
-        for line in ("Scan, download the certificate,", "and install it as a CA certificate.",
-                     "Then the console opens over HTTPS", "with no warnings."):
+        for line in ("Scan, then install the certificate.", "The page has steps for each device."):
             text(surf, line, (x, y), int(17 * s), MUTED, maxw=w)
             y += int(25 * s)
         text(surf, d["trust_url"], (x, y + int(8 * s)), int(16 * s), ACCENT, kind="mono", maxw=w)
         y += int(46 * s)
-        text(surf, "Fingerprint — check it matches:", (x, y), int(15 * s), MUTED)
+        text(surf, "SHA-256 — check it matches:", (x, y), int(15 * s), MUTED)
         fp = d.get("fingerprint") or "(unlock to create it)"
         parts = fp.split(":")
         for i in range(0, len(parts), 8):
             y += int(23 * s)
             text(surf, ":".join(parts[i:i + 8]), (x, y), int(16 * s), TEXT, kind="mono", maxw=w)
+        if d.get("fingerprint_sha1"):
+            # Windows' install dialog shows only this one.
+            y += int(30 * s)
+            text(surf, "SHA-1 — what Windows shows:", (x, y), int(15 * s), MUTED)
+            parts = d["fingerprint_sha1"].split(":")
+            for i in range(0, len(parts), 10):
+                y += int(23 * s)
+                text(surf, ":".join(parts[i:i + 10]), (x, y), int(16 * s), TEXT, kind="mono", maxw=w)
 
     def draw_menu(self, surf, d):
         s = self.s

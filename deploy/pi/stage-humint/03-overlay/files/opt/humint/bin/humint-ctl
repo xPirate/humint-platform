@@ -157,6 +157,7 @@ cmd_tls() {
             echo "HTTPS    : ${TLS:-on}"
             if [ "${TLS:-on}" = on ]; then
                 echo "CA       : $(/opt/humint/bin/humint-tls.sh fingerprint 2>/dev/null || echo 'not created yet — unlock first')"
+                [ -f "$HUMINT_STATE/ca.fingerprint.sha1" ] && echo "SHA-1    : $(cat "$HUMINT_STATE/ca.fingerprint.sha1")  (what Windows shows)"
                 if [ -f "$HUMINT_DATA/tls/server.crt" ]; then
                     openssl x509 -in "$HUMINT_DATA/tls/server.crt" -noout -enddate -ext subjectAltName 2>/dev/null |
                         sed 's/^notAfter=/Expires  : /; s/^ *DNS/Covers   : DNS/' | grep -v "Subject Alternative"
