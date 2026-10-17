@@ -232,20 +232,32 @@ and `systemctl restart humint-battery`.
 
 Build on a Raspberry Pi running ordinary 64-bit Raspberry Pi OS (simplest: it
 is the same architecture as the image, so nothing is emulated), or on any
-Debian/Ubuntu machine. A step-by-step walkthrough for first-timers lives in
-the "Building the field server image" guide; the short version:
+Debian/Ubuntu machine. Give it a 32 GB+ card (the build needs ~15 GB free).
 
 ```bash
-git clone <this repo> humint-platform && cd humint-platform
-git checkout pi-appliance
-deploy/pi/prepare-pigen.sh ~/pi-gen      # clones pi-gen, copies the stage + app, writes ~/pi-gen/config
-nano ~/pi-gen/config                     # set FIRST_USER_PASS (and keyboard/timezone)
-cd ~/pi-gen && sudo ./build.sh           # 1–2 hours; the image lands in ~/pi-gen/deploy/
+sudo apt install -y git
+git clone https://github.com/xPirate/humint-platform
+humint-platform/deploy/pi/build-image.sh
 ```
 
-`prepare-pigen.sh --docker` sets the same up for pi-gen's `build-docker.sh`
-instead. Run `prepare-pigen.sh` again after pulling new code; it refreshes the
-stage and the app and keeps your config.
+`build-image.sh` does the whole thing: installs pi-gen's tools, clones pi-gen
+(its `bookworm-arm64` branch) to `~/pi-gen`, copies in the HUMINT stage and the
+app, asks once for the password of the box's `humint` login, clears out a stale
+build, and runs the build — inside tmux when you are on SSH, so a dropped
+connection doesn't kill it (`tmux attach -t humint-build` to get back). The
+image lands in `~/pi-gen/deploy/`; it prints the `scp` line to copy it off.
+
+To build again after an update:
+
+```bash
+cd ~/humint-platform && git pull && deploy/pi/build-image.sh
+```
+
+Options: `--clean` (start from scratch), `--prepare-only` (set up, don't
+build; then edit `~/pi-gen/config` for keyboard, timezone, image name),
+`PIGEN_DIR=/mnt/usb/pi-gen` (build somewhere else). The lower-level
+`prepare-pigen.sh` is still there for pi-gen's Docker build
+(`prepare-pigen.sh --docker`, then `./build-docker.sh`).
 
 What the `stage-humint` stage adds on top of Raspberry Pi OS Lite:
 

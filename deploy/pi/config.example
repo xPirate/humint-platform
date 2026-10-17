@@ -1,18 +1,13 @@
 # pi-gen configuration for the HUMINT field-server image.
 #
-# How to build (on a Debian/Ubuntu x86-64 machine or in Docker):
-#
-#   git clone https://github.com/RPi-Distro/pi-gen
-#   cd pi-gen
-#   cp -r /path/to/humint-platform/deploy/pi/stage-humint ./stage-humint
-#   cp /path/to/humint-platform/deploy/pi/config.example ./config
-#   # edit ./config: set HUMINT_SRC_DIR to your humint-platform checkout
-#   sudo ./build.sh            # or ./build-docker.sh
+# You normally never copy this by hand: deploy/pi/build-image.sh (or
+# prepare-pigen.sh) writes it to ~/pi-gen/config the first time, fills in
+# HUMINT_SRC_DIR and asks for FIRST_USER_PASS. Edit ~/pi-gen/config, not this.
 #
 # No Docker on the device: PostgreSQL, the API and the worker run as native
-# systemd services. The finished .img lands in pi-gen/deploy/. Flash it with Raspberry Pi
-# Imager (or balenaEtcher), then edit humint-appliance.conf on the card's
-# boot partition before the first boot. See deploy/pi/README.md.
+# systemd services. The finished image lands in pi-gen/deploy/. Flash it with
+# Raspberry Pi Imager, then edit humint-appliance.conf on the card's boot
+# partition before the first boot. See deploy/pi/README.md.
 
 IMG_NAME="humint-field"
 RELEASE="bookworm"
