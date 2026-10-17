@@ -17,7 +17,10 @@ set -euo pipefail
 MODE=native
 if [ "${1:-}" = "--docker" ]; then MODE=docker; shift; fi
 PIGEN="${1:-$HOME/pi-gen}"
-BRANCH="${PIGEN_BRANCH:-arm64}"
+# pi-gen keeps one branch per release; the image is 64-bit Bookworm (config:
+# RELEASE, ARCH). Its default branch (master) builds 32-bit Trixie, and
+# building Bookworm from it fails in stage0 on Debian's archive signatures.
+BRANCH="${PIGEN_BRANCH:-bookworm-arm64}"
 REPO="$(cd "$(dirname "$0")/../.." && pwd)"
 
 say() { printf '\n==> %s\n' "$*"; }
@@ -26,7 +29,17 @@ if [ ! -d "$PIGEN/.git" ]; then
     say "Cloning pi-gen ($BRANCH branch) into $PIGEN"
     git clone --depth 1 --branch "$BRANCH" https://github.com/RPi-Distro/pi-gen "$PIGEN"
 else
-    say "Using the pi-gen already at $PIGEN"
+    current="$(git -C "$PIGEN" rev-parse --abbrev-ref HEAD 2>/dev/null || echo '?')"
+    if [ "$current" != "$BRANCH" ]; then
+        say "Switching the pi-gen at $PIGEN from '$current' to '$BRANCH'"
+        git -C "$PIGEN" fetch --depth 1 origin "$BRANCH"
+        git -C "$PIGEN" checkout -B "$BRANCH" FETCH_HEAD
+        if [ -d "$PIGEN/work" ] || [ -d "$PIGEN/deploy" ]; then
+            echo "  !! Clear the old build first:  cd $PIGEN && sudo rm -rf work deploy"
+        fi
+    else
+        say "Using the pi-gen already at $PIGEN ($BRANCH)"
+    fi
 fi
 PIGEN="$(cd "$PIGEN" && pwd)"
 
