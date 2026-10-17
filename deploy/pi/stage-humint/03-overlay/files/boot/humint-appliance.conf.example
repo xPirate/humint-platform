@@ -106,16 +106,26 @@ SCREEN_SLEEP_MINUTES=5
 SCREEN_ROTATE=0
 
 # ---- battery ---------------------------------------------------------------
-#   auto      : use a Waveshare UPS HAT if one is fitted (default)
-#   waveshare : require it
+#   auto      : use whichever UPS board is fitted (default)
+#   x1203     : require the Geekworm X1203 (Pi 5) — a real fuel gauge at I2C
+#               0x36 and a power-loss pin, so the charge and "on battery" are
+#               read, not guessed
+#   waveshare : require the Waveshare UPS HAT (charge estimated from voltage)
 #   none      : no gauge
-# The screens show the charge; when it falls to BATTERY_SHUTDOWN_PERCENT on
-# battery power, the box stops the console, re-locks the case file and powers
-# off cleanly rather than dying mid-write.
+# The screens show the charge, and a plug while on wall power. With no battery
+# module they show just the plug: pulling the cable turns the box off. When
+# the charge falls to BATTERY_SHUTDOWN_PERCENT on battery power (or an X1203
+# cell to 3.20 V), the box stops the console, re-locks the case file and
+# powers off cleanly rather than dying mid-write.
 BATTERY=auto
-# 18650 cells in series: 2 for the UPS HAT / UPS HAT (B), 1 for UPS HAT (C).
-BATTERY_CELLS=2
 BATTERY_SHUTDOWN_PERCENT=8
+# Waveshare only: 18650 cells in series — 2 for the UPS HAT / UPS HAT (B),
+# 1 for UPS HAT (C).
+BATTERY_CELLS=2
+# X1203 only: the power-loss pin, and its level while wall power is present.
+# If the screen says "on battery" while plugged in, set the level to 0.
+BATTERY_PLD_GPIO=6
+BATTERY_PLD_AC_LEVEL=1
 # Optional push-button for the screen: the BCM GPIO number it is wired to
 # (button between that pin and ground). A tap shows the next page; holding it
 # for 2 seconds shuts the box down safely. Leave empty for no button.

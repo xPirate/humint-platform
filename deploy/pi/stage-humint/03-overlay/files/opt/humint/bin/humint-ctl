@@ -73,8 +73,14 @@ cmd_status() {
 import json
 b = json.load(open("/run/humint/battery.json"))
 if b.get("present"):
-    state = "charging" if b.get("charging") else "on battery"
-    print(f"Battery  : {b['percent']:.0f}% ({state}, {b['voltage']:.2f} V, {b['current_ma']:+.0f} mA)")
+    how = ("on battery" if b.get("on_battery") else
+           "plugged in, charging" if b.get("charging") else
+           "plugged in" if b.get("ac_present") else "source unknown")
+    left = b.get("minutes_left")
+    extra = f", ~{left // 60}h{left % 60:02d}m left" if left is not None else ""
+    print(f"Power    : {b.get('board', 'battery')} {b['percent']:.0f}% ({how}{extra}, {b['voltage']:.2f} V)")
+elif b.get("mains"):
+    print("Power    : external (AC) — no battery module fitted")
 PY2
     fi
     local t; t="$(cat /sys/class/thermal/thermal_zone0/temp 2>/dev/null || true)"

@@ -23,3 +23,5 @@ postgresql-common
 python3-pygame
 python3-evdev
 python3-qrcode
+# pinctrl: reads the X1203's power-loss pin (works on the Pi 5's RP1)
+raspi-utils

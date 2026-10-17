@@ -65,8 +65,7 @@ def url():
 def battery():
     try:
         import json
-        b = json.load(open("/run/humint/battery.json"))
-        return b if b.get("present") else None
+        return json.load(open("/run/humint/battery.json"))
     except Exception:
         return None
 
@@ -149,8 +148,13 @@ def pages():
     t = cpu_temp()
     sysp = ["System"]
     b = battery()
-    if b:
-        sysp.append(f"Batt {b['percent']:.0f}%" + (" chg" if b.get("charging") else ""))
+    if b and b.get("present"):
+        # "AC" while plugged in; the time left while on battery.
+        tail = " AC" if b.get("ac_present") else (
+            f" {b['minutes_left'] // 60}h{b['minutes_left'] % 60:02d}" if b.get("minutes_left") is not None else "")
+        sysp.append(f"Batt {b['percent']:.0f}%{tail}")
+    elif b and b.get("mains"):
+        sysp.append("Power: AC, no batt")
     if free is not None:
         sysp.append(f"Disk {free:.1f}/{total:.0f} GB")
     if t is not None:

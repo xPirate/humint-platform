@@ -1,29 +1,45 @@
 #!/usr/bin/env python3
-"""Battery gauge for the Waveshare UPS HAT (INA219 current/voltage monitor).
+"""Battery gauge and power source, for the UPS boards the field server knows.
 
-Reads the pack voltage and current every few seconds and writes
+Every few seconds it reads the battery board and writes
 /run/humint/battery.json, which the OLED, the touch panel and `humint-ctl
 status` all read — one reader of the I2C chip, many readers of a file.
 
-When the pack runs low on battery power it does what a person would do with
-a box about to die mid-write: stops the console, re-locks the case file, and
-powers off. A database cut off mid-write can be repaired; one shut down
+Two boards:
+
+  Geekworm X1203 (Pi 5)   a real fuel gauge (Maxim MAX17040, I2C 0x36) that
+                          reports the charge itself, and a power-loss signal
+                          (GPIO 6) that says the moment wall power goes. The
+                          cells are in PARALLEL — one cell's voltage.
+  Waveshare UPS HAT       an INA219 voltage/current monitor (I2C 0x42) and no
+                          gauge: charge is estimated from the pack voltage, as
+                          Waveshare's own code does; whether it is on battery
+                          is read from the direction of the current.
+
+With neither fitted it says so ("present": false, "mains": true) and the
+screens show a plug: the box is running on external power with no battery
+behind it, so pulling the cable turns it off.
+
+On battery power, when the charge falls to BATTERY_SHUTDOWN_PERCENT (or an
+X1203 cell to 3.20 V, Geekworm's own cut-off), it does what a person would do
+with a box about to die mid-write: stops the console, re-locks the case file,
+and powers off. A database cut off mid-write can be repaired; one shut down
 cleanly never needs to be.
 
-Charge is estimated from voltage, the way Waveshare's own code does it: the
-HAT has no fuel-gauge chip. Under load the voltage sags, so the figure reads
-low while working and recovers at idle — treat it as a guide, and the
-shutdown threshold as deliberately conservative.
-
-  BATTERY=auto      look for the HAT at 0x42 (and 0x43, 0x40, 0x41)
-  BATTERY=waveshare require it
-  BATTERY=none      do nothing
-  BATTERY_CELLS=2   18650 cells in series: 2 for the UPS HAT and UPS HAT (B),
-                    1 for the UPS HAT (C)
+  BATTERY=auto        look for an X1203, then a Waveshare HAT (default)
+  BATTERY=x1203       require the X1203
+  BATTERY=waveshare   require the Waveshare HAT
+  BATTERY=none        no gauge
   BATTERY_SHUTDOWN_PERCENT=8
+  BATTERY_CELLS=2           Waveshare only: cells in series (1 for UPS HAT (C))
+  BATTERY_PLD_GPIO=6        X1203 only: the power-loss pin
+  BATTERY_PLD_AC_LEVEL=1    X1203 only: the pin's level while wall power is
+                            present (flip to 0 if the screens say "on
+                            battery" while plugged in)
 """
 import json
 import os
+import re
 import subprocess
 import sys
 import time
@@ -31,21 +47,15 @@ import time
 CONF = "/var/lib/humint/env"
 OUT_DIR = "/run/humint"
 OUT = os.path.join(OUT_DIR, "battery.json")
-ADDRESSES = (0x42, 0x43, 0x40, 0x41)
-
-REG_CONFIG, REG_BUS, REG_CURRENT, REG_CAL = 0x00, 0x02, 0x04, 0x05
-# 32 V bus range, ±320 mV shunt, 12-bit 32-sample averaging on both,
-# continuous — Waveshare's own settings for this board.
-CONFIG_VALUE = (0x01 << 13) | (0x03 << 11) | (0x0D << 7) | (0x0D << 3) | 0x07
-CAL_VALUE = 4096          # with the board's 0.1 Ω shunt: 0.1 mA per bit
-CURRENT_LSB_MA = 0.1
 
 POLL_SECONDS = 5
 LOW_READINGS = 3          # consecutive low readings before acting (~15 s)
+X1203_CUTOFF_V = 3.20     # Geekworm's own shutdown voltage for one cell
 
 
 def config() -> dict:
-    out = {"BATTERY": "auto", "BATTERY_CELLS": "2", "BATTERY_SHUTDOWN_PERCENT": "8"}
+    out = {"BATTERY": "auto", "BATTERY_CELLS": "2", "BATTERY_SHUTDOWN_PERCENT": "8",
+           "BATTERY_PLD_GPIO": "6", "BATTERY_PLD_AC_LEVEL": "1"}
     try:
         for line in open(CONF):
             line = line.strip()
@@ -58,9 +68,105 @@ def config() -> dict:
     return out
 
 
+def _bus(number=1):
+    from smbus2 import SMBus
+    return SMBus(number)
+
+
+# ---------------------------------------------------------------------------
+# Geekworm X1203: MAX17040 fuel gauge + power-loss GPIO
+# ---------------------------------------------------------------------------
+
+class X1203:
+    name = "Geekworm X1203"
+    ADDR = 0x36
+    REG_VCELL, REG_SOC, REG_VERSION = 0x02, 0x04, 0x08
+
+    def __init__(self, bus, pld_gpio=6, ac_level=1):
+        self.bus, self.pld_gpio, self.ac_level = bus, pld_gpio, ac_level
+        self.cells = 1
+
+    def _word(self, reg):
+        hi, lo = self.bus.read_i2c_block_data(self.ADDR, reg, 2)
+        return hi, lo
+
+    def looks_right(self) -> bool:
+        """A MAX17040 answers at 0x36 with a non-zero version and a cell
+        voltage a lithium cell could have. Nothing else on this bus does."""
+        try:
+            hi, lo = self._word(self.REG_VERSION)
+            if (hi << 8 | lo) in (0, 0xFFFF):
+                return False
+            return 2.0 <= self.volts() <= 4.6
+        except OSError:
+            return False
+
+    def volts(self) -> float:
+        hi, lo = self._word(self.REG_VCELL)
+        return ((hi << 8 | lo) >> 4) * 0.00125          # 12 bits, 1.25 mV each
+
+    def percent(self) -> float:
+        hi, lo = self._word(self.REG_SOC)
+        return max(0.0, min(100.0, hi + lo / 256.0))    # the chip's own estimate
+
+    def ac_present(self):
+        """Wall power present? None when the pin cannot be read."""
+        level = read_gpio(self.pld_gpio)
+        return None if level is None else (level == self.ac_level)
+
+    def sample(self) -> dict:
+        v = self.volts()
+        return {"voltage": v, "percent": self.percent(), "current_ma": None,
+                "ac_present": self.ac_present()}
+
+
+def read_gpio(pin: int):
+    """The level of a header GPIO (BCM numbering), without claiming it:
+    `pinctrl` on Raspberry Pi OS (Pi 5's RP1 included), libgpiod as a fallback."""
+    try:
+        out = subprocess.run(["pinctrl", "get", str(pin)], capture_output=True, text=True,
+                             timeout=3).stdout
+        m = re.search(r"\|\s*(hi|lo)\b", out)
+        if m:
+            return 1 if m.group(1) == "hi" else 0
+    except (OSError, subprocess.SubprocessError):
+        pass
+    try:
+        import gpiod                                     # python3-libgpiod
+        for chip in ("gpiochip0", "gpiochip4"):
+            try:
+                c = gpiod.Chip(chip)
+                line = c.get_line(pin)
+                line.request(consumer="humint-battery", type=gpiod.LINE_REQ_DIR_IN)
+                try:
+                    return line.get_value()
+                finally:
+                    line.release()
+            except Exception:
+                continue
+    except ImportError:
+        pass
+    return None
+
+
+# ---------------------------------------------------------------------------
+# Waveshare UPS HAT: INA219 voltage/current monitor
+# ---------------------------------------------------------------------------
+
+REG_CONFIG, REG_BUS, REG_CURRENT, REG_CAL = 0x00, 0x02, 0x04, 0x05
+# 32 V bus range, ±320 mV shunt, 12-bit 32-sample averaging on both,
+# continuous — Waveshare's own settings for this board.
+CONFIG_VALUE = (0x01 << 13) | (0x03 << 11) | (0x0D << 7) | (0x0D << 3) | 0x07
+CAL_VALUE = 4096          # with the board's 0.1 Ω shunt: 0.1 mA per bit
+CURRENT_LSB_MA = 0.1
+
+
 class INA219:
-    def __init__(self, bus, addr):
-        self.bus, self.addr = bus, addr
+    name = "Waveshare UPS HAT"
+    ADDRESSES = (0x42, 0x43, 0x40, 0x41)
+
+    def __init__(self, bus, addr, cells=2):
+        self.bus, self.addr, self.cells = bus, addr, cells
 
     def _write(self, reg, value):
         self.bus.write_i2c_block_data(self.addr, reg, [(value >> 8) & 0xFF, value & 0xFF])
@@ -74,8 +180,7 @@ class INA219:
         self._write(REG_CONFIG, CONFIG_VALUE)
 
     def looks_right(self) -> bool:
-        """An INA219 reads its configuration back as written. Anything else
-        at that address (or nothing) does not."""
+        """An INA219 reads its configuration back as written."""
         try:
             self.setup()
             time.sleep(0.05)
@@ -95,25 +200,38 @@ class INA219:
             raw -= 65536
         return raw * CURRENT_LSB_MA
 
-
-def find(bus_number=1, forced=False):
-    try:
-        from smbus2 import SMBus
-        bus = SMBus(bus_number)
-    except Exception as exc:
-        if forced:
-            print(f"humint-battery: no I2C bus: {exc}", file=sys.stderr)
-        return None
-    for addr in ADDRESSES:
-        dev = INA219(bus, addr)
-        if dev.looks_right():
-            return dev
-    return None
+    def sample(self) -> dict:
+        v, ma = self.volts(), self.milliamps()
+        # The HAT reads negative while the pack is feeding the Pi; anything
+        # else means something upstream is.
+        return {"voltage": v, "percent": None, "current_ma": ma, "ac_present": ma > -20}
 
 
-def percent(volts: float, cells: int) -> float:
+def percent_from_volts(volts: float, cells: int) -> float:
     empty, full = 3.0 * cells, 4.2 * cells
     return max(0.0, min(100.0, (volts - empty) / (full - empty) * 100.0))
+
+
+# ---------------------------------------------------------------------------
+
+def find(mode: str, cfg: dict):
+    try:
+        bus = _bus(1)
+    except Exception as exc:
+        if mode in ("x1203", "waveshare"):
+            print(f"humint-battery: no I2C bus: {exc}", file=sys.stderr)
+        return None
+    if mode in ("auto", "x1203"):
+        dev = X1203(bus, int(cfg.get("BATTERY_PLD_GPIO") or 6),
+                    int(cfg.get("BATTERY_PLD_AC_LEVEL") or 1))
+        if dev.looks_right():
+            return dev
+    if mode in ("auto", "waveshare"):
+        for addr in INA219.ADDRESSES:
+            dev = INA219(bus, addr, max(1, int(cfg.get("BATTERY_CELLS") or 2)))
+            if dev.looks_right():
+                return dev
+    return None
 
 
 def write(state: dict) -> None:
@@ -134,7 +252,7 @@ def oled(*lines):
 
 
 def shut_down(pct: float) -> None:
-    print(f"humint-battery: battery at {pct:.0f}% and falling — locking the case file "
+    print(f"humint-battery: battery at {pct:.0f}% on battery power — locking the case file "
           "and powering off", flush=True)
     write({"present": True, "shutting_down": True, "percent": pct})
     oled("BATTERY LOW", "locking case file", "powering off")
@@ -143,55 +261,97 @@ def shut_down(pct: float) -> None:
     subprocess.run(["systemctl", "poweroff"])
 
 
+class Tracker:
+    """Smoothing, the on-battery decision and a time-left estimate, the same
+    for both boards."""
+
+    def __init__(self, dev, threshold: float):
+        self.dev, self.threshold = dev, threshold
+        self.volts_hist, self.pct_hist = [], []   # pct_hist: (time, pct) while on battery
+        self.low = 0
+
+    def step(self, s: dict, now: float) -> tuple[dict, bool]:
+        self.volts_hist = (self.volts_hist + [s["voltage"]])[-6:]          # ~30 s
+        v_avg = sum(self.volts_hist) / len(self.volts_hist)
+        pct = s["percent"] if s["percent"] is not None else percent_from_volts(v_avg, self.dev.cells)
+        ac = s["ac_present"]
+        on_battery = ac is False
+        state = {"present": True, "board": self.dev.name, "percent": round(pct, 1),
+                 "voltage": round(v_avg, 3), "ac_present": ac, "on_battery": on_battery,
+                 "charging": bool(ac) and pct < 99.5, "cells": self.dev.cells,
+                 "updated": int(now)}
+        if s["current_ma"] is not None:
+            state["current_ma"] = round(s["current_ma"], 1)
+
+        # Time left: from the current where the board measures it, otherwise
+        # from how fast the charge has been falling over the last ~10 minutes.
+        if on_battery:
+            self.pct_hist = [(t, p) for t, p in self.pct_hist if now - t <= 600] + [(now, pct)]
+            mins = None
+            if s["current_ma"] is not None and s["current_ma"] < -20 and len(self.volts_hist) >= 6:
+                mins = int((2500 * pct / 100) / abs(s["current_ma"]) * 60)
+            elif len(self.pct_hist) >= 2:
+                (t0, p0), (t1, p1) = self.pct_hist[0], self.pct_hist[-1]
+                if t1 - t0 >= 180 and p0 > p1:
+                    mins = int(p1 / ((p0 - p1) / (t1 - t0)) / 60)
+            if mins is not None:
+                state["minutes_left"] = mins
+        else:
+            self.pct_hist = []
+
+        low_now = on_battery and len(self.volts_hist) >= 3 and (
+            pct <= self.threshold or (isinstance(self.dev, X1203) and v_avg < X1203_CUTOFF_V))
+        self.low = self.low + 1 if low_now else 0
+        return state, self.low >= LOW_READINGS
+
+
+def describe(state: dict) -> str:
+    if not state.get("present"):
+        return "No battery module — running on external power."
+    how = "on battery" if state.get("on_battery") else (
+        "plugged in, charging" if state.get("charging") else
+        "plugged in" if state.get("ac_present") else "power source unknown")
+    bits = [f"{state['percent']:.0f}% ({how})", f"{state['voltage']:.2f} V"]
+    if state.get("current_ma") is not None:
+        bits.append(f"{state['current_ma']:+.0f} mA")
+    if state.get("minutes_left") is not None:
+        bits.append(f"~{state['minutes_left'] // 60}h{state['minutes_left'] % 60:02d}m left")
+    return f"{state.get('board', 'Battery')}: " + ", ".join(bits)
+
+
 def main() -> int:
     once = "--once" in sys.argv
     cfg = config()
-    mode = cfg.get("BATTERY", "auto")
+    mode = (cfg.get("BATTERY") or "auto").lower()
     if mode == "none":
-        write({"present": False, "disabled": True})
+        write({"present": False, "mains": True, "disabled": True})
         return 0
-    cells = max(1, int(cfg.get("BATTERY_CELLS") or 2))
-    threshold = float(cfg.get("BATTERY_SHUTDOWN_PERCENT") or 8)
-
-    dev = find(forced=(mode == "waveshare"))
+    dev = find(mode, cfg)
     if dev is None:
-        write({"present": False})
+        state = {"present": False, "mains": True}
+        write(state)
         if once:
-            print("No UPS HAT found on I2C (looked at 0x40-0x43).")
-        if mode == "waveshare":
-            print("humint-battery: BATTERY=waveshare but no INA219 answered", file=sys.stderr)
+            print(describe(state) + " (looked for an X1203 at 0x36 and a Waveshare HAT at 0x40-0x43)")
+        if mode in ("x1203", "waveshare"):
+            print(f"humint-battery: BATTERY={mode} but the board did not answer", file=sys.stderr)
             return 1
         return 0       # auto, nothing fitted: not an error, and nothing to restart
 
-    history, low = [], 0
+    tracker = Tracker(dev, float(cfg.get("BATTERY_SHUTDOWN_PERCENT") or 8))
     while True:
         try:
-            v, ma = dev.volts(), dev.milliamps()
+            s = dev.sample()
         except OSError as exc:
             print(f"humint-battery: read failed: {exc}", file=sys.stderr)
             time.sleep(POLL_SECONDS)
             continue
-        history = (history + [v])[-6:]           # ~30 s of smoothing
-        v_avg = sum(history) / len(history)
-        pct = percent(v_avg, cells)
-        charging = ma > 20                         # the HAT reads negative on battery
-        state = {"present": True, "percent": round(pct, 1), "voltage": round(v_avg, 3),
-                 "current_ma": round(ma, 1), "charging": charging, "cells": cells,
-                 "updated": int(time.time())}
-        if not charging and ma < -20:
-            # A rough time-left: 18650s are ~2500 mAh, and the estimate is
-            # only shown once the draw has settled.
-            hours = (2500 * pct / 100) / abs(ma)
-            if len(history) >= 6:
-                state["minutes_left"] = int(hours * 60)
+        state, act = tracker.step(s, time.time())
         write(state)
         if once:
-            how = "charging" if charging else "on battery"
-            print(f"Battery: {pct:.0f}% ({how}), {v_avg:.2f} V, {ma:+.0f} mA, {cells}S pack")
+            print(describe(state))
             return 0
-        low = low + 1 if (not charging and pct <= threshold and len(history) >= 3) else 0
-        if low >= LOW_READINGS:
-            shut_down(pct)
+        if act:
+            shut_down(state["percent"])
             return 0
         time.sleep(POLL_SECONDS)
 

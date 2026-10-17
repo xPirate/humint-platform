@@ -22,8 +22,9 @@ What it does:
 - a **0.96" OLED** status screen, and/or a **touch-screen control panel** on a
   5" HDMI screen — PIN pad, dashboard, QR codes to join, menus — picked
   automatically from what is plugged in;
-- a **battery gauge** for the Waveshare UPS HAT, with a clean lock-and-power-off
-  before the battery dies;
+- a **battery gauge** for the Geekworm X1203 or Waveshare UPS HAT, with a clean
+  lock-and-power-off before the battery dies — and a plug on screen when it
+  is running on wall power;
 - **field packages** that carry the deployment's work home to HQ for review.
 
 ---
@@ -36,7 +37,7 @@ What it does:
 | **Storage** | An SD card (32 GB+, A2-rated) to boot. **Recommended:** boot from a USB-3 SSD (Pi 4) or NVMe (Pi 5) instead — database writes wear SD cards, and a card that loses power mid-write can corrupt the case file. |
 | **Screen** | Any of: **none** (type the PIN blind); a **0.96" SSD1306 I2C OLED** (status pages and PIN prompt); the **Elecrow 5" 800×480 HDMI touch screen** (or another HDMI/DSI screen — the touch control panel). An OLED and a panel can both be fitted. |
 | **Keyboard** | Needed for **first boot** (setting the PIN at base). In the field it is needed only **without a touch screen** — then the PIN is typed on it at every boot. A small foldable one lives in the bag. |
-| **Battery** | A **Waveshare UPS HAT** (two 18650 cells) for the gauge and clean low-battery shutdown, or any USB-C power bank that can supply 5 V / 3 A (Pi 4) or 5 V / 5 A (Pi 5). |
+| **Battery** | A **Geekworm X1203** (Pi 5) or **Waveshare UPS HAT** (Pi 4) for the charge gauge and clean low-battery shutdown — or any USB-C power bank that can supply 5 V / 3 A (Pi 4) or 5 V / 5 A (Pi 5), shown on screen simply as external power. |
 | **Build machine** | A Debian/Ubuntu x86-64 machine (or anything that runs Docker) with internet, to run pi-gen. |
 
 ---
@@ -182,16 +183,39 @@ HTTP.
 
 ## Battery
 
-With a **Waveshare UPS HAT** fitted, `humint-battery` reads its INA219 monitor
-over I2C (it looks at 0x42, then 0x43/0x40/0x41) and shows the charge on the
-panel, the OLED and `humint-ctl status`. When the box is on battery and the
-charge falls to `BATTERY_SHUTDOWN_PERCENT` (8% by default) for about 15
-seconds, it stops the console, re-locks the case file and powers off — a
-database shut down cleanly never needs repairing.
+`humint-battery` reads the UPS board every few seconds and puts the result on
+the panel, the OLED and `humint-ctl status`. It finds the board itself
+(`BATTERY=auto`):
 
-The HAT has no fuel-gauge chip, so charge is estimated from the pack voltage,
-as Waveshare's own software does; under load it reads a little low and
-recovers at rest. `BATTERY_CELLS=1` for the single-cell UPS HAT (C).
+| Board | What it reads |
+|---|---|
+| **Geekworm X1203** (Pi 5) | A real fuel gauge (Maxim MAX17040, I2C **0x36**) that reports the charge itself, and the power-loss pin (**GPIO 6**) that says the moment wall power goes. Time left is worked out from how fast the charge is falling (it settles after a few minutes on battery). |
+| **Waveshare UPS HAT** (Pi 4) | An INA219 monitor (I2C 0x42): charge estimated from the pack voltage, as Waveshare's own software does (it reads a little low under load); on battery or not from the direction of the current. |
+| *(none)* | Nothing to read: the screens show a **plug** — the box is on external power and pulling the cable turns it off. |
+
+What the screens show:
+
+- **plug** — on wall power with no battery module behind it;
+- **battery % and a plug** — a battery fitted and wall power present (with a
+  bolt while charging);
+- **battery % alone, with the time left** — running on battery;
+- a **red banner** under 15% on battery.
+
+When the box is on battery and the charge falls to `BATTERY_SHUTDOWN_PERCENT`
+(8% by default) — or, on an X1203, the cell to 3.20 V, Geekworm's own cut-off —
+for about 15 seconds, it stops the console, re-locks the case file and powers
+off. It never does this on wall power, and never when it cannot tell (an
+unreadable power-loss pin reads as "source unknown", not "on battery").
+
+**X1203 notes.** Pi 5 only. Cells go in **parallel only** — Geekworm warns that
+series wiring burns the board out — and should be cells without a built-in
+protection board. When it arrives, `sudo i2cdetect -y 1` should show `36`
+(if not, Geekworm's first suspect is the pogo pins' contact). If the screen
+says *on battery* while plugged in, the power-loss pin reads the other way
+round on your board: set `BATTERY_PLD_AC_LEVEL=0` in `/var/lib/humint/env`
+and `systemctl restart humint-battery`.
+
+`humint-ctl battery` prints a one-line reading.
 
 ---
 
@@ -284,8 +308,9 @@ Before taking a box out, run through this once:
    is still there.
 6. Touch screen: calibrate, then tap through every tab; lock and unlock from
    the Menu.
-7. Battery: unplug the charger; the panel should say *on battery* with a time
-   estimate. (To test the shutdown without draining a pack, set
+7. Battery: with the charger in, the top bar shows the % and a plug; unplug
+   it and the plug goes, the Home card says *on battery*, and a time estimate
+   appears after a few minutes. With no battery board, just a plug and "AC". (To test the shutdown without draining a pack, set
    `BATTERY_SHUTDOWN_PERCENT=95` in `/var/lib/humint/env` and
    `systemctl restart humint-battery` — then set it back.)
 8. Try `humint-ctl net wired` with a switch and a laptop — the certificate is
@@ -380,8 +405,10 @@ Tested off the Pi:
 - **HTTPS:** CA and server certificate issued, served by uvicorn, verified by
   a client trusting only the box's CA; a certificate for a public name forged
   with the CA's own key is rejected; the port-80 page, download and redirect.
-- **Battery gauge** against a simulated INA219: charge maths, charging
-  detection, 1- and 2-cell packs, the low-battery shutdown decision.
+- **Battery gauge** against simulated chips — the X1203's MAX17040 and
+  power-loss pin, and the Waveshare INA219: charge, plugged in / charging /
+  on battery, time left, the no-module plug, and the shutdown rules (never on
+  wall power or an unreadable pin; the X1203 voltage floor).
 - **Screen detection** against simulated hardware, including the reboot-once
   guard; every **touch panel** screen rendered at 800×480 and 1024×600, and
   taps, keys, rotation and calibration driven through it.
@@ -395,7 +422,8 @@ Needs a real Pi:
   evdev, calibration, pygame drawing through KMS.
 - The **OLED** wiring and the **PIN prompt** at the right moments.
 - The **unlock flow** on real LUKS, and `humint.target` starting after it.
-- **The UPS HAT** answering at 0x42 and the real voltage curve.
+- **The X1203** answering at 0x36, the power-loss pin's polarity, and the
+  charge figure against a real discharge (or the Waveshare HAT at 0x42).
 - **Hotspot mode** at usable range with several phones; certificate
   installation on your actual phones.
 - **Performance** of OCR and the console on a Pi 4 vs a Pi 5, and power draw
@@ -408,7 +436,8 @@ Needs a real Pi:
 - **Duress PIN** that erases the case store instead of opening it, as the
   tablet relay has.
 - **Fully encrypted root**, unlocked in the initramfs.
-- **Battery gauges** for other UPS boards (PiSugar, Geekworm X120x).
+- **Battery gauges** for other UPS boards (PiSugar); charge-limit control on
+  the X1203 (GPIO 16) for boxes left plugged in for weeks.
 - **A PC/x86 ISO** of the same appliance for mini-PC field servers.
 - **Field sync over the network** when the box can reach HQ, instead of a
   USB stick — and carrying zones, routes and record photos.

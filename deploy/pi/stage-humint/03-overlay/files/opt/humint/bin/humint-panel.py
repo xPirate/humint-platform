@@ -512,6 +512,20 @@ def bolt(surf, c, s, color):
     pygame.draw.polygon(surf, color, pts)
 
 
+def plug(surf, c, s, color, scale=1.0):
+    """A mains plug, prongs up: the box is on external power."""
+    x, y = c
+    k = s * scale
+    body = pygame.Rect(0, 0, int(16 * k), int(12 * k))
+    body.center = (x, y)
+    pygame.draw.rect(surf, color, body, border_radius=max(1, int(3 * k)))
+    for dx in (-4, 4):                                    # prongs
+        pygame.draw.rect(surf, color, (x + int(dx * k) - max(1, int(1.5 * k)), body.top - int(6 * k),
+                                       max(2, int(3 * k)), int(6 * k)))
+    pygame.draw.line(surf, color, (x, body.bottom), (x, body.bottom + int(6 * k)),
+                     max(2, int(3 * k)))                  # the cord
+
+
 ICONS = {"BACK": _icon_back, "SHIFT": _icon_shift}
 
 
@@ -738,15 +752,24 @@ class Panel:
         b = d.get("battery") or {}
         if b.get("present"):
             self.battery_icon(surf, b, (x, int(26 * s)))
+        elif b.get("mains"):
+            # No battery module: running on external power, so pulling the
+            # cable turns it off. A plug says so at a glance.
+            r = text(surf, "AC", (x, int(26 * s)), int(18 * s), MUTED, kind="mono", anchor="midright")
+            plug(surf, (r.left - int(14 * s), int(25 * s)), s, MUTED)
 
     def battery_icon(self, surf, b, right_mid):
         s = self.s
         pct = b.get("percent", 0)
         color = DANGER if pct < 15 and not b.get("charging") else (WARN if pct < 35 else ACCENT)
         r = text(surf, f"{pct:.0f}%", right_mid, int(18 * s), color, kind="mono", anchor="midright")
-        if b.get("charging"):
-            bolt(surf, (r.left - int(12 * s), right_mid[1]), s, color)
-            r = r.move(-int(20 * s), 0)
+        if b.get("ac_present"):
+            # Plugged in: the plug, and the bolt too while it is charging.
+            plug(surf, (r.left - int(17 * s), right_mid[1] - int(1 * s)), s, ACCENT)
+            r = r.move(-int(32 * s), 0)
+            if b.get("charging"):
+                bolt(surf, (r.left - int(8 * s), right_mid[1]), s, ACCENT)
+                r = r.move(-int(16 * s), 0)
         body = pygame.Rect(0, 0, int(34 * s), int(16 * s))
         body.midright = (r.left - int(10 * s), right_mid[1])
         pygame.draw.rect(surf, color, body, width=max(1, int(2 * s)), border_radius=int(3 * s))
@@ -930,7 +953,7 @@ class Panel:
         top, bottom = int(64 * s), self.H - int(78 * s)
         pad = int(12 * s)
         b = d.get("battery") or {}
-        if b.get("present") and b.get("percent", 100) < 15 and not b.get("charging"):
+        if b.get("present") and b.get("percent", 100) < 15 and b.get("on_battery", not b.get("charging")):
             r = pygame.Rect(0, int(53 * s), self.W, int(30 * s))
             pygame.draw.rect(surf, (90, 26, 26), r)
             text(surf, "Battery low — plug in, or the box will lock and power off",
@@ -974,20 +997,30 @@ class Panel:
             text(surf, "up" if ok else state, (r.right - int(16 * s), y), int(15 * s), MUTED, anchor="topright")
             y += int(27 * s)
 
-        # battery or storage
-        r = self.card(surf, cell(1, 1), "Battery" if b.get("present") else "Storage")
+        # power: the battery, or the plug when there is no battery module
+        r = self.card(surf, cell(1, 1), "Battery" if b.get("present") else "Power")
         if b.get("present"):
             pct = b.get("percent", 0)
-            color = DANGER if pct < 15 else (WARN if pct < 35 else ACCENT)
+            on_batt = b.get("on_battery")
+            color = DANGER if pct < 15 and on_batt else (WARN if pct < 35 and on_batt else ACCENT)
             text(surf, f"{pct:.0f}%", (r.x + int(16 * s), r.y + int(36 * s)), int(44 * s), color, kind="bold")
-            how = "charging" if b.get("charging") else (
-                f"~{b['minutes_left'] // 60}h {b['minutes_left'] % 60:02d}m left" if b.get("minutes_left") else "on battery")
-            text(surf, how, (r.x + int(16 * s), r.bottom - int(34 * s)), int(17 * s), MUTED)
+            if b.get("ac_present"):
+                plug(surf, (r.right - int(34 * s), r.y + int(62 * s)), s, ACCENT, scale=1.8)
+            if b.get("ac_present"):
+                how = "plugged in · charging" if b.get("charging") else "plugged in"
+            elif on_batt:
+                ml = b.get("minutes_left")
+                how = f"on battery · ~{ml // 60}h {ml % 60:02d}m" if ml is not None else "on battery"
+            else:
+                how = "source unknown"
+            text(surf, how, (r.x + int(16 * s), r.bottom - int(34 * s)), int(17 * s), MUTED,
+                 maxw=r.width - int(32 * s))
         else:
-            disk = d.get("disk")
-            if disk:
-                text(surf, f"{disk[0]:.1f} GB", (r.x + int(16 * s), r.y + int(40 * s)), int(36 * s), kind="bold")
-                text(surf, f"free of {disk[1]:.0f} GB", (r.x + int(16 * s), r.bottom - int(34 * s)), int(17 * s), MUTED)
+            plug(surf, (r.x + int(40 * s), r.y + int(64 * s)), s, ACCENT, scale=2.2)
+            text(surf, "External", (r.x + int(76 * s), r.y + int(42 * s)), int(24 * s), kind="bold")
+            text(surf, "power", (r.x + int(76 * s), r.y + int(70 * s)), int(24 * s), kind="bold")
+            text(surf, "no battery module fitted", (r.x + int(16 * s), r.bottom - int(34 * s)),
+                 int(15 * s), MUTED, maxw=r.width - int(32 * s))
 
         # system
         r = self.card(surf, cell(2, 1), "System")
@@ -996,7 +1029,7 @@ class Panel:
             lines.append(("Temp", f"{d['temp']:.0f} °C"))
         lines.append(("Up", d.get("uptime", "?")))
         disk = d.get("disk")
-        if b.get("present") and disk:
+        if disk:
             lines.append(("Free", f"{disk[0]:.1f} GB"))
         y = r.y + int(40 * s)
         for k, v in lines:
