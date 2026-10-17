@@ -52,7 +52,7 @@ sudo apt-get update -qq
 sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
     git tmux coreutils quilt parted qemu-user-static debootstrap zerofree zip \
     dosfstools e2fsprogs libcap2-bin grep rsync xz-utils curl xxd file kmod \
-    bc gpg pigz arch-test libarchive-tools >/dev/null
+    bc gpg pigz arch-test libarchive-tools debian-archive-keyring >/dev/null
 
 # ---- 2. on SSH, move into tmux before the long part -------------------------
 if [ "$USE_TMUX" = 1 ] && [ "$PREPARE_ONLY" = 0 ] && [ -z "${TMUX:-}" ] && [ -n "${SSH_CONNECTION:-}" ]; then
