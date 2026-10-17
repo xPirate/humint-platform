@@ -12,6 +12,9 @@
 #
 # Options:
 #   --clean         throw away the previous build's work and start fresh
+#                   (otherwise, if the base system — pi-gen's stages 0-2 —
+#                   finished last time, it is reused and only the HUMINT
+#                   stage is rebuilt)
 #   --prepare-only  set everything up but do not build
 #   --no-tmux       do not wrap the build in tmux
 #   PIGEN_DIR=...   where pi-gen goes (default ~/pi-gen)
@@ -27,7 +30,7 @@ for a in "$@"; do
         --clean) CLEAN=1 ;;
         --prepare-only) PREPARE_ONLY=1 ;;
         --no-tmux) USE_TMUX=0 ;;
-        -h|--help) sed -n '2,21p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+        -h|--help) sed -n '2,24p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
         *) echo "unknown option: $a (see --help)" >&2; exit 2 ;;
     esac
 done
@@ -133,13 +136,29 @@ if [ "$PREPARE_ONLY" = 1 ]; then
 fi
 
 # ---- 7. build ---------------------------------------------------------------
-say "Building the image — about an hour on a Pi 5, longer on a Pi 4. Log: $PIGEN/build.log"
-echo "$BRANCH" >"$MARK"
 cd "$PIGEN"
+# The base system (stage0-2) takes most of the time and never changes between
+# our builds. If it finished last time, skip it and rebuild only our stage
+# (CLEAN=1 recopies it fresh from stage2).
+RESUME=0
+if [ "$CLEAN" = 0 ] && [ -f build.log ] && grep -q " End $PIGEN/stage2\$" build.log &&
+   compgen -G "$PIGEN/work/*/stage2/rootfs/etc" >/dev/null; then
+    RESUME=1
+fi
+cleanup_skip() { rm -f "$PIGEN"/stage0/SKIP "$PIGEN"/stage1/SKIP "$PIGEN"/stage2/SKIP; }
+trap cleanup_skip EXIT
+if [ "$RESUME" = 1 ]; then
+    say "Reusing the base system from the last build; rebuilding only the HUMINT stage. Log: $PIGEN/build.log"
+    touch stage0/SKIP stage1/SKIP stage2/SKIP
+else
+    say "Building the image — about an hour on a Pi 5, longer on a Pi 4. Log: $PIGEN/build.log"
+fi
+echo "$BRANCH" >"$MARK"
 set +e
-sudo ./build.sh 2>&1 | tee build.log
+sudo env CLEAN=1 ./build.sh 2>&1 | tee build.log.new
 rc=${PIPESTATUS[0]}
 set -e
+mv -f build.log.new build.log
 if [ "$rc" -ne 0 ] || grep -q 'Build failed' build.log; then
     echo
     warn "the build failed. The error is just above '[..] Build failed' in $PIGEN/build.log:"

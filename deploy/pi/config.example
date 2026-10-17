@@ -40,4 +40,5 @@ ENABLE_SSH=1
 # REQUIRED: path to your checkout of the humint-platform repository. Its code
 # is copied into the image and its Python dependencies installed there, so
 # the finished card needs no internet. (The BUILD machine does need it.)
-HUMINT_SRC_DIR="/path/to/humint-platform"
+# "export" matters: pi-gen passes only its own settings on to stages.
+export HUMINT_SRC_DIR="/path/to/humint-platform"

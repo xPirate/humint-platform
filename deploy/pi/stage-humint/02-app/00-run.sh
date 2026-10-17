@@ -10,7 +10,15 @@
 # build machine. Copying from a local checkout avoids needing credentials for
 # a private repo inside the build chroot.
 
-: "${HUMINT_SRC_DIR:?set HUMINT_SRC_DIR to a checkout of the humint-platform repo}"
+# pi-gen only passes its own settings on to stages, so a plain
+# HUMINT_SRC_DIR=... in config never arrives here; config says
+# "export HUMINT_SRC_DIR=...". Without it, use the copy prepare-pigen.sh
+# makes inside pi-gen (BASE_DIR is the pi-gen folder).
+HUMINT_SRC_DIR="${HUMINT_SRC_DIR:-${BASE_DIR}/humint-src}"
+if [ ! -d "${HUMINT_SRC_DIR}/api" ]; then
+    echo "HUMINT app not found at ${HUMINT_SRC_DIR} — run deploy/pi/prepare-pigen.sh (or build-image.sh) first" >&2
+    exit 1
+fi
 
 install -d "${ROOTFS_DIR}/opt/humint-platform"
 # Only what runs on the box: the API, the worker, the frontend and the schema.

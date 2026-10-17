@@ -71,7 +71,8 @@ if [ ! -f "$PIGEN/config" ]; then
     NEW_CONFIG=1
 fi
 # Point HUMINT_SRC_DIR at the copied app, in place (portable: no sed -i).
-awk -v src="$SRC" '/^HUMINT_SRC_DIR=/{print "HUMINT_SRC_DIR=\"" src "\""; next} {print}' \
+# "export": pi-gen passes only its own settings on to the stages.
+awk -v src="$SRC" '/^(export )?HUMINT_SRC_DIR=/{print "export HUMINT_SRC_DIR=\"" src "\""; next} {print}' \
     "$PIGEN/config" >"$PIGEN/config.tmp" && mv "$PIGEN/config.tmp" "$PIGEN/config"
 
 say "Ready."
