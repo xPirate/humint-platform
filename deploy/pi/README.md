@@ -230,24 +230,22 @@ and `systemctl restart humint-battery`.
 
 ## Building the image
 
+Build on a Raspberry Pi running ordinary 64-bit Raspberry Pi OS (simplest: it
+is the same architecture as the image, so nothing is emulated), or on any
+Debian/Ubuntu machine. A step-by-step walkthrough for first-timers lives in
+the "Building the field server image" guide; the short version:
+
 ```bash
-# On a Debian/Ubuntu x86-64 machine with internet:
-git clone --branch arm64 https://github.com/RPi-Distro/pi-gen   # the 64-bit branch
-cd pi-gen
-
-# Bring in this appliance's stage and config.
-cp -r /path/to/humint-platform/deploy/pi/stage-humint ./stage-humint
-cp /path/to/humint-platform/deploy/pi/config.example ./config
-
-# Edit ./config — at minimum set:
-#   HUMINT_SRC_DIR=/path/to/humint-platform   (your checkout; its code is baked in)
-#   FIRST_USER_PASS=...                        (do not ship a shared default)
-
-# (config's STAGE_LIST already limits the build to Lite + our stage.)
-
-sudo ./build.sh          # or ./build-docker.sh
-# The image lands in ./deploy/  e.g. image_*-humint-field.img(.xz)
+git clone <this repo> humint-platform && cd humint-platform
+git checkout pi-appliance
+deploy/pi/prepare-pigen.sh ~/pi-gen      # clones pi-gen, copies the stage + app, writes ~/pi-gen/config
+nano ~/pi-gen/config                     # set FIRST_USER_PASS (and keyboard/timezone)
+cd ~/pi-gen && sudo ./build.sh           # 1–2 hours; the image lands in ~/pi-gen/deploy/
 ```
+
+`prepare-pigen.sh --docker` sets the same up for pi-gen's `build-docker.sh`
+instead. Run `prepare-pigen.sh` again after pulling new code; it refreshes the
+stage and the app and keeps your config.
 
 What the `stage-humint` stage adds on top of Raspberry Pi OS Lite:
 
