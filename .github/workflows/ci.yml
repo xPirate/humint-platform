@@ -1,0 +1,103 @@
+# Runs on every push and pull request.
+#
+#   checks   Python 3.11 syntax (what Raspberry Pi OS Bookworm and the Docker
+#            images run — newer Pythons accept code 3.11 refuses), shellcheck
+#            on the field-server scripts, and the frontend's JavaScript.
+#   tests    tests/run.sh against a real Postgres 16: the API under uvicorn,
+#            the worker in-process, nothing mocked.
+#   docker   the api and worker images still build.
+#   android  the app's JVM unit tests (title parity with the console, …).
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Python 3.11 can parse every file
+        run: |
+          git ls-files '*.py' | grep -v '^android/' | while read -r f; do
+            python -c "import ast,sys; ast.parse(open(sys.argv[1]).read(), sys.argv[1])" "$f" || exit 1
+          done
+      - name: shellcheck the field-server scripts
+        run: |
+          sudo apt-get install -y -qq shellcheck >/dev/null
+          shellcheck -S warning -x \
+            deploy/pi/*.sh \
+            deploy/pi/stage-humint/*/00-run.sh deploy/pi/stage-humint/prerun.sh \
+            deploy/pi/stage-humint/03-overlay/files/opt/humint/bin/*.sh \
+            deploy/pi/stage-humint/03-overlay/files/opt/humint/bin/humint-ctl \
+            deploy/pi/stage-humint/03-overlay/files/opt/humint/bin/humint-api-run \
+            deploy/pi/stage-humint/03-overlay/files/opt/humint/bin/humint-unlock-try \
+            deploy/pi/stage-humint/03-overlay/files/opt/humint/lib/humint-common.sh
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: the frontend's JavaScript parses
+        run: for f in frontend/*.js; do node --check "$f"; done
+
+  tests:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: humint_test
+          POSTGRES_PASSWORD: Test-password-123
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U humint_test"
+          --health-interval 5s --health-timeout 5s --health-retries 20
+    env:
+      POSTGRES_HOST: 127.0.0.1
+      POSTGRES_PORT: "5432"
+      POSTGRES_USER: humint_test
+      POSTGRES_PASSWORD: Test-password-123
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0          # the migration test builds the last release's schema from git
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: dependencies
+        run: |
+          sudo apt-get install -y -qq tesseract-ocr poppler-utils fonts-dejavu-core >/dev/null
+          python -m pip install -q -r api/requirements.txt -r worker/requirements.txt pygame pyotp
+      - name: tests
+        run: tests/run.sh
+
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: build the api and worker images
+        run: |
+          cp .env.example .env
+          docker compose build api worker
+
+  android:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: android
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+      - uses: gradle/actions/setup-gradle@v4
+      - name: unit tests
+        run: ./gradlew --no-daemon test
