@@ -2408,6 +2408,8 @@ function openImportForm() {
     </div>
     <form id="import-upload-form">
       <div class="form-row"><label>CSV file</label><input type="file" id="import-file-input" accept=".csv,text/csv" required></div>
+      <label class="admin-check"><input type="checkbox" id="import-skip-dupes" checked>
+        Skip rows whose name is already a record of this type</label>
       <p class="form-error" id="import-error"></p>
       <div class="modal-actions">
         <button type="button" class="btn-secondary" id="import-cancel">Close</button>
@@ -2438,6 +2440,7 @@ function openImportForm() {
     const fd = new FormData();
     fd.append("entity_type", typeSelect.value);
     fd.append("file", fileInput.files[0]);
+    fd.append("duplicates", document.getElementById("import-skip-dupes").checked ? "skip" : "create");
     const errorEl = document.getElementById("import-error");
     errorEl.textContent = "";
     try {
@@ -2452,7 +2455,9 @@ function openImportForm() {
 
 function renderImportResults(result) {
   const el = document.getElementById("import-results");
-  const summary = `<p><strong>${result.created_count}</strong> created, <strong>${result.error_count}</strong> failed.</p>`;
+  const summary = `<p><strong>${result.created_count}</strong> created, <strong>${result.error_count}</strong> failed${
+    result.skipped_count ? `, <strong>${result.skipped_count}</strong> skipped (already on file)` : ""}${
+    result.possible_duplicates ? `, <strong>${result.possible_duplicates}</strong> created with a name already on file — check Review or merge them` : ""}.</p>`;
   const errorRows = result.errors.map((e) => `
     <div class="import-error-row">
       <span class="import-row-num">row ${e.row}</span>
@@ -2461,7 +2466,7 @@ function renderImportResults(result) {
     </div>
   `).join("");
   el.innerHTML = summary + (result.errors.length
-    ? `<p class="view-hint">Fix these rows, and remove the rows that already imported before re-uploading — duplicates aren't detected.</p>${errorRows}`
+    ? `<p class="view-hint">Fix these rows and upload the file again — rows already imported are skipped.</p>${errorRows}`
     : "");
 }
 
@@ -10457,7 +10462,7 @@ function documentCardHtml(d, archived) {
         <span>added ${timeAgoHtml(d.uploaded_at)}</span>
         ${d.source_note ? `<span class="doc-source">${escapeHtml(d.source_note)}</span>` : ""}
       </div>
-      ${d.extraction_status === "failed" && d.extraction_error
+      ${(d.extraction_status === "failed" || d.extraction_status === "done") && d.extraction_error
         ? `<div class="doc-error">${escapeHtml(d.extraction_error)}</div>` : ""}
       <div class="queue-actions">
         <button class="btn-secondary btn-sm" data-open-document="${d.id}">Open</button>
@@ -10822,7 +10827,7 @@ function renderDocumentDetail(d) {
     ${d.source_note ? `<p class="doc-source-note">Where it came from: ${escapeHtml(d.source_note)}</p>` : ""}
     ${d.records && d.records.length ? `<p class="doc-record-note">Saved as Record:
       ${d.records.map((r) => `<a href="#" data-open-entity="${escapeHtml(r.id)}">${escapeHtml(r.name)}</a>`).join(", ")}</p>` : ""}
-    ${d.extraction_status === "failed" && d.extraction_error
+    ${(d.extraction_status === "failed" || d.extraction_status === "done") && d.extraction_error
       ? `<div class="doc-error">${escapeHtml(d.extraction_error)}</div>` : ""}
 
     <div id="doc-file-under-panel" class="file-under-panel" hidden>

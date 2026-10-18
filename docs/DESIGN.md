@@ -4497,24 +4497,24 @@ debrief wizard, every admin section and the audit table open.
   third time is marked failed with that reason rather than retried for ever —
   a file that reliably kills the worker would otherwise take it down in a
   loop. **Read again** on the document starts the count over.
-- **Individual Ollama call failures are still silent.** The app now warns
-  loudly about the *predictable* causes — Ollama off, host unreachable, model
-  not installed (see "Choosing a model without guessing") — but a call that
-  fails for some other reason mid-run, like a model that's installed and
-  simply times out on a large document, still just produces no suggestions
-  for that attachment, with the reason only in the worker's logs. There's no
-  per-attachment "extraction failed and here's why" surfaced in the UI.
-- **Entities and reports are embedded once, not re-embedded after edits.**
-  Correlation runs off whatever text existed the first time something was
-  embedded (`embedding IS NULL` is the trigger). Edit a report heavily
-  after the fact and correlation won't reconsider it against anything new.
-- **Bulk CSV import has no duplicate detection.** Re-uploading a file that
-  includes rows from a previous successful import creates a second set of
-  entities, not an update to the first. This is on purpose scoped down: it
-  keeps every row's outcome fully independent (see "Bulk CSV import"
-  above), rather than adding "does this look like an existing entity"
-  matching logic that would just be a narrower, worse version of what the
-  correlation review queue already does after the fact.
+- **A model failure is shown on the document, not diagnosed.** When the model
+  is asked about a document and fails — unreachable, too slow, an answer that
+  was not the JSON it was asked for — the document says so ("Read, but
+  nothing proposed: …") with the reason in one line; **Read again** retries.
+  The model call log under Admin → Model has the detail. What it cannot tell
+  you is whether a model that *answered* missed things.
+- **Correlation re-reads an edited record, but not its neighbours.** Editing
+  a record's name or description (or a report's title or text) queues it to be
+  embedded and compared again; a pair already dismissed stays dismissed. A
+  record whose *own* text did not change is not re-compared just because a
+  related one was.
+- **Bulk CSV import matches duplicates by name only.** A row whose name is
+  already a record of that type — ignoring case, accents and spacing — is
+  skipped by default, so a file can be fixed and uploaded again without
+  doubling what already went in. It does not compare dates of birth or
+  addresses: two different people called John Smith need the box unticked,
+  and the correlation queue and Merge are where likely duplicates with
+  different spellings are found.
 - **Built for one worker, safe with more.** The worker claims every job with
   `FOR UPDATE SKIP LOCKED` and names itself on the claim, and recovery only
   takes back work from a worker whose heartbeat has stopped — so a second

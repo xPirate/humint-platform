@@ -380,8 +380,10 @@ def update_report(report_id: str, payload: ReportUpdate, user: dict = Depends(au
 
         if core_updates:
             set_clause = ", ".join(f"{k} = %s" for k in core_updates)
+            # Title or body changed: re-embedded and re-compared next pass.
+            reembed = ", embedding = NULL" if {"title", "body_markdown"} & set(core_updates) else ""
             cur.execute(
-                f"UPDATE reports SET {set_clause}, updated_at = now() WHERE id = %s",
+                f"UPDATE reports SET {set_clause}, updated_at = now(){reembed} WHERE id = %s",
                 [*core_updates.values(), report_id],
             )
         elif payload.entity_ids is not None:

@@ -258,6 +258,9 @@ class OllamaClient:
             return False, str(exc)[:500]
 
     def extract_entities(self, text: str) -> dict | None:
+        """The proposals, or None. None with last_error set means the model
+        was asked and failed; None without it means it was not asked."""
+        self.last_error = None
         if not self.enabled or not text.strip():
             return None
         payload = {
@@ -284,6 +287,9 @@ class OllamaClient:
             data = json.loads(content)
         except (requests.RequestException, KeyError, json.JSONDecodeError) as exc:
             logger.warning("Ollama extraction failed: %s", exc)
+            # Kept for the worker to put on the document, so the reason is
+            # visible in the console rather than only in this log.
+            self.last_error = _plain_reason(exc)
             # Recorded as a failure rather than not recorded at all. A model
             # that answered with unparseable JSON still burned the time and the
             # tokens, and "it ran and produced nothing usable" is exactly the
@@ -478,3 +484,21 @@ def _as_confidence(value) -> float:
     except (TypeError, ValueError):
         return 0.5
     return max(0.0, min(1.0, v))
+
+
+def _plain_reason(exc: Exception) -> str:
+    """What went wrong, in a line a person can act on."""
+    if isinstance(exc, requests.Timeout):
+        return "the model took too long to answer (raise the timeout under Admin → Model, or use a smaller model)"
+    if isinstance(exc, requests.ConnectionError):
+        return "the model server could not be reached"
+    if isinstance(exc, requests.HTTPError) and exc.response is not None:
+        detail = ""
+        try:
+            detail = exc.response.json().get("error", "")
+        except ValueError:
+            pass
+        return f"the model server answered {exc.response.status_code}" + (f": {detail}" if detail else "")
+    if isinstance(exc, (json.JSONDecodeError, KeyError)):
+        return "the model's answer was not the JSON it was asked for"
+    return str(exc)[:300]

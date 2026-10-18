@@ -171,7 +171,15 @@ def process_one_attachment() -> bool:
     if text.strip() and ollama.enabled:
         suggestions = ollama.extract_entities(text)
 
+    model_error = getattr(ollama, "last_error", None) if suggestions is None else None
     with db_cursor(commit=True) as cur:
+        if model_error:
+            # The text is read, so the document is usable — but say why
+            # nothing was proposed, where the person reading it will see it.
+            cur.execute("UPDATE attachments SET extraction_error = %s WHERE id = %s",
+                        (f"Read, but nothing proposed: {model_error}. Use Read again once the model "
+                         f"is working.", attachment_id))
+            print(f"[worker] attachment {attachment_id}: model failed: {model_error}", flush=True)
         if suggestions and (suggestions["entities"] or suggestions["relationships"]):
             _store_suggestions(cur, attachment_id, suggestions)
             print(

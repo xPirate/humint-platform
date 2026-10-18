@@ -910,6 +910,11 @@ def update_entity(entity_id: str, payload: EntityUpdate, user: dict = Depends(au
         # the archive also clears the note saying the policy took it — it
         # didn't, in the end.
         extra = ", retention_due_at = NULL"
+        # Correlation compares name + description; an edit to either is
+        # re-embedded (and re-compared) on the worker's next pass. Pairs
+        # already dismissed stay dismissed.
+        if "name" in core_updates or "description" in core_updates:
+            extra += ", embedding = NULL"
         if core_updates.get("is_active") is True:
             extra += ", archived_reason = NULL"
         if core_updates:

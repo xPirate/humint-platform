@@ -229,8 +229,15 @@ def entity_import_template(
 async def import_entities(
     entity_type: str = Form(...),
     file: UploadFile = File(...),
+    # A row whose name is already a record of this type (or an earlier row of
+    # this file): "skip" leaves it out; "create" makes it anyway and flags it.
+    # Re-uploading a file after fixing three bad rows used to double
+    # everything else in it.
+    duplicates: str = Form(default="skip"),
     user: dict = Depends(auth.require_user),
 ):
+    if duplicates not in ("skip", "create"):
+        raise HTTPException(status_code=400, detail="duplicates must be 'skip' or 'create'")
     entities._validate_entity_type(entity_type)
     _refuse_geometry_type(entity_type)
 
@@ -280,7 +287,15 @@ async def import_entities(
 
     created = []
     errors = []
+    skipped = []
     conn = get_conn()
+    # Names already on file for this type, folded the way people's typing
+    # varies: case, accents, spacing. "José  Álvarez" is "jose alvarez".
+    cur0 = conn.cursor()
+    cur0.execute("SELECT id, name FROM entities WHERE entity_type = %s AND merged_into IS NULL", (entity_type,))
+    known = {}
+    for eid, ename in cur0.fetchall():
+        known.setdefault(_fold(ename), (eid, ename))
     try:
         for line_no, row in enumerate(rows, start=2):  # row 1 is the header, matching what a spreadsheet shows
             if _row_is_blank(row) or _looks_like_comment_row(row):
@@ -291,6 +306,11 @@ async def import_entities(
                 name, description, parsed_details = _process_row(entity_type, row)
             except ValueError as exc:
                 errors.append({"row": line_no, "name": name_cell, "error": str(exc)})
+                continue
+
+            same = known.get(_fold(name))
+            if same and duplicates == "skip":
+                skipped.append({"row": line_no, "name": name, "existing_id": same[0], "existing_name": same[1]})
                 continue
 
             try:
@@ -307,7 +327,11 @@ async def import_entities(
                         cur, entity_id, parsed_details.get("address"), parsed_details.get("lat"), parsed_details.get("lng")
                     )
                 conn.commit()
-                created.append({"row": line_no, "id": entity_id, "name": name})
+                row_out = {"row": line_no, "id": entity_id, "name": name}
+                if same:
+                    row_out["possible_duplicate_of"] = {"id": same[0], "name": same[1]}
+                created.append(row_out)
+                known.setdefault(_fold(name), (entity_id, name))
             except Exception as exc:
                 conn.rollback()
                 errors.append({"row": line_no, "name": name_cell, "error": f"database error: {exc}"})
@@ -316,7 +340,7 @@ async def import_entities(
 
     audit.record("entity.bulk_import", user=user, object_type="entity",
                  detail={"entity_type": entity_type, "created": len(created),
-                         "errors": len(errors),
+                         "errors": len(errors), "skipped_existing": len(skipped),
                          "created_ids": [c["id"] for c in created][:200]})
     return {
         "entity_type": entity_type,
@@ -324,4 +348,14 @@ async def import_entities(
         "error_count": len(errors),
         "created": created,
         "errors": errors,
+        "skipped_count": len(skipped),
+        "skipped": skipped,
+        "possible_duplicates": sum(1 for c in created if "possible_duplicate_of" in c),
     }
+
+
+def _fold(name: str) -> str:
+    import unicodedata
+    text = unicodedata.normalize("NFKD", name or "")
+    text = "".join(ch for ch in text if not unicodedata.combining(ch))
+    return " ".join(text.casefold().split())
