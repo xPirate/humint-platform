@@ -138,7 +138,16 @@ needs the PIN; whoever finds it gets an OS and the app's code, not the case.
 | **Home** | The console address (large), the network and how many devices have joined, the services, battery (time left on battery), storage, temperature, uptime. A red banner when the battery is low. |
 | **Join** | Two QR codes: one joins the field Wi-Fi (hidden until you tap **Show** — it contains the passphrase), one opens the console. |
 | **Trust** | A QR code to the certificate page, and the full CA fingerprint to compare. |
-| **Menu** | Lock case file · Restart console · Wired network / Hotspot · Calibrate touch · Sleep screen · Renew certificate · Restart box · Shut down · Refresh. The ones that stop things ask first. |
+| **Menu** | Lock case file · Restart console · Wired network / Hotspot · Calibrate touch · Sleep screen · **Phone upload** · Restart box · Shut down · Update from USB · Wipe case file · Duress PIN · New login. The ones that stop or change things ask first. |
+
+**Phone upload** gives a phone its upload code at the box, so nobody needs the
+console's Admin page in the field: pick the person, then their phone (or *New
+phone*), and the field app scans the code shown. A code works until the next
+one for that phone is shown, and leaves the screen after three minutes or on
+*Done*. Read-only accounts are not listed. Every code is in the audit log as
+issued by the touch panel, and an admin can switch this off under Admin →
+Field devices. (The certificate renews itself on network changes; `sudo
+humint-ctl tls renew` still does it by hand.)
 
 The screen blanks after `SCREEN_SLEEP_MINUTES` idle (a touch wakes it — the
 first touch only wakes). `SCREEN_ROTATE=180` if it is mounted upside down.

@@ -1285,7 +1285,9 @@ CREATE TABLE IF NOT EXISTS app_settings (
     updated_at TIMESTAMPTZ,
     updated_by INTEGER REFERENCES users(id),
     -- Two-factor sign-in required for every account (v1.13).
-    require_2fa BOOLEAN NOT NULL DEFAULT FALSE
+    require_2fa BOOLEAN NOT NULL DEFAULT FALSE,
+    -- A field server's touch panel may issue phone upload codes (v1.13).
+    panel_upload_codes BOOLEAN NOT NULL DEFAULT TRUE
 );
 
 -- ============================================================================
@@ -1413,7 +1415,7 @@ CREATE TABLE IF NOT EXISTS audit_log (
     -- 'relay' (v1.10) is a team relay tablet syncing reports it carried
     -- home for its team's phones.
     actor_kind TEXT NOT NULL DEFAULT 'user'
-        CHECK (actor_kind IN ('user', 'system', 'anonymous', 'device', 'relay')),
+        CHECK (actor_kind IN ('user', 'system', 'anonymous', 'device', 'relay', 'panel')),  -- panel: a field server's touch panel (v1.13)
     action TEXT NOT NULL,              -- dotted object.verb, e.g. 'entity.create', 'report.export_pdf', 'auth.login_failed'
     object_type TEXT,                  -- 'entity' | 'report' | 'attachment' | 'user' | 'backup' | ...
     object_id TEXT,                    -- stored as TEXT because ids across this schema are a mix of slugs and serials

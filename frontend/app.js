@@ -12041,7 +12041,7 @@ const ADMIN_LOADERS = {
   brand: () => loadBrandingForm(),
   model: () => { loadOllamaSettings(); loadOllamaUsage(); },
   boards: () => loadBoardsAdmin(),
-  devices: () => { loadFieldDevices(); loadRelays(); },
+  devices: () => { loadFieldDevices(); loadRelays(); loadPanelSettings(); },
   signals: () => loadSignals(),
   retention: () => loadRetention(),
   audit: () => {},
@@ -14352,6 +14352,23 @@ function openPlaceApplyForm(data, pick) {
  * The token is shown once, at enrollment, as text and as a QR for the app to
  * scan. It is stored hashed and is not recoverable afterwards.
  * ========================================================================== */
+
+async function loadPanelSettings() {
+  const row = document.getElementById("panel-codes-row");
+  const box = document.getElementById("panel-codes");
+  let st;
+  try { st = await api("/api/admin/panel-settings"); } catch (e) { row.hidden = true; return; }
+  row.hidden = !st.available;
+  box.checked = st.panel_upload_codes;
+  if (box.dataset.wired) return;
+  box.dataset.wired = "1";
+  box.addEventListener("change", async () => {
+    try {
+      await api("/api/admin/panel-settings", { method: "PATCH", body: { panel_upload_codes: box.checked } });
+      showToast(box.checked ? "The touch panel can show upload codes" : "Upload codes from the touch panel are off");
+    } catch (err) { showToast(err.message, true); box.checked = !box.checked; }
+  });
+}
 
 async function loadFieldDevices() {
   const el = document.getElementById("device-list");

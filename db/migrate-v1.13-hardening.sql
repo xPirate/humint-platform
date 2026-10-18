@@ -16,7 +16,8 @@
 --     a per-session "may only set up two-factor" flag, and the admin switch
 --     that requires it for everyone;
 --   * source protection: a protected Source's true identity in a table of its
---     own, readable by its handlers only; and a read-only "viewer" role.
+--     own, readable by its handlers only; and a read-only "viewer" role;
+--   * the switch for phone upload codes from a field server's touch panel.
 -- ---------------------------------------------------------------------------
 
 BEGIN;
@@ -84,5 +85,22 @@ BEGIN
     END LOOP;
 END $$;
 ALTER TABLE users ADD CONSTRAINT users_role_check CHECK (role IN ('admin', 'analyst', 'viewer'));
+
+-- ---- phone upload codes from the touch panel (on unless switched off) ---------
+ALTER TABLE app_settings ADD COLUMN IF NOT EXISTS panel_upload_codes BOOLEAN NOT NULL DEFAULT TRUE;
+
+-- The audit log learns a new kind of actor: the touch panel.
+DO $$
+DECLARE c TEXT;
+BEGIN
+    FOR c IN SELECT conname FROM pg_constraint
+             WHERE conrelid = 'audit_log'::regclass AND contype = 'c'
+               AND pg_get_constraintdef(oid) ILIKE '%actor_kind%'
+    LOOP
+        EXECUTE format('ALTER TABLE audit_log DROP CONSTRAINT %I', c);
+    END LOOP;
+END $$;
+ALTER TABLE audit_log ADD CONSTRAINT audit_log_actor_kind_check
+    CHECK (actor_kind IN ('user', 'system', 'anonymous', 'device', 'relay', 'panel'));
 
 COMMIT;

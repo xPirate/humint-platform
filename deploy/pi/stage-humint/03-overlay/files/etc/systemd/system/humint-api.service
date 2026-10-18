@@ -19,6 +19,9 @@ WorkingDirectory=/opt/humint-platform/api
 # Where a signed-in browser's clock is left for humint-clock to apply (the box
 # has no clock of its own worth trusting; see api/clock.py).
 ExecStartPre=+/usr/bin/install -d -m 750 -o humintd -g humintd /srv/humint-data/clock /srv/humint-data/updates
+# The touch panel's key to its one console endpoint (api/panel.py): root
+# (the panel) and humintd (the console) can read it, nobody else.
+ExecStartPre=+/bin/sh -c '[ -s /srv/humint-data/panel.token ] || (umask 027; openssl rand -hex 32 > /srv/humint-data/panel.token); chown root:humintd /srv/humint-data/panel.token; chmod 640 /srv/humint-data/panel.token'
 ExecStartPre=+/bin/sh -c 'if [ "$${TLS:-on}" = on ]; then /opt/humint/bin/humint-tls.sh ensure; fi'
 ExecStart=/opt/humint/bin/humint-api-run
 # Lets an unprivileged account serve on 443 (or 80), so phones need no :port.
@@ -34,6 +37,7 @@ Environment=TMPDIR=/srv/humint-data/tmp
 Environment=CLOCK_HINT_FILE=/srv/humint-data/clock/hint.json
 # Where an admin's uploaded update bundle is left for humint-update-inbox.
 Environment=UPDATE_INBOX=/srv/humint-data/updates/incoming.tar
+Environment=PANEL_TOKEN_FILE=/srv/humint-data/panel.token
 ReadWritePaths=/srv/humint-data/uploads /srv/humint-data/map-packs /srv/humint-data/tmp -/srv/humint-data/clock -/srv/humint-data/updates
 Restart=always
 RestartSec=3

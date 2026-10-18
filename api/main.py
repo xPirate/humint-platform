@@ -63,6 +63,7 @@ import map_files
 import clock
 import sources
 import field_update
+import panel
 import twofactor
 from db import db_cursor
 
@@ -181,6 +182,8 @@ app.include_router(twofactor.router)
 app.include_router(twofactor.admin_router)
 app.include_router(sources.router)
 app.include_router(field_update.router)
+app.include_router(panel.router)
+app.include_router(panel.admin_router)
 
 class RevalidatingStatic(StaticFiles):
     """StaticFiles with a Cache-Control header on every response.

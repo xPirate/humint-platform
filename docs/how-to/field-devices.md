@@ -29,6 +29,15 @@ Only admins enroll devices. Any analyst can work the queue
 6. **Print a card** now while it's on screen (below), or have the analyst scan
    it straight away to test.
 
+## At a field server: from its touch panel
+
+On a field server with a touch screen, **Menu → Phone upload** does the same
+without the Admin page: choose the person, then their phone or **New phone**,
+and scan the code on the screen. It is the same code as **Show code** here —
+the previous one for that phone stops working — and it is logged as issued by
+the touch panel. Switch it off with *Let the field server's touch panel show
+phone upload codes* on this page.
+
 ## Show a device's code again
 
 Press **Show a code** next to the device. It issues a **fresh** code for the

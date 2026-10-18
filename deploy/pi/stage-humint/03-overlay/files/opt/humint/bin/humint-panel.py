@@ -53,6 +53,10 @@ BATTERY = "/run/humint/battery.json"
 CLOCK = "/run/humint/clock.json"
 # A new login password, shown until someone confirms it is written down.
 LOGIN_SECRET = "/run/humint/login-password.json"
+# The panel's key to its one console endpoint (api/panel.py), in the store.
+PANEL_TOKEN = "/srv/humint-data/panel.token"
+UPLOAD_SCREENS = ("upload_people", "upload_devices", "upload_qr")
+UPLOAD_QR_SECONDS = 180
 TRIES = "/run/humint/unlock-tries"
 # First boot asks the panel for the PIN to set (see panel_ask_pin in
 # humint-common.sh): the request names the stage, the answer goes to the FIFO.
@@ -565,6 +569,44 @@ def text(surf, msg, pos, size, color=TEXT, kind="sans", anchor="topleft", maxw=N
     return r
 
 
+class ConsoleError(Exception):
+    pass
+
+
+def console_api(method, path, body=None):
+    """Ask the console (on this box) for phone upload codes — the panel's
+    only use of it. See api/panel.py for why this is allowed."""
+    import json as _json
+    import ssl
+    import urllib.error
+    import urllib.request
+    env = read_env()
+    tls = env.get("TLS", "on") == "on"
+    base = (f"https://127.0.0.1:{env.get('HTTPS_PORT', '443')}" if tls
+            else f"http://127.0.0.1:{env.get('API_PORT', '80')}")
+    try:
+        token = open(PANEL_TOKEN).read().strip()
+    except OSError:
+        raise ConsoleError("Unlock the case file first")
+    req = urllib.request.Request(base + path, method=method,
+                                 data=_json.dumps(body).encode() if body is not None else None,
+                                 headers={"X-Panel-Token": token, "Content-Type": "application/json"})
+    # 127.0.0.1 is this box; its certificate names the box's addresses, not
+    # the loopback, so the name is not checked for this one call.
+    ctx = ssl._create_unverified_context() if tls else None
+    try:
+        with urllib.request.urlopen(req, timeout=20, context=ctx) as r:
+            return _json.load(r)
+    except urllib.error.HTTPError as e:
+        try:
+            detail = _json.load(e).get("detail")
+        except ValueError:
+            detail = None
+        raise ConsoleError(detail if isinstance(detail, str) else f"The console said {e.code}")
+    except (urllib.error.URLError, OSError):
+        raise ConsoleError("The console is not answering")
+
+
 def qr_surface(data, size):
     try:
         import qrcode
@@ -618,6 +660,8 @@ class Panel:
         self.last_input = time.time()
         self.asleep = False
         self.buttons = []
+        # Menu → Phone upload: who, which phone, then the code.
+        self.upload = {"people": [], "person": None, "qr": None, "page": 0}
 
     # ---- state ------------------------------------------------------------
 
@@ -638,6 +682,8 @@ class Panel:
             if d.get("store_exists") and d.get("firstboot_done"):
                 return "lockout" if d.get("tries_left", 1) <= 0 else "pin"
             return "message"
+        if self.screen in UPLOAD_SCREENS:
+            return self.screen
         return self.screen if self.screen in ("home", "join", "trust", "menu") else "home"
 
     def flash(self, msg, secs=3):
@@ -1265,8 +1311,7 @@ class Panel:
                               danger=False), "normal"),
             ("Calibrate touch", "tap 4 targets", self.start_calibration, "normal"),
             ("Sleep screen", "touch to wake", lambda: setattr(self, "asleep", True), "normal"),
-            ("Renew certificate", "after a network change",
-             lambda: self.ctl("Renewing certificate", "tls", "renew"), "normal"),
+            ("Phone upload", "a code for the field app", self.open_upload, "normal"),
             ("Restart box", "asks for the PIN again",
              lambda: self.ask("Restart the box?", "The case file locks; the PIN opens it again.",
                               lambda: self.ctl("Restarting", "reboot")), "danger"),
@@ -1297,8 +1342,7 @@ class Panel:
         ]
         for i, (label, sub, act, style) in enumerate(items):
             r = (pad + (i % cols) * (bw + pad), top + (i // cols) * (bh + pad), bw, bh)
-            b = Button(r, label, act, style=style, sub=sub,
-                       enabled=not (label == "Renew certificate" and not d.get("tls")))
+            b = Button(r, label, act, style=style, sub=sub)
             b.draw(surf, s); self.buttons.append(b)
 
     def draw_secret(self, surf, d):
@@ -1335,6 +1379,116 @@ class Panel:
             pass
         self.screen = "home"
         self.status.refresh()
+
+    # ---- phone upload codes ---------------------------------------------
+
+    def open_upload(self):
+        def work():
+            try:
+                self.upload = {"people": console_api("GET", "/api/panel/upload/people")["items"],
+                               "person": None, "qr": None, "page": 0}
+                self.screen = "upload_people"
+            except ConsoleError as e:
+                self.flash(str(e))
+        self.in_background("Loading…", work)
+
+    def pick_person(self, person):
+        self.upload["person"] = person
+        if person["devices"]:
+            self.screen = "upload_devices"
+        else:
+            self.issue_code(user_id=person["id"])
+
+    def issue_code(self, device_id=None, user_id=None):
+        base_url = self.status.get().get("url")
+
+        def work():
+            try:
+                r = console_api("POST", "/api/panel/upload/code",
+                                {"device_id": device_id, "user_id": user_id, "base_url": base_url})
+                self.upload["qr"] = dict(r, shown_at=time.time())
+                self.screen = "upload_qr"
+            except ConsoleError as e:
+                self.flash(str(e))
+        self.in_background("Making a code…", work)
+
+    def close_upload(self):
+        # The code on screen is a working credential: gone when closed.
+        self.upload = {"people": [], "person": None, "qr": None, "page": 0}
+        self.screen = "menu"
+
+    def _back_button(self, surf, action, label="Back"):
+        s = self.s
+        b = Button((int(16 * s), self.H - int(70 * s), int(150 * s), int(56 * s)), label, action)
+        b.draw(surf, s); self.buttons.append(b)
+
+    def draw_upload_people(self, surf, d):
+        s = self.s
+        self.top_bar(surf, d, "Phone upload — who is it for?")
+        people = self.upload["people"]
+        per = 9
+        page = self.upload["page"]
+        shown = people[page * per:(page + 1) * per]
+        if not people:
+            text(surf, "No one can upload yet — add accounts in the console.", (self.W // 2, self.H // 2),
+                 int(20 * s), MUTED, anchor="center")
+        top, bottom = int(68 * s), self.H - int(82 * s)
+        cols, rows, pad = 3, 3, int(12 * s)
+        bw = (self.W - pad * (cols + 1)) // cols
+        bh = (bottom - top - pad * (rows - 1)) // rows
+        for i, p in enumerate(shown):
+            r = (pad + (i % cols) * (bw + pad), top + (i // cols) * (bh + pad), bw, bh)
+            n = len(p["devices"])
+            b = Button(r, p["username"], lambda p=p: self.pick_person(p),
+                       sub=f"{n} phone{'s' if n != 1 else ''}" if n else "no phone yet")
+            b.draw(surf, s); self.buttons.append(b)
+        self._back_button(surf, self.close_upload)
+        if len(people) > per:
+            nxt = (page + 1) % ((len(people) + per - 1) // per)
+            b = Button((self.W - int(166 * s), self.H - int(70 * s), int(150 * s), int(56 * s)), "More",
+                       lambda: self.upload.__setitem__("page", nxt))
+            b.draw(surf, s); self.buttons.append(b)
+
+    def draw_upload_devices(self, surf, d):
+        s = self.s
+        person = self.upload["person"] or {}
+        self.top_bar(surf, d, f"{person.get('username', '')} — which phone?")
+        items = [(dev["label"], (lambda dev=dev: self.issue_code(device_id=dev["id"])), "normal")
+                 for dev in person.get("devices", [])[:5]]
+        items.append(("New phone", lambda: self.issue_code(user_id=person["id"]), "primary"))
+        top, pad = int(70 * s), int(10 * s)
+        bh = int(56 * s)
+        for i, (label, act, style) in enumerate(items):
+            r = (int(40 * s), top + i * (bh + pad), self.W - int(80 * s), bh)
+            b = Button(r, label, act, style=style)
+            b.draw(surf, s); self.buttons.append(b)
+        self._back_button(surf, lambda: setattr(self, "screen", "upload_people"))
+
+    def draw_upload_qr(self, surf, d):
+        s = self.s
+        qr = self.upload.get("qr") or {}
+        if not qr or time.time() - qr.get("shown_at", 0) > UPLOAD_QR_SECONDS:
+            self.close_upload()
+            self.screen = "home"
+            return self.draw_home(surf, d)
+        self.top_bar(surf, d, "Phone upload")
+        import json as _json
+        size = self.H - int(110 * s)
+        img = qr_surface(_json.dumps(qr["enrollment"]), size)
+        if img:
+            surf.blit(img, img.get_rect(topleft=(int(24 * s), int(64 * s))))
+        x = int(24 * s) + size + int(24 * s)
+        w = self.W - x - int(20 * s)
+        text(surf, qr.get("username", ""), (x, int(84 * s)), int(30 * s), kind="bold", maxw=w)
+        text(surf, qr.get("label", ""), (x, int(124 * s)), int(17 * s), MUTED, maxw=w)
+        lines = ["In the HUMINT Field app, upload,", "and scan this code.", "",
+                 "It works until a new code is", "shown for this phone.",
+                 f"Closes in {max(0, int(UPLOAD_QR_SECONDS - (time.time() - qr['shown_at'])))} s."]
+        for i, line in enumerate(lines):
+            text(surf, line, (x, int(170 * s) + i * int(28 * s)), int(17 * s), TEXT if i < 5 else MUTED, maxw=w)
+        b = Button((x, self.H - int(76 * s), min(w, int(200 * s)), int(60 * s)), "Done", self.close_upload,
+                   style="primary")
+        b.draw(surf, s); self.buttons.append(b)
 
     def draw_calibrate(self, surf, d):
         s = self.s

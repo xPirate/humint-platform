@@ -1144,6 +1144,13 @@
         <p class="view-hint">Enrolling shows the token once. It is stored hashed and cannot be shown again.</p>
         <button type="button" class="btn-primary" id="device-enroll-btn">+ Enroll a device</button>
       </div>
+      <!-- Field servers only (shown by loadPanelSettings). -->
+      <label class="admin-check" id="panel-codes-row" hidden>
+        <input type="checkbox" id="panel-codes">
+        Let the field server's touch panel show phone upload codes
+        <span class="view-hint">Menu → Phone upload on the box: pick a person and a phone, scan. Anyone at an
+          unlocked box can do it; every code is in the audit log as issued by the touch panel.</span>
+      </label>
       <div id="device-list" class="stack"></div>
       <p class="form-error" id="device-error"></p>
 
