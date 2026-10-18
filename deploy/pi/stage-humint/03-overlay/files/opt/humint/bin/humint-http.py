@@ -91,6 +91,10 @@ def code(cmd):
 
 
 def steps_windows(host):
+    # Built outside the f-string: Python 3.11 (Raspberry Pi OS Bookworm)
+    # rejects a backslash inside an f-string expression.
+    ps_import = ("Import-Certificate -FilePath .\\" + FILE + ".cer"
+                 " -CertStoreLocation Cert:\\CurrentUser\\Root")
     return f"""
 <ol>
 <li><a href="/ca.cer">Download the certificate</a> (<code>{FILE}.cer</code>) and open it.</li>
@@ -102,7 +106,7 @@ def steps_windows(host):
 <li>Restart the browser. Edge and Chrome use this list; for Firefox see its section.</li>
 </ol>
 <p class="muted">Or in PowerShell (no admin needed), from the folder it downloaded to:</p>
-{code(f"Import-Certificate -FilePath .\\{FILE}.cer -CertStoreLocation Cert:\\CurrentUser\\Root")}
+{code(ps_import)}
 <p class="muted"><b>Many managed laptops?</b> Push <code>{FILE}.cer</code> once instead, as a trusted
 root: Group Policy (Computer Configuration → Policies → Windows Settings → Security Settings →
 Public Key Policies → Trusted Root Certification Authorities → Import) or an Intune
@@ -151,9 +155,11 @@ def steps_linux(host, first=None):
     on, so all of them are shown, the detected one (if any) first."""
     distros = sorted(LINUX_DISTROS, key=lambda d: d[0] != first)
     parts = "".join(f"<p><b>{label}</b></p>{code(cmd)}" for _, label, cmd in distros)
+    fetch = (f"curl -fsSo {FILE}.crt http://{host}/ca.crt" "\n"
+             f"openssl x509 -in {FILE}.crt -noout -fingerprint -sha256")
     return f"""
 <p>Fetch it and check the fingerprint against the box:</p>
-{code(f"curl -fsSo {FILE}.crt http://{host}/ca.crt\nopenssl x509 -in {FILE}.crt -noout -fingerprint -sha256")}
+{code(fetch)}
 <h3>Trust it system-wide</h3>
 <p class="muted">curl, wget, Python and most apps use this. Run the lines for your distribution:</p>
 {parts}

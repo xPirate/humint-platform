@@ -9,7 +9,6 @@ Before=humint-unlock.service
 Type=simple
 # Only when a panel screen was found (humint-display.py wrote display.json).
 ExecCondition=/usr/bin/python3 -c "import json,sys; sys.exit(0 if (json.load(open('/run/humint/display.json')).get('panel')) else 1)"
-Environment=SDL_VIDEODRIVER=kmsdrm
 Environment=PYTHONUNBUFFERED=1
 ExecStart=/usr/bin/python3 /opt/humint/bin/humint-panel.py
 Restart=on-failure

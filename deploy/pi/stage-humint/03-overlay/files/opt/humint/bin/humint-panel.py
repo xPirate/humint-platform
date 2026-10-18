@@ -17,8 +17,10 @@ What a 5" touch screen can do that a 1" OLED cannot:
 Before the PIN (first boot, starting up) it shows whatever the setup scripts
 are saying — the same lines the OLED shows (/run/humint/message.json).
 
-It draws with pygame straight onto the screen through KMS/DRM — no desktop,
-no X — and reads touch and keyboards through evdev, so the same code drives a
+It draws with pygame into memory and copies each frame straight into the
+Linux framebuffer (/dev/fb0) — no desktop, no X, no GPU libraries, which
+Raspberry Pi OS Lite does not have (SDL's KMS/DRM mode needs EGL; it is only
+a fallback here) — and reads touch and keyboards through evdev, so the same code drives a
 resistive Elecrow, the official DSI display, or a USB-touch HDMI screen.
 Resistive screens need calibrating; Menu → Calibrate touch (4 taps) stores it
 in /var/lib/humint/touch-cal.json.
@@ -26,16 +28,21 @@ in /var/lib/humint/touch-cal.json.
 Runs as root: it opens the case store (via humint-unlock-try, which keeps one
 shared count of wrong PINs with the keyboard prompt) and runs humint-ctl.
 """
+import fcntl
 import json
+import mmap
 import os
 import queue
 import shutil
 import subprocess
 import sys
+import struct
 import threading
 import time
 
-os.environ.setdefault("SDL_VIDEODRIVER", "kmsdrm")
+# Frames go to the framebuffer ourselves (FramebufferScreen), so SDL needs no
+# video output of its own; "dummy" still gives pygame its event queue.
+os.environ.setdefault("SDL_VIDEODRIVER", "dummy")
 os.environ.setdefault("PYGAME_HIDE_SUPPORT_PROMPT", "1")
 import pygame  # noqa: E402
 
@@ -1170,6 +1177,110 @@ class Panel:
 
 
 # ---------------------------------------------------------------------------
+# Output: the Linux framebuffer
+# ---------------------------------------------------------------------------
+
+class FramebufferScreen:
+    """Copies finished frames into /dev/fb0 (the KMS driver's console
+    framebuffer), converting to its 16- or 32-bit pixel format. Puts tty1 in
+    graphics mode while it runs, so login prompts and kernel messages do not
+    scribble over the panel, and gives the console back when it stops."""
+
+    FBIOGET_VSCREENINFO = 0x4600
+    KDSETMODE, KD_TEXT, KD_GRAPHICS = 0x4B3A, 0x00, 0x01
+
+    def __init__(self, dev="/dev/fb0", tty="/dev/tty1", geometry=None):
+        self.fd = os.open(dev, os.O_RDWR)
+        if geometry is None:
+            geometry = self._probe(dev)
+        self.w, self.h, self.bpp, self.stride, self.yoffset = geometry
+        masks = {16: (0xF800, 0x07E0, 0x001F, 0), 32: (0xFF0000, 0x00FF00, 0x0000FF, 0)}.get(self.bpp)
+        if masks is None:
+            os.close(self.fd)
+            raise RuntimeError(f"unsupported framebuffer depth {self.bpp} bpp")
+        self.frame = pygame.Surface((self.w, self.h), 0, self.bpp, masks)
+        self.offset = self.yoffset * self.stride
+        self.mm = mmap.mmap(self.fd, self.offset + self.stride * self.h)
+        self.tty = None
+        try:
+            self.tty = os.open(tty, os.O_RDWR | os.O_NOCTTY)
+            fcntl.ioctl(self.tty, self.KDSETMODE, self.KD_GRAPHICS)
+        except OSError:
+            if self.tty is not None:
+                os.close(self.tty)
+            self.tty = None
+
+    def _probe(self, dev):
+        info = fcntl.ioctl(self.fd, self.FBIOGET_VSCREENINFO, bytes(160))
+        xres, yres, _xv, _yv, _xo, yoffset, bpp = struct.unpack_from("7I", info)
+        name = os.path.basename(dev)
+        try:
+            stride = int(open(f"/sys/class/graphics/{name}/stride").read())
+        except (OSError, ValueError):
+            stride = xres * bpp // 8
+        return xres, yres, bpp, stride, yoffset
+
+    def show(self, canvas):
+        self.frame.blit(canvas, (0, 0))
+        raw = self.frame.get_buffer().raw
+        pitch = self.frame.get_pitch()
+        if pitch == self.stride:
+            self.mm[self.offset:self.offset + pitch * self.h] = raw
+        else:
+            row = self.w * self.bpp // 8
+            for y in range(self.h):
+                at = self.offset + y * self.stride
+                self.mm[at:at + row] = raw[y * pitch:y * pitch + row]
+
+    def close(self):
+        try:
+            if self.tty is not None:
+                fcntl.ioctl(self.tty, self.KDSETMODE, self.KD_TEXT)
+                os.close(self.tty)
+        except OSError:
+            pass
+        self.tty = None
+        try:
+            self.mm.close()
+            os.close(self.fd)
+        except (OSError, ValueError):
+            pass
+
+
+class SDLScreen:
+    """Fallback: SDL's own KMS/DRM output (needs EGL/Mesa installed)."""
+
+    def __init__(self, size):
+        pygame.display.quit()
+        os.environ["SDL_VIDEODRIVER"] = "kmsdrm"
+        pygame.display.init()
+        self.screen = pygame.display.set_mode(size, pygame.FULLSCREEN)
+        self.w, self.h = self.screen.get_size()
+
+    def show(self, canvas):
+        self.screen.blit(canvas, (0, 0))
+        pygame.display.flip()
+
+    def close(self):
+        pass
+
+
+def open_screen(panel):
+    want = (panel.get("width") or 800, panel.get("height") or 480)
+    errors = []
+    if os.path.exists("/dev/fb0"):
+        try:
+            return FramebufferScreen()
+        except (OSError, RuntimeError, ValueError) as e:
+            errors.append(f"framebuffer: {e}")
+    try:
+        return SDLScreen(want)
+    except pygame.error as e:
+        errors.append(f"kmsdrm: {e}")
+    raise RuntimeError("no way to draw on the screen — " + "; ".join(errors))
+
+
+# ---------------------------------------------------------------------------
 
 def main() -> int:
     disp = read_json(DISPLAY, {}) or {}
@@ -1181,13 +1292,11 @@ def main() -> int:
     rotate = 180 if env.get("SCREEN_ROTATE") == "180" else 0
     sleep_after = max(0, int(env.get("SCREEN_SLEEP_MINUTES", "5") or 0)) * 60
 
-    pygame.display.init()
+    pygame.display.init()          # dummy driver: just the event queue
     pygame.font.init()
-    info = pygame.display.Info()
-    w = panel.get("width") or info.current_w or 800
-    h = panel.get("height") or info.current_h or 480
-    screen = pygame.display.set_mode((w, h), pygame.FULLSCREEN)
-    pygame.mouse.set_visible(False)
+    out = open_screen(panel)
+    w, h = out.w, out.h
+    print(f"humint-panel: drawing {w}x{h} via {type(out).__name__}", flush=True)
     canvas = pygame.Surface((w, h))
 
     stop = threading.Event()
@@ -1216,12 +1325,12 @@ def main() -> int:
                     and time.time() - ui.last_input > sleep_after:
                 ui.asleep = True
             ui.draw(canvas)
-            screen.blit(pygame.transform.rotate(canvas, 180) if rotate == 180 else canvas, (0, 0))
-            pygame.display.flip()
+            out.show(pygame.transform.rotate(canvas, 180) if rotate == 180 else canvas)
             clock.tick(4 if ui.asleep else 15)
     finally:
         stop.set()
         inp.grab_keyboards(False)
+        out.close()
         pygame.quit()
 
 

@@ -191,12 +191,19 @@ main() {
     cp "$HUMINT_CONF" "$HUMINT_ENV"; chmod 600 "$HUMINT_ENV"
 
     banner "Identity" "$HOSTNAME"
-    hostnamectl set-hostname "$HOSTNAME" || true
+    # Set it directly as well: hostnamectl can fail this early in boot
+    # (hostnamed not reachable yet), which left the old name live while
+    # /etc/hosts below already named the new one.
+    printf '%s\n' "$HOSTNAME" >/etc/hostname
+    hostname "$HOSTNAME" || true
+    hostnamectl set-hostname "$HOSTNAME" 2>/dev/null || true
     if grep -q '^127.0.1.1' /etc/hosts; then
         sed -i "s/^127.0.1.1.*/127.0.1.1\t$HOSTNAME/" /etc/hosts
     else
         printf '127.0.1.1\t%s\n' "$HOSTNAME" >>/etc/hosts
     fi
+    # Announce the new name as <name>.local.
+    systemctl try-restart avahi-daemon.service 2>/dev/null || true
     timedatectl set-timezone "$TIMEZONE" 2>/dev/null || true
 
     create_store
