@@ -11992,6 +11992,43 @@ const DEFAULT_BOARD_NAMES = { roster: "Roster", bolo: "BOLO", priorities: "Prior
 })();
 
 
+async function loadFieldUpdate() {
+  const block = document.getElementById("field-update-block");
+  let st;
+  try { st = await api("/api/admin/field-update"); } catch (e) { block.hidden = true; return; }
+  block.hidden = !st.managed;
+  if (!st.managed) return;
+  const inst = st.installed ? `Build ${st.installed.build} (${escapeHtml(st.installed.commit || "")})` : "Build unknown";
+  const last = st.last ? ` · Last update: ${escapeHtml(st.last.state)} — ${escapeHtml(st.last.message || "")}` : "";
+  document.getElementById("field-update-status").innerHTML =
+    `${inst}${last}${st.pending ? " · <b>An update is being applied…</b>" : ""}`;
+  const btn = document.getElementById("field-update-btn");
+  if (btn.dataset.wired) return;
+  btn.dataset.wired = "1";
+  btn.addEventListener("click", async () => {
+    const f = document.getElementById("field-update-file").files[0];
+    if (!f) { showToast("Choose the update file first", true); return; }
+    if (!confirm(`Apply ${f.name}? The console restarts during the update.`)) return;
+    const fd = new FormData();
+    fd.append("file", f);
+    try {
+      const r = await apiUpload("/api/admin/field-update", fd);
+      showToast(r.message);
+      // The console goes away while it restarts; keep asking until it is back.
+      const started = Date.now();
+      const poll = async () => {
+        try {
+          const s2 = await api("/api/admin/field-update");
+          if (!s2.pending && s2.last && ["done", "failed"].includes(s2.last.state) &&
+              s2.last.time * 1000 > started - 5000) { loadFieldUpdate(); showToast(s2.last.message, s2.last.state === "failed"); return; }
+        } catch (e) { /* restarting */ }
+        if (Date.now() - started < 15 * 60 * 1000) setTimeout(poll, 4000);
+      };
+      setTimeout(poll, 4000);
+    } catch (err) { showToast(err.message, true); }
+  });
+}
+
 const ADMIN_LOADERS = {
   users: () => loadAdminUsers(),
   feeds: () => loadRssFeeds(),
@@ -12003,7 +12040,7 @@ const ADMIN_LOADERS = {
   signals: () => loadSignals(),
   retention: () => loadRetention(),
   audit: () => {},
-  backup: () => {},
+  backup: () => loadFieldUpdate(),
   fieldsync: () => loadFieldSync(),
 };
 

@@ -1,0 +1,8 @@
+[Unit]
+Description=HUMINT field server — apply an update uploaded through the console
+
+[Service]
+Type=oneshot
+Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+ExecStart=/opt/humint/bin/humint-update.sh apply-inbox
+TimeoutStartSec=1800

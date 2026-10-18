@@ -1272,7 +1272,11 @@ class Panel:
             ("Shut down", "safe to unplug after",
              lambda: self.ask("Shut down?", "Wait for the screen to go dark before unplugging.",
                               lambda: self.ctl("Shutting down", "shutdown")), "danger"),
-            ("Refresh", "re-read everything", lambda: (self.status.refresh(), self.flash("Refreshed")), "normal"),
+            ("Update from USB", "a signed update bundle",
+             lambda: self.ask("Update from the USB stick?",
+                              "The console restarts on the new version; if it does not come back, it is "
+                              "put back as it was.",
+                              lambda: self.ctl("Updating", "update", "usb"), danger=False), "normal"),
             ("Wipe case file", "erase everything, for good",
              lambda: self.ask("Wipe the case file?",
                               "Every record, report and file on this box is destroyed. It restarts into setup.",

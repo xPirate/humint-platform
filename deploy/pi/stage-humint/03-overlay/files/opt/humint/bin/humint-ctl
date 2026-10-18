@@ -36,6 +36,10 @@ humint-ctl — HUMINT field server
                          file and opens an empty one as if nothing were wrong
   duress                 whether one is set
   wipe                   erase the case file for good; back to first-time setup
+  update FILE            apply a signed update bundle (deploy/pi/make-update.sh)
+  update usb             find the newest bundle on a USB stick and apply it
+  update rollback        undo the last update (code and database)
+  update status          installed build, and how the last update went
   login-password         give the operator login a new random password
                          (printed here and shown on the panel until confirmed)
   tls                    HTTPS status and the certificate fingerprint
@@ -254,6 +258,16 @@ main() {
         net)      cmd_net "$@" ;;
         pin)      cmd_pin "$@" ;;
         duress)   cmd_duress "$@" ;;
+        update)
+            case "${1:-status}" in
+                status) /opt/humint/bin/humint-update.sh status ;;
+                # Its own transient unit: an update restarts the panel, and a
+                # child of the panel's unit would be killed with it.
+                *) exec systemd-run --quiet --collect --wait --pipe --unit "humint-update-$$" \
+                        -p TimeoutStartSec=1800 /opt/humint/bin/humint-update.sh \
+                        "$( [ -f "${1:-}" ] && echo apply || echo "${1:-}")" \
+                        "$( [ -f "${1:-}" ] && readlink -f "$1" || true)" "${2:-}" ;;
+            esac ;;
         wipe)     cmd_wipe "$@" ;;
         login-password)
                   pw="$(new_login_password)"

@@ -1,0 +1,10 @@
+[Unit]
+Description=HUMINT field server — watch for an update uploaded through the console
+
+[Path]
+# The console (as humintd) can only drop the bundle here; applying it —
+# checking its signature first — is root's job, in humint-update-inbox.service.
+PathExists=/srv/humint-data/updates/incoming.tar
+
+[Install]
+WantedBy=multi-user.target

@@ -56,6 +56,27 @@ done
 find "$PIGEN/humint-src" -name __pycache__ -type d -prune -exec rm -rf {} +
 cp "$REPO/.env.example" "$PIGEN/humint-src/.env.example"
 
+# Which build this is, for signed updates later (humint-update.sh refuses
+# anything not newer). humint-src is a plain copy, so git is asked here.
+python3 - "$PIGEN/humint-src/BUILD.json" <<PY
+import json, sys, time
+json.dump({"build": int("$(git -C "$REPO" rev-list --count HEAD)"),
+           "commit": "$(git -C "$REPO" rev-parse --short=10 HEAD)",
+           "requirements_sha256": "$(cat "$REPO/api/requirements.txt" "$REPO/worker/requirements.txt" | sha256sum | cut -d' ' -f1)",
+           "installed": int(time.time())}, open(sys.argv[1], "w"), indent=1)
+PY
+
+# The public half of the update-signing key (see make-update.sh), so boxes
+# built from this image accept bundles signed on this machine and no other.
+SIGNING_KEY="${HUMINT_SIGNING_KEY:-$HOME/.config/humint/update-signing.key}"
+if [ -f "$SIGNING_KEY" ]; then
+    openssl pkey -in "$SIGNING_KEY" -pubout \
+        -out "$PIGEN/stage-humint/03-overlay/files/opt/humint/update-signing.pub"
+else
+    echo "  !! No update-signing key ($SIGNING_KEY): this image will not accept update bundles."
+    echo "     build-image.sh creates one; or: openssl genpkey -algorithm ed25519 -out $SIGNING_KEY"
+fi
+
 # Only the HUMINT image, not the plain Lite one stage2 would also export.
 touch "$PIGEN/stage2/SKIP_IMAGES"
 

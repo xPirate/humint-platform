@@ -27,3 +27,5 @@ python3-qrcode
 raspi-utils
 # saves the clock at shutdown so a box without network time boots close to it
 fake-hwclock
+# humint-update.sh swaps code and scripts in with it
+rsync

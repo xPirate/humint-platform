@@ -67,3 +67,11 @@ CHROOT
 # this, whatever a device claims.
 date +%s >"${ROOTFS_DIR}/opt/humint/build-epoch"
 chmod 644 "${ROOTFS_DIR}/opt/humint/build-epoch"
+
+# Which build this image is, and the migrations already in its schema (init.sql
+# carries all of them): humint-update.sh applies only what comes after.
+if [ -f "${HUMINT_SRC_DIR}/BUILD.json" ]; then
+    install -m 644 "${HUMINT_SRC_DIR}/BUILD.json" "${ROOTFS_DIR}/opt/humint-platform/BUILD.json"
+fi
+install -d -m 755 "${ROOTFS_DIR}/var/lib/humint"
+( cd "${HUMINT_SRC_DIR}/db" && ls migrate-v*.sql 2>/dev/null | sort -V ) >"${ROOTFS_DIR}/var/lib/humint/migrations-applied"

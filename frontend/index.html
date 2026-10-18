@@ -1246,6 +1246,20 @@
         </div>
 
         <div class="admin-section" data-admin-panel="backup" hidden>
+<!-- Field servers only (filled in by loadFieldUpdate when the console says
+     it is one): apply a signed update bundle. -->
+<div id="field-update-block" hidden>
+  <div class="section-title">Update this field server</div>
+  <p class="view-hint" id="field-update-status"></p>
+  <div class="backup-panel"><div class="backup-block">
+    <p class="field-hint">A <code>humint-update-….tar</code> made on the builder with
+      <code>deploy/pi/make-update.sh</code>. The box checks it was signed there, backs up the
+      database, and restarts the console on the new version — or puts everything back if it
+      does not come up.</p>
+    <input type="file" id="field-update-file" accept=".tar">
+    <button type="button" id="field-update-btn" class="btn-primary">Upload and apply</button>
+  </div></div>
+</div>
 <div class="section-title">Backup &amp; Restore</div>
       <p class="view-hint">One .zip of all case data and attachments, including user accounts and password hashes. Store it securely.</p>
       <div class="backup-panel">

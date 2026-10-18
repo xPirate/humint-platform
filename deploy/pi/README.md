@@ -292,12 +292,35 @@ Flash with [Raspberry Pi Imager](https://www.raspberrypi.com/software/)
 ("Use custom") or balenaEtcher. In Imager, **skip the OS customisation** —
 this image does its own.
 
-**Updating the console's code** means building a new image (or copying the
-new `api/`, `worker/` and `frontend/` over `/opt/humint-platform` and running
-`humint-ctl restart`). If the new version adds a `db/migrate-*.sql`, apply it
-with `sudo -u postgres psql humint_platform -f …`. A field box is meant to be
-re-imaged between deployments rather than upgraded in place — bring its work
-home with a field package first.
+### Updating a box without re-imaging
+
+On the builder, after `git pull`:
+
+```bash
+deploy/pi/make-update.sh            # → humint-update-<build>-<commit>.tar
+```
+
+Then, on the box, any one of:
+
+- copy the `.tar` to a USB stick, plug it in, panel **Menu → Update from USB**;
+- **Admin → Backup & restore → Update this field server** in the console, and upload it;
+- `sudo humint-ctl update /path/to/humint-update-….tar` over SSH.
+
+The box applies a bundle only if it was **signed by the builder that built
+its image** (`build-image.sh` makes the key, `~/.config/humint/update-signing.key`,
+on first use and puts the public half in every image; back the key up — lose
+it and boxes can only be updated by re-imaging), only if it is **newer** than
+what is installed, and only with the case file **open**. It backs the database
+up into the store first, swaps the code and the appliance's own scripts in,
+installs new Python packages from the bundle (so build bundles on the builder
+Pi: it includes the wheels), runs only the migrations the box has not had, and
+restarts the console. If any step fails, or the console does not answer within
+90 seconds, it **puts everything back** — code and database. `humint-ctl
+update rollback` undoes a successful update the same way (anything entered
+since is lost with it); `humint-ctl update status` says what is installed.
+
+Boxes built before updates existed have no key and refuse every bundle:
+re-image those once.
 
 ---
 

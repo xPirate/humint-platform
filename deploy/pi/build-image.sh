@@ -82,6 +82,16 @@ mkdir -p "$(dirname "$PIGEN")"
 free_gb=$(df -Pk "$(dirname "$PIGEN")" | awk 'NR==2 {print int($4/1048576)}')
 [ "$free_gb" -ge 12 ] || die "only ${free_gb} GB free where pi-gen goes; the build needs about 15 GB (use a 32 GB+ card or set PIGEN_DIR to a USB drive)"
 
+# ---- 3b. the key that signs updates for boxes built here --------------------
+KEY="${HUMINT_SIGNING_KEY:-$HOME/.config/humint/update-signing.key}"
+if [ ! -f "$KEY" ]; then
+    say "Creating the update-signing key ($KEY)"
+    install -d -m 700 "$(dirname "$KEY")"
+    ( umask 077; openssl genpkey -algorithm ed25519 -out "$KEY" )
+    echo "  Boxes built here accept only updates signed with it (deploy/pi/make-update.sh)."
+    echo "  Back it up somewhere safe: lose it and boxes can only be updated by re-imaging."
+fi
+
 # ---- 4. pi-gen + our stage + the app ---------------------------------------
 say "Setting up pi-gen"
 "$HERE/prepare-pigen.sh" "$PIGEN" >/dev/null || die "setting up pi-gen failed"
