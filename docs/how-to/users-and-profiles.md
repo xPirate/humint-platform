@@ -124,3 +124,13 @@ On a **field server** the codes depend on the box's clock, which it takes
 from the devices that use it (see the field server's README, "The clock"). If
 a code is refused with *the box's clock is being set from this device*, wait
 a few seconds and type the code showing then.
+
+## Read-only accounts
+
+Give someone the **Read-only** role (Admin → Users, or when creating the
+account) and they can open and read everything an analyst can — records,
+reports, documents, the map, exports — but change nothing: the console
+refuses every change from that account, whatever screen it comes from, and
+does not offer the buttons. They can still sign out, set up two-factor
+sign-in, and keep their own preferences and team page. They cannot use the
+assistant, because it can propose changes.

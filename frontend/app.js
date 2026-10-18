@@ -1066,7 +1066,11 @@ function showApp() {
   document.getElementById("user-avatar").textContent =
     (state.user.username || "?").trim().charAt(0).toUpperCase();
   document.getElementById("user-menu-username").textContent = state.user.username;
-  document.getElementById("user-menu-role").textContent = isAdmin ? "Administrator" : "Analyst";
+  document.getElementById("user-menu-role").textContent =
+    isAdmin ? "Administrator" : state.user.role === "viewer" ? "Read-only" : "Analyst";
+  // Read-only accounts: the API refuses every change (main.py); this only
+  // stops offering the buttons that would be refused.
+  document.body.classList.toggle("role-viewer", state.user.role === "viewer");
   document.getElementById("user-menu-admin").hidden = !isAdmin;
   document.getElementById("user-menu-audit").hidden = !isAdmin;
   document.getElementById("assistant-tab-btn").hidden = false;
@@ -1607,7 +1611,7 @@ function openNewUserForm(onSuccess) {
       <div class="form-row"><label>Username</label><input type="text" id="nu-username" required minlength="3" maxlength="64"></div>
       <div class="form-row"><label>Password</label><input type="password" id="nu-password" required minlength="10" maxlength="256"></div>
       <div class="form-row"><label>Role</label>
-        <select id="nu-role"><option value="analyst">Analyst</option><option value="admin">Admin</option></select>
+        <select id="nu-role"><option value="analyst">Analyst</option><option value="admin">Admin</option><option value="viewer">Read-only</option></select>
       </div>
       <p class="form-error" id="nu-error"></p>
       <div class="modal-actions">
@@ -5168,6 +5172,152 @@ function restyleEntityGraph() {
   renderGraphLegend();
 }
 
+// ---- Source protection (api/sources.py) -------------------------------------
+// A protected source is known everywhere by its code name; who it is lives
+// apart and only its handlers read it, every read in the audit log.
+async function loadSourceProtection(entity) {
+  const box = document.getElementById("source-protection");
+  if (!box) return;
+  let p;
+  try { p = await api(`/api/sources/${entity.id}/protection`); } catch (e) { return; }
+  const handlers = p.handlers.map((h) => escapeHtml(h.username)).join(", ");
+  if (!p.protected) {
+    box.innerHTML = `<div class="source-protect-card">
+        <div><b>Not protected.</b> Everyone who can open the case file sees this source's name.</div>
+        ${isViewer() ? "" : '<button type="button" class="btn-secondary btn-sm" id="src-protect-btn">Protect this source…</button>'}
+      </div>`;
+    const b = box.querySelector("#src-protect-btn");
+    if (b) b.addEventListener("click", () => openProtectSourceDialog(entity));
+    return;
+  }
+  box.innerHTML = `<div class="source-protect-card protected">
+      <div><span class="status-pill">PROTECTED</span> Known here by its code name.
+        Handled by <b>${handlers || "nobody"}</b>${p.you_are_handler ? " (you)" : ""}.
+        ${p.you_are_handler ? "" : "Ask a handler about this source."}</div>
+      <div class="source-protect-actions">
+        ${p.you_are_handler ? '<button type="button" class="btn-secondary btn-sm" id="src-identity-btn">Show identity</button>' : ""}
+        ${p.can_manage && !isViewer() ? '<button type="button" class="btn-secondary btn-sm" id="src-handlers-btn">Handlers…</button>' : ""}
+        ${p.you_are_handler && !isViewer() ? '<button type="button" class="btn-secondary btn-sm" id="src-unprotect-btn">Lift protection…</button>' : ""}
+      </div>
+      <div id="src-identity"></div>
+    </div>`;
+  const idBtn = box.querySelector("#src-identity-btn");
+  if (idBtn) idBtn.addEventListener("click", async () => {
+    const out = box.querySelector("#src-identity");
+    if (out.innerHTML) { out.innerHTML = ""; idBtn.textContent = "Show identity"; return; }
+    try {
+      const i = await api(`/api/sources/${entity.id}/identity`);
+      idBtn.textContent = "Hide identity";
+      out.innerHTML = `
+        <form id="src-identity-form" class="source-identity">
+          <div class="form-row"><label>True name</label>
+            <input type="text" id="src-true-name" value="${escapeHtml(i.true_name)}" ${isViewer() ? "readonly" : ""}></div>
+          <div class="form-row"><label>Identity notes</label>
+            <textarea id="src-notes" rows="5" ${isViewer() ? "readonly" : ""}>${escapeHtml(i.notes || "")}</textarea></div>
+          <p class="view-hint">Protected by ${escapeHtml(i.protected_by || "?")}. This reading is in the audit log.</p>
+          ${isViewer() ? "" : '<button type="submit" class="btn-secondary btn-sm">Save identity</button>'}
+        </form>`;
+      const f = out.querySelector("#src-identity-form");
+      f.addEventListener("submit", async (e) => {
+        e.preventDefault();
+        try {
+          await api(`/api/sources/${entity.id}/identity`, { method: "PUT", body: {
+            true_name: f.querySelector("#src-true-name").value, notes: f.querySelector("#src-notes").value } });
+          showToast("Identity saved");
+        } catch (err) { showToast(err.message, true); }
+      });
+    } catch (err) { showToast(err.message, true); }
+  });
+  const hBtn = box.querySelector("#src-handlers-btn");
+  if (hBtn) hBtn.addEventListener("click", () => openSourceHandlersDialog(entity, p.handlers));
+  const uBtn = box.querySelector("#src-unprotect-btn");
+  if (uBtn) uBtn.addEventListener("click", async () => {
+    if (!confirm("Lift protection? The true name goes back on the record, where everyone can see it.")) return;
+    try {
+      await api(`/api/sources/${entity.id}/unprotect`, { method: "POST" });
+      showToast("Protection lifted");
+      openEntityDetail(entity.id);
+    } catch (err) { showToast(err.message, true); }
+  });
+}
+
+function openProtectSourceDialog(entity) {
+  openModal(`
+    <h2>Protect this source</h2>
+    <p>The record will be known everywhere by a <b>code name</b> instead — search, the network, reports,
+       exports, the assistant. Its true name moves to a protected identity only its handlers can read.
+       You become its first handler.</p>
+    <form id="protect-form">
+      <div class="form-row"><label>Code name</label>
+        <input type="text" id="protect-code" required minlength="2" maxlength="120" placeholder="e.g. KESTREL"></div>
+      <label class="admin-check"><input type="checkbox" id="protect-move-desc" checked>
+        Move the description into the protected identity too</label>
+      <p class="view-hint">Files attached to this source will be shown to its handlers only.
+        It cannot hide a report whose text names the person, or a link to a Person record of the same
+        individual — protecting it will say how many of each there are, for you to deal with.</p>
+      <p class="form-error" id="protect-error"></p>
+      <div class="modal-actions">
+        <button type="button" class="btn-secondary" id="protect-cancel">Cancel</button>
+        <button type="submit" class="btn-primary">Protect</button>
+      </div>
+    </form>`);
+  document.getElementById("protect-cancel").addEventListener("click", closeModal);
+  document.getElementById("protect-code").focus();
+  document.getElementById("protect-form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    try {
+      const r = await api(`/api/sources/${entity.id}/protect`, { method: "POST", body: {
+        code_name: document.getElementById("protect-code").value.trim(),
+        move_description: document.getElementById("protect-move-desc").checked } });
+      const left = [];
+      if (r.reports_naming_source) left.push(`${r.reports_naming_source} report(s) still name them in their text`);
+      if (r.relationships) left.push(`${r.relationships} link(s) to other records — check none is to a record of the same person`);
+      closeModal();
+      if (left.length) {
+        openModal(`<h2>Protected as ${escapeHtml(r.code_name)}</h2><p>Still to deal with:</p>
+          <ul>${left.map((x) => `<li>${escapeHtml(x)}</li>`).join("")}</ul>
+          <div class="modal-actions"><button type="button" class="btn-primary" id="protect-ok">OK</button></div>`);
+        document.getElementById("protect-ok").addEventListener("click", closeModal);
+      } else {
+        showToast(`Protected as ${r.code_name}`);
+      }
+      openEntityDetail(entity.id);
+    } catch (err) { document.getElementById("protect-error").textContent = err.message; }
+  });
+}
+
+async function openSourceHandlersDialog(entity, current) {
+  let users = [];
+  try { users = (await api("/api/analysts")).items || []; } catch (e) { /* fall back to current */ }
+  users = users.filter((u) => u.is_active !== false);
+  if (!users.length) users = current;
+  const chosen = new Set(current.map((h) => h.id));
+  openModal(`
+    <h2>Handlers</h2>
+    <p class="view-hint">Handlers read and edit the identity and see the source's files. Every change is audited.</p>
+    <form id="handlers-form"><div class="handler-list">
+      ${users.map((u) => `<label class="admin-check"><input type="checkbox" value="${u.id || u.user_id}"
+        ${chosen.has(u.id || u.user_id) ? "checked" : ""}> ${escapeHtml(u.username)}</label>`).join("")}
+    </div>
+    <p class="form-error" id="handlers-error"></p>
+    <div class="modal-actions">
+      <button type="button" class="btn-secondary" id="handlers-cancel">Cancel</button>
+      <button type="submit" class="btn-primary">Save</button>
+    </div></form>`);
+  document.getElementById("handlers-cancel").addEventListener("click", closeModal);
+  document.getElementById("handlers-form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const ids = [...document.querySelectorAll("#handlers-form input:checked")].map((i) => Number(i.value));
+    try {
+      await api(`/api/sources/${entity.id}/handlers`, { method: "PUT", body: { user_ids: ids } });
+      closeModal();
+      openEntityDetail(entity.id);
+    } catch (err) { document.getElementById("handlers-error").textContent = err.message; }
+  });
+}
+
+function isViewer() { return !!(state.user && state.user.role === "viewer"); }
+
 function renderEntityDetail(entity) {
   const el = document.getElementById("entity-detail-body");
   el.innerHTML = `
@@ -5209,6 +5359,7 @@ function renderEntityDetail(entity) {
       <div>${GEOMETRY_TYPES.includes(entity.entity_type)
         ? geometryDetailHtml(entity) : renderDetailFields(entity.entity_type, entity.details)}</div>
       ${entity.entity_type === "location" ? '<div id="entity-zones"></div>' : ""}
+      ${entity.entity_type === "source" ? '<div id="source-protection"></div>' : ""}
 
       ${contactSectionHtml(entity)}
 
@@ -5237,6 +5388,7 @@ function renderEntityDetail(entity) {
 
   document.getElementById("edit-entity-btn").addEventListener("click", () => openEntityForm(entity));
   if (entity.entity_type === "location") loadZonesForEntity(entity.id);
+  if (entity.entity_type === "source") loadSourceProtection(entity);
   if (GEOMETRY_TYPES.includes(entity.entity_type)) wireGeometryDetail(el, entity);
   wireExportMenu(entity);
   document.getElementById("toggle-active-btn").addEventListener("click", async () => {
@@ -11932,6 +12084,7 @@ function renderAdminUserList(items) {
         <select class="admin-role-select" data-user-id="${u.id}">
           <option value="analyst" ${u.role === "analyst" ? "selected" : ""}>Analyst</option>
           <option value="admin" ${u.role === "admin" ? "selected" : ""}>Admin</option>
+          <option value="viewer" ${u.role === "viewer" ? "selected" : ""}>Read-only</option>
         </select>
         <a class="btn-secondary btn-sm" href="#analyst/${encodeURIComponent(u.username)}">Profile</a>
         <button class="btn-secondary btn-sm admin-reset-pw-btn" data-user-id="${u.id}"

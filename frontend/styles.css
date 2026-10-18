@@ -2655,3 +2655,21 @@ details[open] > :not(summary){animation:fade-in var(--dur-2) ease-out;}
 .admin-check{display:flex; flex-wrap:wrap; gap:.4em .6em; align-items:baseline; margin:.2em 0 1em;
   font-size:13px; color:var(--text);}
 .admin-check .view-hint{flex-basis:100%; margin:0 0 0 1.7em;}
+
+/* ---- Source protection ------------------------------------------------------ */
+.source-protect-card{display:flex; flex-wrap:wrap; gap:.6em 1em; align-items:center; justify-content:space-between;
+  padding:.7em .9em; margin:.6em 0; border:1px dashed var(--border); border-radius:var(--radius-sm);
+  font-size:13px; color:var(--text);}
+.source-protect-card.protected{border-style:solid; border-color:var(--amber);}
+.source-protect-actions{display:flex; gap:.4em; flex-wrap:wrap;}
+#src-identity{flex-basis:100%;}
+.source-identity{border-top:1px solid var(--border-soft); padding-top:.7em; margin-top:.2em;}
+.handler-list{display:flex; flex-direction:column; gap:.2em; max-height:50vh; overflow:auto; margin:.6em 0;}
+
+/* ---- Read-only accounts: the API refuses changes; don't offer them --------- */
+body.role-viewer #new-entity-btn, body.role-viewer #new-report-btn, body.role-viewer #doc-paste-btn,
+body.role-viewer #roster-add-btn, body.role-viewer #bolo-add-btn, body.role-viewer #priority-add-btn,
+body.role-viewer #propose-btn, body.role-viewer #edit-entity-btn, body.role-viewer #toggle-active-btn,
+body.role-viewer #retention-hold-btn, body.role-viewer #add-rel-btn, body.role-viewer #entity-upload-form,
+body.role-viewer #assistant-tab-btn, body.role-viewer #start-debrief-btn,
+body.role-viewer #doc-drop-zone{display:none !important;}

@@ -304,9 +304,12 @@ request path.
 
 This is built to run on a network you control, and it assumes that. Sessions
 are cookie-based, passwords are hashed, every write is audited, and uploads
-are handled carefully — but **there is no multi-tenancy and no per-record
-access control**. Everyone with an account sees the whole case file. Put it
-behind a VPN or a reverse proxy with TLS, not on the open internet.
+are handled carefully, and sign-in can require a code from an authenticator
+app. Access is coarse on purpose: everyone with an account sees the whole case
+file — except a **protected source's true identity**, which only its named
+handlers can read (the record itself carries a code name), and **read-only**
+accounts can look but change nothing. There is no multi-tenancy. Put it behind
+a VPN or a reverse proxy with TLS, not on the open internet.
 
 Full posture, including what is deliberately not defended against, is in
 [the design notes](docs/DESIGN.md#security-posture).

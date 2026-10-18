@@ -150,3 +150,28 @@ time gets an amber **DUE TO ARCHIVE** badge with a date.
 
 Click outside a dialog or press Escape to close it. Once you've typed
 something, both ask first.
+
+## Protecting a source
+
+A Source's name goes everywhere a record goes: search, the network, the map,
+report mentions, PDF exports, field packages, the assistant. For a source
+whose identity must not travel, open it and choose **Protect this source…**:
+
+- give it a **code name** (KESTREL, say). From then on the record *is* KESTREL,
+  everywhere;
+- its true name — and, unless you untick it, its description — move to a
+  **protected identity** that only its **handlers** can read. You become the
+  first. Every time anyone shows the identity, the audit log records it;
+- files attached to the source (a photo, a scanned ID) are shown to its
+  handlers only.
+
+Other analysts see that it is protected and who handles it, so they know whom
+to ask. Handlers (and admins) change the handler list; an admin is **not** a
+handler just by being an admin — they can add themselves, and that is
+audited. **Lift protection** puts the true name and notes back on the record.
+
+What protecting cannot do, and the dialog says so: a report whose *text*
+names the person, or a link to a Person record of the same individual, still
+gives them away. Protecting tells you how many of each there are; editing
+those is up to you. Backups contain the identities (an admin downloads them),
+so treat a backup file like the case file it is.
