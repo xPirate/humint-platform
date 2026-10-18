@@ -12,6 +12,9 @@
 --     worker keeps a heartbeat, every job it claims names it, and work held by
 --     a worker that has gone quiet goes back in the queue (a document only
 --     three times; then it is marked failed with the reason);
+--   * two-factor sign-in: a TOTP secret per user, single-use recovery codes,
+--     a per-session "may only set up two-factor" flag, and the admin switch
+--     that requires it for everyone;
 -- ---------------------------------------------------------------------------
 
 BEGIN;
@@ -29,5 +32,22 @@ ALTER TABLE attachments ADD COLUMN IF NOT EXISTS extraction_started_at TIMESTAMP
 ALTER TABLE attachments ADD COLUMN IF NOT EXISTS extraction_attempts INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE location_details ADD COLUMN IF NOT EXISTS geocode_claimed_by TEXT;
 ALTER TABLE map_packs ADD COLUMN IF NOT EXISTS claimed_by TEXT;
+
+-- ---- two-factor sign-in ------------------------------------------------------
+
+ALTER TABLE users ADD COLUMN IF NOT EXISTS totp_secret TEXT;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS totp_pending_secret TEXT;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS totp_enabled_at TIMESTAMPTZ;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS totp_last_step BIGINT;
+ALTER TABLE sessions ADD COLUMN IF NOT EXISTS needs_2fa_setup BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE app_settings ADD COLUMN IF NOT EXISTS require_2fa BOOLEAN NOT NULL DEFAULT FALSE;
+
+CREATE TABLE IF NOT EXISTS user_recovery_codes (
+    id SERIAL PRIMARY KEY,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    code_hash TEXT NOT NULL,
+    used_at TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS idx_user_recovery_codes_user ON user_recovery_codes (user_id);
 
 COMMIT;

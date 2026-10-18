@@ -1018,6 +1018,10 @@ async function init() {
   // First, and unauthenticated: the login screen carries the instance name,
   // and it is drawn before anyone has a session.
   await loadBranding();
+  // Before signing in too: a field server whose clock nobody has set yet
+  // would refuse every two-factor code. The console only lets this move an
+  // unset clock forward (api/clock.py).
+  sendTimeHint();
 
   try {
     const status = await api("/api/auth/bootstrap-status");

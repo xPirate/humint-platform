@@ -25,6 +25,13 @@ CREATE TABLE IF NOT EXISTS users (
     -- since this app is reachable to anyone on the LAN, not just the owner.
     failed_login_attempts INTEGER NOT NULL DEFAULT 0,
     locked_until TIMESTAMPTZ,
+    -- Two-factor sign-in (v1.13, see api/twofactor.py): the base32 TOTP
+    -- secret once enrolment is confirmed, the one being enrolled, when it was
+    -- switched on, and the last 30-second step used (no code works twice).
+    totp_secret TEXT,
+    totp_pending_secret TEXT,
+    totp_enabled_at TIMESTAMPTZ,
+    totp_last_step BIGINT,
     -- Per-person UI state that has to follow the person rather than the
     -- machine: currently the dashboard's panel layout. A team that shares
     -- Chromebooks kept at each site — one analyst working from three
@@ -86,8 +93,20 @@ CREATE TABLE IF NOT EXISTS sessions (
     user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     expires_at TIMESTAMPTZ NOT NULL,
-    last_seen_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    last_seen_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    -- Two-factor is required and this person has not set it up: the session
+    -- can do nothing else until they have (v1.13).
+    needs_2fa_setup BOOLEAN NOT NULL DEFAULT FALSE
 );
+
+-- Single-use recovery codes for two-factor sign-in, as SHA-256 hashes (v1.13).
+CREATE TABLE IF NOT EXISTS user_recovery_codes (
+    id SERIAL PRIMARY KEY,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    code_hash TEXT NOT NULL,
+    used_at TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS idx_user_recovery_codes_user ON user_recovery_codes (user_id);
 
 CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions (user_id);
 CREATE INDEX IF NOT EXISTS idx_sessions_expires ON sessions (expires_at);
@@ -1244,7 +1263,9 @@ CREATE TABLE IF NOT EXISTS app_settings (
         CHECK (assistant_max_lookups IS NULL OR assistant_max_lookups BETWEEN 0 AND 12),
 
     updated_at TIMESTAMPTZ,
-    updated_by INTEGER REFERENCES users(id)
+    updated_by INTEGER REFERENCES users(id),
+    -- Two-factor sign-in required for every account (v1.13).
+    require_2fa BOOLEAN NOT NULL DEFAULT FALSE
 );
 
 -- ============================================================================

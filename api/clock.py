@@ -11,14 +11,20 @@ writes a hint file that a root service (humint-clock) applies — and only when
 the box has no network time and is more than a minute out. Elsewhere (the
 Docker deployment, whose host keeps time itself) it does nothing.
 
-Only signed-in users can send one, and every hint the box acts on is audited
-with who sent it, so nobody on the field Wi-Fi can move the clock anonymously.
+Every hint the box acts on is audited with who sent it. The sign-in page
+sends one too — two-factor codes depend on the clock, so a box whose clock
+nobody has set yet would refuse every code and nobody could sign in to set
+it. That hint is anonymous, so it is accepted only while nothing has set the
+clock this boot, and only to move it FORWARD: a box boots at the time it was
+last shut down, which is never later than the real time, so the only honest
+correction is forward — nobody on the field Wi-Fi can wind it back.
 """
 import json
 import os
 import time
+from typing import Optional
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel, Field
 
 import audit
@@ -47,26 +53,36 @@ def _clock_state() -> dict:
 
 
 @router.post("/time-hint")
-def time_hint(payload: TimeHint, user: dict = Depends(auth.require_user)):
+def time_hint(payload: TimeHint, request: Request,
+              user: Optional[dict] = Depends(auth.get_session_user)):
     server = time.time()
     client = payload.client_epoch_ms / 1000.0
     offset = client - server
     state = _clock_state()
     if not HINT_FILE:
-        return {"managed": False, "offset_seconds": round(offset, 1)}
+        return {"managed": False}
     if state.get("source") == "ntp" or abs(offset) < THRESHOLD_SECONDS:
-        return {"managed": True, "offset_seconds": round(offset, 1), "hint": "not needed",
-                "clock": state}
+        return {"managed": True, "hint": "not needed"}
+    anonymous = user is None or bool(user.get("needs_2fa_setup"))
+    if anonymous and (state.get("source") not in (None, "unset") or offset < 0):
+        # Already set by a signed-in device (or by network time), or asking
+        # to wind the clock back: not from someone who has not signed in.
+        return {"managed": True, "hint": "not accepted"}
+    who = user["username"] if user else f"sign-in page ({request.client.host if request.client else '?'})"
     hint = {"client_epoch": client, "server_epoch": server, "monotonic": time.monotonic(),
-            "username": user["username"], "offset_seconds": offset}
+            "username": who, "anonymous": anonymous, "offset_seconds": offset}
     tmp = HINT_FILE + ".tmp"
     os.makedirs(os.path.dirname(HINT_FILE), exist_ok=True)
     with open(tmp, "w") as fh:
         json.dump(hint, fh)
     os.replace(tmp, HINT_FILE)
-    audit.record("system.clock_hint", user=user, object_type="system", object_label="clock",
-                 detail={"offset_seconds": round(offset, 1)})
-    return {"managed": True, "offset_seconds": round(offset, 1), "hint": "sent", "clock": state}
+    if anonymous:
+        audit.record("system.clock_hint", actor_username=who, actor_kind="anonymous", object_type="system",
+                     object_label="clock", detail={"offset_seconds": round(offset, 1)})
+    else:
+        audit.record("system.clock_hint", user=user, object_type="system", object_label="clock",
+                     detail={"offset_seconds": round(offset, 1)})
+    return {"managed": True, "hint": "sent"}
 
 
 @router.get("/clock")

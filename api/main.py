@@ -60,6 +60,7 @@ import zones
 import routes as routes_module
 import map_files
 import clock
+import twofactor
 from db import db_cursor
 
 # Where the static frontend lives. /app/frontend inside the Docker image; the
@@ -148,6 +149,8 @@ app.include_router(backup.router)
 app.include_router(field_sync.router)
 app.include_router(audit_api.router)
 app.include_router(clock.router)
+app.include_router(twofactor.router)
+app.include_router(twofactor.admin_router)
 
 class RevalidatingStatic(StaticFiles):
     """StaticFiles with a Cache-Control header on every response.

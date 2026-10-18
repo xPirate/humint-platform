@@ -11,7 +11,10 @@ leaves a hint in the store; this service, as root, applies it:
   * never while the system has network time (NTPSynchronized=yes) — that wins;
   * only when the box is more than a minute out;
   * never to a time before this image was built, or from a hint more than ten
-    minutes old.
+    minutes old;
+  * from the sign-in page (no one signed in yet — two-factor codes need the
+    right time before anyone can sign in), only forward, and only while
+    nothing has set it this boot.
 
 After setting it, it saves the time (fake-hwclock, and the real-time clock if
 one is fitted) so the next boot starts close, re-issues the HTTPS certificate
@@ -93,6 +96,9 @@ def decide(hint: dict, now_real: float, now_mono: float, floor: float):
         return None, "hint is earlier than this image was built"
     if abs(target - now_real) < THRESHOLD:
         return None, "already within a minute"
+    if hint.get("anonymous") and target < now_real:
+        # From the sign-in page: forward only (see api/clock.py).
+        return None, "an anonymous hint may only move the clock forward"
     return target, "ok"
 
 

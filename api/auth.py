@@ -53,6 +53,13 @@ class RegisterRequest(BaseModel):
 class LoginRequest(BaseModel):
     username: str
     password: str
+    # The six-digit code (or a recovery code) for accounts with two-factor
+    # sign-in on; see twofactor.py.
+    otp: Optional[str] = Field(default=None, max_length=32)
+    # The signing-in device's clock. Never trusted for the code itself; only
+    # to tell "wrong code" from "this server's clock is behind" on a field
+    # server whose clock is still being set (see clock.py).
+    client_epoch_ms: Optional[int] = None
 
 
 def _hash_password(password: str) -> str:
@@ -73,13 +80,13 @@ def _any_users_exist() -> bool:
         return cur.fetchone() is not None
 
 
-def _start_session(user_id: int, response: Response) -> None:
+def _start_session(user_id: int, response: Response, needs_2fa_setup: bool = False) -> None:
     token = secrets.token_urlsafe(32)
     expires_at = datetime.now(timezone.utc) + SESSION_LIFETIME
     with db_cursor(commit=True) as cur:
         cur.execute(
-            "INSERT INTO sessions (token, user_id, expires_at) VALUES (%s, %s, %s)",
-            (token, user_id, expires_at),
+            "INSERT INTO sessions (token, user_id, expires_at, needs_2fa_setup) VALUES (%s, %s, %s, %s)",
+            (token, user_id, expires_at, needs_2fa_setup),
         )
     response.set_cookie(
         key=SESSION_COOKIE_NAME,
@@ -106,7 +113,7 @@ def get_session_user(
     with db_cursor(commit=True) as cur:
         cur.execute(
             """
-            SELECT u.id, u.username, u.role, u.is_active, s.expires_at
+            SELECT u.id, u.username, u.role, u.is_active, s.expires_at, s.needs_2fa_setup
             FROM sessions s
             JOIN users u ON u.id = s.user_id
             WHERE s.token = %s
@@ -116,7 +123,7 @@ def get_session_user(
         row = cur.fetchone()
         if row is None:
             return None
-        user_id, username, role, is_active, expires_at = row
+        user_id, username, role, is_active, expires_at, needs_setup = row
         if not is_active or expires_at < datetime.now(timezone.utc):
             cur.execute("DELETE FROM sessions WHERE token = %s", (session,))
             return None
@@ -124,12 +131,24 @@ def get_session_user(
             "UPDATE sessions SET last_seen_at = now() WHERE token = %s",
             (session,),
         )
-    return {"id": user_id, "username": username, "role": role}
+    user = {"id": user_id, "username": username, "role": role}
+    if needs_setup:
+        user["needs_2fa_setup"] = True
+    return user
 
 
-def require_user(user: Optional[dict] = Depends(get_session_user)) -> dict:
+def require_user_or_enrolling(user: Optional[dict] = Depends(get_session_user)) -> dict:
+    """Signed in — including a session that can only set up two-factor
+    sign-in (an admin requires it and this person has not got it yet). For
+    /me and the enrolment endpoints, nothing else."""
     if user is None:
         raise HTTPException(status_code=401, detail="Not authenticated")
+    return user
+
+
+def require_user(user: dict = Depends(require_user_or_enrolling)) -> dict:
+    if user.get("needs_2fa_setup"):
+        raise HTTPException(status_code=403, detail="Set up two-factor sign-in to continue")
     return user
 
 
@@ -216,10 +235,13 @@ def login(payload: LoginRequest, response: Response):
     error_detail = None
     authed_user_id = None
     authed_role = None
+    needs_setup = False
+    second = "none"
 
     with db_cursor(commit=True) as cur:
         cur.execute(
-            "SELECT id, password_hash, role, is_active, failed_login_attempts, locked_until "
+            "SELECT id, password_hash, role, is_active, failed_login_attempts, locked_until, "
+            "totp_enabled_at IS NOT NULL "
             "FROM users WHERE username = %s",
             (payload.username,),
         )
@@ -232,7 +254,7 @@ def login(payload: LoginRequest, response: Response):
             _hash_password(payload.password)
             error_status, error_detail = 401, "Invalid username or password"
         else:
-            user_id, password_hash, role, is_active, failed_attempts, locked_until = row
+            user_id, password_hash, role, is_active, failed_attempts, locked_until, has_2fa = row
 
             if locked_until is not None and locked_until > datetime.now(timezone.utc):
                 error_status = 423
@@ -253,12 +275,40 @@ def login(payload: LoginRequest, response: Response):
                 )
                 error_status, error_detail = 401, "Invalid username or password"
             else:
-                cur.execute(
-                    "UPDATE users SET failed_login_attempts = 0, locked_until = NULL WHERE id = %s",
-                    (user_id,),
-                )
-                authed_user_id, authed_role = user_id, role
+                import twofactor
+                second = "none"
+                if has_2fa:
+                    epoch = payload.client_epoch_ms / 1000 if payload.client_epoch_ms else None
+                    ok, second = twofactor.check_second_factor(cur, user_id, payload.otp, epoch)
+                    if not ok and second == "wrong":
+                        failed_attempts += 1
+                        lock_until = None
+                        if failed_attempts >= MAX_FAILED_ATTEMPTS:
+                            lock_until = datetime.now(timezone.utc) + timedelta(minutes=LOCKOUT_MINUTES)
+                        cur.execute(
+                            "UPDATE users SET failed_login_attempts = %s, locked_until = %s WHERE id = %s",
+                            (failed_attempts, lock_until, user_id))
+                        error_status, error_detail = 401, "That code is not right"
+                    elif not ok and second == "missing":
+                        # Not a failure: the password was right and the form
+                        # now asks for the code.
+                        error_status = 401
+                        error_detail = {"otp_required": True,
+                                        "message": "Enter the 6-digit code from your authenticator app"}
+                    elif not ok and second == "clock":
+                        error_status = 409
+                        error_detail = ("The box's clock is being set from this device. "
+                                        "Try the code again in a few seconds.")
+                if error_detail is None:
+                    cur.execute(
+                        "UPDATE users SET failed_login_attempts = 0, locked_until = NULL WHERE id = %s",
+                        (user_id,),
+                    )
+                    authed_user_id, authed_role = user_id, role
+                    needs_setup = not has_2fa and twofactor.required_for_everyone(cur)
 
+    if isinstance(error_detail, dict):
+        raise HTTPException(status_code=error_status, detail=error_detail)
     if error_detail is not None:
         # Failed logins are the single most useful thing in an audit trail, so
         # the attempted username is recorded even though no session exists.
@@ -274,10 +324,16 @@ def login(payload: LoginRequest, response: Response):
         )
         raise HTTPException(status_code=error_status, detail=error_detail)
 
-    _start_session(authed_user_id, response)
+    _start_session(authed_user_id, response, needs_2fa_setup=needs_setup)
     user = {"id": authed_user_id, "username": payload.username, "role": authed_role}
     audit.record("auth.login", user=user, object_type="user",
-                 object_id=authed_user_id, object_label=payload.username)
+                 object_id=authed_user_id, object_label=payload.username,
+                 detail={"second_factor": second} if second != "none" else None)
+    if second == "recovery":
+        audit.record("auth.recovery_code_used", user=user, object_type="user",
+                     object_id=authed_user_id, object_label=payload.username)
+    if needs_setup:
+        user["needs_2fa_setup"] = True
     return user
 
 
@@ -298,5 +354,5 @@ def logout(
 
 
 @router.get("/me")
-def me(user: dict = Depends(require_user)):
+def me(user: dict = Depends(require_user_or_enrolling)):
     return user

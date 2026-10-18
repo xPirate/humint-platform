@@ -21,8 +21,8 @@ r = a.post(plain.url + "/api/system/time-hint", json={"client_epoch_ms": int((ti
 check(ok(r)["managed"] is False and not os.path.exists(hint_file),
       "a console that keeps its own time ignores the hint")
 import requests  # noqa: E402
-check(requests.post(plain.url + "/api/system/time-hint", json={"client_epoch_ms": 1}).status_code == 401,
-      "nobody can send a time without signing in")
+r = requests.post(plain.url + "/api/system/time-hint", json={"client_epoch_ms": 1})
+check(r.ok and r.json()["managed"] is False, "nor from the sign-in page")
 plain.stop()
 
 box = Console("clock_box", env={"CLOCK_HINT_FILE": hint_file, "CLOCK_STATE_FILE": state_file}).start()
@@ -36,8 +36,24 @@ check(r["hint"] == "sent" and abs(hint["client_epoch"] - ahead) < 2 and hint["us
       "a box three days behind leaves a hint naming who sent it")
 audit = box.sql("SELECT action, detail FROM audit_log WHERE action = 'system.clock_hint'")
 check(len(audit) == 1 and abs(audit[0][1]["offset_seconds"] - 3 * 86400) < 5, "the hint is audited, with the offset")
-json.dump({"source": "ntp"}, open(state_file, "w"))
+# From the sign-in page (nobody signed in): two-factor codes need the time
+# before anyone can sign in, so it is taken — but only forward, and only while
+# nothing has set the clock this boot.
 os.unlink(hint_file)
+anon = requests.Session()
+json.dump({"source": "unset"}, open(state_file, "w"))
+r = anon.post(box.url + "/api/system/time-hint", json={"client_epoch_ms": int((time.time() - 86400) * 1000)})
+check(r.json()["hint"] == "not accepted" and not os.path.exists(hint_file),
+      "the sign-in page cannot wind the clock back")
+r = anon.post(box.url + "/api/system/time-hint", json={"client_epoch_ms": int(ahead * 1000)})
+hint = json.load(open(hint_file))
+check(r.json()["hint"] == "sent" and hint["anonymous"] is True and hint["username"].startswith("sign-in page"),
+      "it can move an unset clock forward, marked as anonymous")
+os.unlink(hint_file)
+json.dump({"source": "device"}, open(state_file, "w"))
+r = anon.post(box.url + "/api/system/time-hint", json={"client_epoch_ms": int(ahead * 1000)})
+check(r.json()["hint"] == "not accepted", "but not once a signed-in device has set it")
+json.dump({"source": "ntp"}, open(state_file, "w"))
 r = ok(a.post(box.url + "/api/system/time-hint", json={"client_epoch_ms": int(ahead * 1000)}))
 check(r["hint"] == "not needed" and not os.path.exists(hint_file), "once network time is in sync, devices are not asked")
 box.stop()
@@ -56,6 +72,9 @@ check(H.decide({"client_epoch": floor - 86400, "monotonic": mono}, now, mono, fl
 check(H.decide({"client_epoch": now + 7200, "monotonic": mono - 3600}, now, mono, floor)[0] is None,
       "a stale hint (an hour old) is ignored")
 check(H.decide({"oops": 1}, now, mono, floor)[0] is None, "an unreadable hint is ignored")
+check(H.decide({"client_epoch": now - 7200, "monotonic": mono, "anonymous": True}, now, mono, floor)[0] is None
+      and H.decide({"client_epoch": now + 7200, "monotonic": mono, "anonymous": True}, now, mono, floor)[0],
+      "an anonymous hint only ever moves the clock forward (enforced again as root)")
 
 # apply(), with the actual clock-setting stubbed out
 H.STATE = state_file
