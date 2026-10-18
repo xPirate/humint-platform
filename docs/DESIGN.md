@@ -4490,11 +4490,13 @@ debrief wizard, every admin section and the audit table open.
   It says how many records it considered for exactly this reason. There is no
   way for it to propose a link involving a record it never saw, which is the
   guard that matters, but it is not the same as it having read your whole file.
-- **A worker crash mid-extraction leaves that attachment stuck in
-  "processing" forever.** There's no started-at timestamp and no
-  auto-requeue logic. If this happens (check the worker's logs), the fix
-  is a manual `UPDATE attachments SET extraction_status = 'pending' WHERE
-  id = <id>;` via `psql` against the `db` container.
+- **Interrupted work is retried, but only three times.** A worker that
+  crashes or loses power mid-job leaves its claims behind; the next worker to
+  start (or any live one, within a couple of minutes) puts them back in the
+  queue, judged by a heartbeat each worker keeps. A document interrupted a
+  third time is marked failed with that reason rather than retried for ever —
+  a file that reliably kills the worker would otherwise take it down in a
+  loop. **Read again** on the document starts the count over.
 - **Individual Ollama call failures are still silent.** The app now warns
   loudly about the *predictable* causes — Ollama off, host unreachable, model
   not installed (see "Choosing a model without guessing") — but a call that

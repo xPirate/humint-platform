@@ -323,7 +323,8 @@ CREATE TABLE IF NOT EXISTS location_details (
     -- 'done' / 'failed' = terminal, see geocode_error for the latter.
     geocode_status TEXT CHECK (geocode_status IN ('pending', 'processing', 'done', 'failed')),
     geocode_error TEXT,
-    geocoded_at TIMESTAMPTZ
+    geocoded_at TIMESTAMPTZ,
+    geocode_claimed_by TEXT            -- the worker holding a 'processing' claim (v1.13)
 );
 
 CREATE TABLE IF NOT EXISTS event_details (
@@ -559,7 +560,13 @@ CREATE TABLE IF NOT EXISTS attachments (
     uploaded_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     extracted_text TEXT,               -- OCR (images/scanned PDFs) or direct text extraction (text PDFs, .docx) output, filled in by the worker
     extraction_status TEXT NOT NULL DEFAULT 'pending' CHECK (extraction_status IN ('pending', 'processing', 'done', 'failed', 'skipped')),
-    extraction_error TEXT
+    extraction_error TEXT,
+    -- Crash recovery (v1.13): which worker claimed it and when, and how many
+    -- times it has been started. A claim held by a worker whose heartbeat has
+    -- stopped goes back to 'pending'; the third interruption marks it failed.
+    extraction_claimed_by TEXT,
+    extraction_started_at TIMESTAMPTZ,
+    extraction_attempts INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE INDEX IF NOT EXISTS idx_attachments_report ON attachments (report_id);
@@ -1463,6 +1470,7 @@ CREATE TABLE IF NOT EXISTS map_packs (
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     started_at TIMESTAMPTZ,
     finished_at TIMESTAMPTZ,
+    claimed_by TEXT,                   -- the worker downloading it (v1.13)
     CHECK (max_zoom >= min_zoom),
     CHECK (max_lat >= min_lat AND max_lon >= min_lon)
 );
@@ -1777,3 +1785,15 @@ ALTER TABLE field_submissions ADD COLUMN IF NOT EXISTS field_origin_ref TEXT;
 ALTER TABLE field_submissions ADD COLUMN IF NOT EXISTS link_entities JSONB;
 CREATE UNIQUE INDEX IF NOT EXISTS idx_field_submissions_origin_ref
     ON field_submissions (field_origin_ref) WHERE field_origin_ref IS NOT NULL;
+
+-- ---------------------------------------------------------------------------
+-- Worker heartbeats (v1.13). Each worker process writes its row every few
+-- seconds from a thread of its own; a job claimed by a worker whose row has
+-- gone quiet was interrupted (crash, power cut) and is put back in the queue.
+-- Not backed up: it describes running processes, not the case file.
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS worker_heartbeats (
+    worker_id TEXT PRIMARY KEY,
+    started_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    last_seen TIMESTAMPTZ NOT NULL DEFAULT now()
+);

@@ -30,6 +30,7 @@ import requests
 
 from db import db_cursor
 from tilemath import flip_y, tile_range
+from recovery import WORKER_ID
 
 MAP_PACK_DIR = os.environ.get("MAP_PACK_DIR", "/data/map-packs")
 DOWNLOAD_ENABLED = os.environ.get("MAP_DOWNLOAD_ENABLED", "true").lower() == "true"
@@ -177,9 +178,9 @@ def _claim_pack():
 
         path = os.path.join(MAP_PACK_DIR, f"pack-{pack['id']}.mbtiles")
         cur.execute(
-            "UPDATE map_packs SET status = 'downloading', started_at = now(), "
+            "UPDATE map_packs SET status = 'downloading', started_at = now(), claimed_by = %s, "
             "file_path = %s, last_error = NULL, cancel_requested = FALSE WHERE id = %s",
-            (path, pack["id"]))
+            (WORKER_ID, path, pack["id"]))
         pack["file_path"] = path
         return pack
 
@@ -207,7 +208,7 @@ def _finish(pack_id: int, status: str, done: int, failed: int, byte_total: int,
     with db_cursor(commit=True) as cur:
         cur.execute(
             "UPDATE map_packs SET status = %s, tiles_done = %s, tiles_failed = %s, "
-            "bytes_total = %s, last_error = %s, finished_at = now() WHERE id = %s",
+            "bytes_total = %s, last_error = %s, finished_at = now(), claimed_by = NULL WHERE id = %s",
             (status, done, failed, byte_total, error, pack_id))
 
 
@@ -362,7 +363,9 @@ def start_download_thread() -> None:
 
     A daemon thread: if the worker is being shut down there is no value in
     waiting for a six-hour download to reach a tidy stopping point, and the
-    pack resumes from what it wrote anyway.
+    pack resumes from what it wrote anyway: recovery.py puts a pack left
+    'downloading' by a dead worker back in the queue, and the downloader skips
+    tiles the file already has.
     """
     if not DOWNLOAD_ENABLED:
         print("[worker] map pack downloads disabled (MAP_DOWNLOAD_ENABLED=false)", flush=True)

@@ -45,16 +45,14 @@ app_settings in db/init.sql) at the top of every iteration below, not once
 at startup — so changing the model from the Admin page takes effect within
 one poll cycle, no `docker compose restart worker` needed.
 
-Crash recovery note: if the worker dies mid-extraction (after claiming an
-attachment as 'processing' but before finishing it), that attachment stays
-stuck in 'processing' with no automatic timeout/requeue — there's no
-processing-started-at column to judge staleness against. At personal/lab
-scale with a single worker container this is rare enough that a manual
-`UPDATE attachments SET extraction_status = 'pending' WHERE id = ...` is an
-acceptable recovery path rather than building a staleness-tracking system
-for it. Documented in README.md as well. The same "just re-run it" logic
-applies to a feed claimed but never finished polling — it simply looks due
-again once RSS_POLL_INTERVAL_SECONDS has passed.
+Crash recovery: every claimed job names this worker, the worker keeps a
+heartbeat, and work held by a worker that has gone quiet goes back in the
+queue — at start-up and every minute (see recovery.py). A document stays
+'processing' until its proposals are stored, in the same transaction that
+marks it done, so an interruption during the (long) model step is retried
+rather than leaving it "done" with nothing proposed. A feed claimed but never
+finished polling simply looks due again once RSS_POLL_INTERVAL_SECONDS has
+passed.
 """
 
 import json
@@ -69,6 +67,7 @@ from correlate import process_one_entity_embedding, process_one_report_embedding
 from db import db_cursor
 from extract import extract_text
 from geocode import GEOCODE_ENABLED, process_one_geocode
+from recovery import WORKER_ID, Every, recover_orphans, start_heartbeat
 import ollama_usage
 from ollama_client import OllamaClient
 from retention_sweep import run_retention_sweep
@@ -130,7 +129,11 @@ def _claim_pending_attachment(cur):
     row = cur.fetchone()
     if row is None:
         return None
-    cur.execute("UPDATE attachments SET extraction_status = 'processing' WHERE id = %s", (row[0],))
+    cur.execute(
+        "UPDATE attachments SET extraction_status = 'processing', extraction_claimed_by = %s, "
+        "extraction_started_at = now(), extraction_attempts = extraction_attempts + 1 "
+        "WHERE id = %s",
+        (WORKER_ID, row[0]))
     return row
 
 
@@ -149,53 +152,65 @@ def process_one_attachment() -> bool:
     if error:
         with db_cursor(commit=True) as cur:
             cur.execute(
-                "UPDATE attachments SET extraction_status = 'failed', extraction_error = %s WHERE id = %s",
+                "UPDATE attachments SET extraction_status = 'failed', extraction_error = %s, "
+                "extraction_claimed_by = NULL WHERE id = %s",
                 (error[:2000], attachment_id),
             )
         print(f"[worker] attachment {attachment_id} extraction failed: {error}", flush=True)
         return True
 
+    # The text is readable straight away, but the document stays 'processing'
+    # until the model has had its turn: marking it done here meant a crash
+    # during the model call — the long part — left it "done" with nothing
+    # proposed and nothing to say why.
     with db_cursor(commit=True) as cur:
-        cur.execute(
-            "UPDATE attachments SET extraction_status = 'done', extracted_text = %s WHERE id = %s",
-            (text, attachment_id),
-        )
+        cur.execute("UPDATE attachments SET extracted_text = %s WHERE id = %s",
+                    (text, attachment_id))
 
+    suggestions = None
     if text.strip() and ollama.enabled:
         suggestions = ollama.extract_entities(text)
+
+    with db_cursor(commit=True) as cur:
         if suggestions and (suggestions["entities"] or suggestions["relationships"]):
-            _store_suggestions(attachment_id, suggestions)
+            _store_suggestions(cur, attachment_id, suggestions)
             print(
                 f"[worker] attachment {attachment_id}: "
                 f"{len(suggestions['entities'])} entity suggestion(s), "
                 f"{len(suggestions['relationships'])} relationship suggestion(s)",
                 flush=True,
             )
+        cur.execute(
+            "UPDATE attachments SET extraction_status = 'done', extraction_claimed_by = NULL "
+            "WHERE id = %s",
+            (attachment_id,),
+        )
 
     return True
 
 
-def _store_suggestions(attachment_id: int, suggestions: dict) -> None:
-    with db_cursor(commit=True) as cur:
-        for e in suggestions["entities"]:
-            cur.execute(
-                """
-                INSERT INTO extraction_suggestions
-                    (attachment_id, suggestion_type, suggested_entity_type, suggested_name, details, confidence)
-                VALUES (%s, 'entity', %s, %s, %s, %s)
-                """,
-                (attachment_id, e["entity_type"], e["name"], json.dumps(e["details"]), e["confidence"]),
-            )
-        for r in suggestions["relationships"]:
-            cur.execute(
-                """
-                INSERT INTO extraction_suggestions
-                    (attachment_id, suggestion_type, suggested_relationship_type,
-                     suggested_from_name, suggested_to_name, confidence)
-                VALUES (%s, 'relationship', %s, %s, %s, %s)
-                """,
-                (attachment_id, r["relationship_type"], r["from_name"], r["to_name"], r["confidence"]),
-            )
+def _store_suggestions(cur, attachment_id: int, suggestions: dict) -> None:
+    """Inside the caller's transaction, which also marks the document done:
+    an interruption leaves neither, so the retry does not duplicate them."""
+    for e in suggestions["entities"]:
+        cur.execute(
+            """
+            INSERT INTO extraction_suggestions
+                (attachment_id, suggestion_type, suggested_entity_type, suggested_name, details, confidence)
+            VALUES (%s, 'entity', %s, %s, %s, %s)
+            """,
+            (attachment_id, e["entity_type"], e["name"], json.dumps(e["details"]), e["confidence"]),
+        )
+    for r in suggestions["relationships"]:
+        cur.execute(
+            """
+            INSERT INTO extraction_suggestions
+                (attachment_id, suggestion_type, suggested_relationship_type,
+                 suggested_from_name, suggested_to_name, confidence)
+            VALUES (%s, 'relationship', %s, %s, %s, %s)
+            """,
+            (attachment_id, r["relationship_type"], r["from_name"], r["to_name"], r["confidence"]),
+        )
 
 
 def _refresh_ollama_client() -> bool:
@@ -217,6 +232,12 @@ def main():
     # Map packs run on their own thread: every other job here finishes in
     # seconds, and a pack is hours of small HTTP requests. In the loop it
     # would mean an uploaded document waiting behind a basemap.
+    # Heartbeat first, then hand back anything a previous run (crash, power
+    # cut) left claimed — before claiming anything new.
+    start_heartbeat()
+    print("[worker] id =", WORKER_ID, flush=True)
+    recover_orphans()
+    recover_every_minute = Every(60, recover_orphans)
     start_download_thread()
     print("[worker] geocoding enabled =", GEOCODE_ENABLED, flush=True)
     print("[worker] audit retention =",
@@ -229,6 +250,7 @@ def main():
     )
     while True:
         try:
+            recover_every_minute()
             correlation_enabled = _refresh_ollama_client()
             did_work = process_one_attachment()
             did_work = process_one_feed(RSS_POLL_INTERVAL_SECONDS) or did_work

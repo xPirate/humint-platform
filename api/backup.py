@@ -97,7 +97,9 @@ EXCLUDED_TABLES = {"sessions"}
 # Describes THIS machine, not the case file: never written to a backup and
 # never wiped by a restore. A field server seeded from an HQ backup must keep
 # its own identity, or every package it sends home would claim to be HQ.
-PRESERVED_TABLES = {"instance_identity"}
+# worker_heartbeats likewise describes running processes; wiping it in a
+# restore would make a live worker's claims look abandoned.
+PRESERVED_TABLES = {"instance_identity", "worker_heartbeats"}
 
 # Typed into the restore form to confirm the destructive action. Matched
 # exactly (after stripping surrounding whitespace) — an accidental click can

@@ -601,7 +601,7 @@ def re_extract(document_id: int, user: dict = Depends(auth.require_user)):
                     "WHERE attachment_id = %s AND status = 'pending'", (document_id,))
         cleared = cur.rowcount
         cur.execute(
-            "UPDATE attachments SET extraction_status = 'pending', extraction_error = NULL "
+            "UPDATE attachments SET extraction_status = 'pending', extraction_error = NULL, extraction_attempts = 0, extraction_claimed_by = NULL "
             "WHERE id = %s",
             (document_id,),
         )
@@ -652,7 +652,7 @@ def re_read_all(payload: ReReadRequest, user: dict = Depends(auth.require_user))
             cur.execute("DELETE FROM extraction_suggestions "
                         "WHERE attachment_id = ANY(%s) AND status = 'pending'", (ids,))
             cur.execute(
-                "UPDATE attachments SET extraction_status = 'pending', extraction_error = NULL "
+                "UPDATE attachments SET extraction_status = 'pending', extraction_error = NULL, extraction_attempts = 0, extraction_claimed_by = NULL "
                 "WHERE id = ANY(%s)", (ids,))
 
     audit.record("document.re_extract_all", user=user, object_type="attachment",

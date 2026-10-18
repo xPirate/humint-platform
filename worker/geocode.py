@@ -41,6 +41,7 @@ import requests
 
 from db import db_cursor
 from geo import maidenhead_locator
+from recovery import WORKER_ID
 
 GEOCODE_ENABLED = os.environ.get("GEOCODE_ENABLED", "true").lower() == "true"
 NOMINATIM_BASE_URL = os.environ.get("NOMINATIM_BASE_URL", "https://nominatim.openstreetmap.org").rstrip("/")
@@ -65,7 +66,8 @@ def _claim_pending_location(cur):
     row = cur.fetchone()
     if row is None:
         return None
-    cur.execute("UPDATE location_details SET geocode_status = 'processing' WHERE entity_id = %s", (row[0],))
+    cur.execute("UPDATE location_details SET geocode_status = 'processing', geocode_claimed_by = %s "
+                "WHERE entity_id = %s", (WORKER_ID, row[0]))
     return row
 
 
@@ -116,7 +118,7 @@ def process_one_geocode() -> bool:
     except ValueError as exc:
         with db_cursor(commit=True) as cur:
             cur.execute(
-                "UPDATE location_details SET geocode_status = 'failed', geocode_error = %s, geocoded_at = now() "
+                "UPDATE location_details SET geocode_status = 'failed', geocode_error = %s, geocoded_at = now(), geocode_claimed_by = NULL "
                 "WHERE entity_id = %s",
                 (str(exc)[:2000], entity_id),
             )
@@ -127,7 +129,7 @@ def process_one_geocode() -> bool:
     with db_cursor(commit=True) as cur:
         cur.execute(
             "UPDATE location_details SET lat = %s, lng = %s, maidenhead_grid = %s, "
-            "geocode_status = 'done', geocode_error = NULL, geocoded_at = now() "
+            "geocode_status = 'done', geocode_error = NULL, geocoded_at = now(), geocode_claimed_by = NULL "
             "WHERE entity_id = %s",
             (lat, lng, grid, entity_id),
         )
