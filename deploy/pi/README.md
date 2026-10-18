@@ -516,15 +516,39 @@ Tested off the Pi:
   guard; every **touch panel** screen rendered at 800×480 and 1024×600, and
   taps, keys, rotation and calibration driven through it.
 - **PIN counting** shared by keyboard and touch, including lockout.
+- **First-boot PIN on the touch panel**: the hand-off to first boot through
+  its FIFO, mismatch, too short, falling back to the keyboard when the panel
+  stops, and a passphrase with spaces.
+- **Drawing to the framebuffer** in 16- and 32-bit pixel formats, with padded
+  rows.
+- **The clock**: hints from signed-in browsers and from the sign-in page
+  (forward only), what humint-clock will and will not apply, network time
+  taking over, and the panel marking an unconfirmed time.
+- **Per-box login password**, its panel screen and Menu → New login.
+- **Wipe and the duress PIN** with real cryptsetup on a file-backed LUKS2
+  store: the real PIN no longer opens it, the header is gone; the duress
+  rebuild order (format, database, console) and try_unlock's choice.
+- **Signed updates**: forged and altered bundles refused, older builds
+  refused, only new migrations run, and both a failing migration and a
+  console that will not start rolled back — code and database.
+- **Worker recovery** after a killed worker: documents, address lookups and
+  map packs back in the queue, a third interruption marked failed.
 
 Needs a real Pi:
 
 - The **image build** in pi-gen (package names, the PGDG repo for arm64,
   Python wheels compiling under emulation).
 - The **Elecrow screen**: the driver overlay, the reboot-once, touch through
-  evdev, calibration, pygame drawing through KMS.
+  evdev, calibration. (Drawing now goes to the framebuffer — confirmed on
+  the first box.)
 - The **OLED** wiring and the **PIN prompt** at the right moments.
 - The **unlock flow** on real LUKS, and `humint.target` starting after it.
+- The **duress rebuild** end to end (opening and mounting the new store and
+  building its database are first boot's own steps, but have not run in this
+  order on a Pi), and **Wipe → first-time setup** after the reboot.
+- A **signed update applied on a box** from USB and from the console,
+  including wheels built on the builder Pi.
+- The **clock** being set from a phone on a box that has been off for days.
 - **The X1203** answering at 0x36, the power-loss pin's polarity, and the
   charge figure against a real discharge (or the Waveshare HAT at 0x42).
 - **Hotspot mode** at usable range with several phones; certificate
