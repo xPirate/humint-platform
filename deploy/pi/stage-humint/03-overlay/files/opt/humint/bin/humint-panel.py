@@ -1302,19 +1302,29 @@ class Panel:
             b.draw(surf, s); self.buttons.append(b)
 
     def draw_secret(self, surf, d):
+        """First boot's (or Menu → New login's) secrets, until someone taps
+        that they are written down: the login password, and the hotspot's
+        when first boot made that up too."""
         s = self.s
         sec = d.get("login_secret") or {}
-        self.top_bar(surf, d, "Login password")
-        text(surf, "This box's login", (self.W // 2, int(96 * s)), int(26 * s), kind="bold", anchor="center")
-        text(surf, "for SSH and the keyboard console — not the PIN, not the web console",
-             (self.W // 2, int(132 * s)), int(16 * s), MUTED, anchor="center", maxw=self.W - int(40 * s))
-        text(surf, sec.get("user", ""), (self.W // 2, int(186 * s)), int(24 * s), MUTED, kind="mono",
-             anchor="center")
-        text(surf, sec.get("password", ""), (self.W // 2, int(240 * s)), int(46 * s), ACCENT, kind="mono",
-             anchor="center", maxw=self.W - int(40 * s))
-        text(surf, "Write it down now. It is shown once; Menu → New login replaces it.",
-             (self.W // 2, int(300 * s)), int(16 * s), WARN, anchor="center", maxw=self.W - int(40 * s))
-        b = Button((self.W // 2 - int(170 * s), self.H - int(110 * s), int(340 * s), int(72 * s)),
+        self.top_bar(surf, d, "Write these down")
+        y = int(84 * s)
+        if sec.get("password"):
+            text(surf, "Box login (SSH, keyboard) — not the PIN", (self.W // 2, y), int(18 * s), MUTED,
+                 anchor="center", maxw=self.W - int(40 * s))
+            text(surf, f"{sec.get('user', '')}  /  {sec['password']}", (self.W // 2, y + int(44 * s)),
+                 int(36 * s), ACCENT, kind="mono", anchor="center", maxw=self.W - int(40 * s))
+            y += int(110 * s)
+        if sec.get("ap_psk"):
+            text(surf, f"Field Wi-Fi \u201c{sec.get('ap_ssid', '')}\u201d password", (self.W // 2, y),
+                 int(18 * s), MUTED, anchor="center", maxw=self.W - int(40 * s))
+            text(surf, sec["ap_psk"], (self.W // 2, y + int(44 * s)), int(36 * s), ACCENT, kind="mono",
+                 anchor="center", maxw=self.W - int(40 * s))
+            y += int(110 * s)
+        text(surf, "The Wi-Fi password is on the Join screen any time. The login is shown once; "
+                   "Menu → New login replaces it.",
+             (self.W // 2, y), int(15 * s), WARN, anchor="center", maxw=self.W - int(40 * s))
+        b = Button((self.W // 2 - int(170 * s), self.H - int(100 * s), int(340 * s), int(70 * s)),
                    "I've written it down", self.dismiss_secret, style="primary")
         b.draw(surf, s); self.buttons.append(b)
 

@@ -76,7 +76,7 @@ SD card.
 
 **Before deployment (once, at base):**
 
-1. Build and flash the image, edit one config file on the card.
+1. Build and flash the image (optionally, set a few things in a config file on the card).
 2. Power on. If a 5" touch screen is fitted, the box sets up its driver and
    reboots once. First boot then sets the hostname, asks you to **set the
    unlock PIN** — twice, on the touch screen's PIN pad (at least 4
@@ -326,23 +326,30 @@ re-image those once.
 
 ## Configuring before first boot
 
-After flashing, the card has a small **boot partition** readable on any
-computer. On it, copy `humint-appliance.conf.example` to
-`humint-appliance.conf` and edit it. The important settings:
+**Optional.** Flash and boot with nothing else and the box sets itself up
+with defaults: a hotspot called `humint-field` with a password it makes up
+and shows on the touch panel (and on the panel's Join screen, with a QR
+code, any time after), the time zone the image was built in, and that time
+zone's Wi-Fi country.
 
-- `WIFI_COUNTRY` — **required** for the hotspot to transmit (e.g. `US`).
+To change anything, open the card's small **boot partition** on any computer,
+copy `humint-appliance.conf.example` to `humint-appliance.conf`, and set only
+what you need:
+
+- `WIFI_COUNTRY` — the country you are deploying in (e.g. `US`), when it is
+  not the one the image was built in. A Pi will not transmit without one.
 - `NET_MODE` — `hotspot` (the Pi is the access point), `client` (join an
   existing Wi-Fi), or `wired` (Ethernet only, optionally handing out
   addresses to a switch).
-- `AP_SSID` / `AP_PSK` — the field network's name and passphrase. **Change
-  the passphrase.**
+- `AP_SSID` / `AP_PSK` — the field network's name and passphrase (empty
+  passphrase: generated).
 - `DATA_SIZE` — how big the encrypted case store is. It cannot grow later, so
   size it for the deployment and leave room on the card for the OS (~4 GB).
 - `SCREEN` — `auto`, or `elecrow5` for the 5" touch screen if auto does not
   find it (see Screens).
 - `TLS` — `on` (default) or `off`.
 - `BATTERY` — `auto` (default), `waveshare` or `none`; `BATTERY_CELLS`.
-- `HOSTNAME`, `INSTANCE_NAME`, `TIMEZONE`.
+- `HOSTNAME`, `INSTANCE_NAME`, `TIMEZONE`, `LOGIN_PASSWORD`, `SSH_AUTHORIZED_KEY`.
 
 The file is read once and then renamed to `*.done`, so your passphrases are
 not left sitting on a partition any computer can read. (A root-only working

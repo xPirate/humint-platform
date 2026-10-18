@@ -93,13 +93,28 @@ create_store() {
 main() {
     [ -f "$HUMINT_FIRSTBOOT_DONE" ] && { log "first boot already done"; exit 0; }
     banner "Reading config" ""
-    [ -f "$HUMINT_CONF" ] || {
-        oled "HUMINT setup" "No config file" "see README"
-        die "no $HUMINT_CONF — copy humint-appliance.conf.example, edit it, rename it"
-    }
+    # The config file is optional: without one, every setting takes its
+    # default, and what nobody wrote down is filled in below.
     load_config "$HUMINT_CONF"
-    [ "$NET_MODE" = "hotspot" ] && [ -z "$WIFI_COUNTRY" ] && die "WIFI_COUNTRY is required for hotspot mode"
-    cp "$HUMINT_CONF" "$HUMINT_ENV"; chmod 600 "$HUMINT_ENV"
+    resolve_open_settings
+    if [ "$NET_MODE" = "hotspot" ] && [ -z "$WIFI_COUNTRY" ]; then
+        oled "HUMINT setup" "Set WIFI_COUNTRY" "see README"
+        die "no Wi-Fi country: set WIFI_COUNTRY (or TIMEZONE) in $HUMINT_CONF on the card"
+    fi
+    if [ -f "$HUMINT_CONF" ]; then
+        cp "$HUMINT_CONF" "$HUMINT_ENV"
+    elif [ -f "$HUMINT_BOOT/humint-appliance.conf.example" ]; then
+        log "no $HUMINT_CONF — using the defaults"
+        cp "$HUMINT_BOOT/humint-appliance.conf.example" "$HUMINT_ENV"
+    else
+        : >"$HUMINT_ENV"
+    fi
+    chmod 600 "$HUMINT_ENV"
+    # What was decided here is recorded, so later boots read the same values.
+    set_env_value "$HUMINT_ENV" TIMEZONE "$TIMEZONE"
+    set_env_value "$HUMINT_ENV" WIFI_COUNTRY "$WIFI_COUNTRY"
+    set_env_value "$HUMINT_ENV" AP_PSK "$AP_PSK"
+    chmod 600 "$HUMINT_ENV"
 
     banner "Identity" "$HOSTNAME"
     # Set it directly as well: hostnamectl can fail this early in boot
@@ -152,6 +167,22 @@ main() {
         printf 'First, on each phone and laptop: open http://%s.local/trust and install the certificate.\n' \
             "$HOSTNAME" >/dev/tty1
         printf 'Its fingerprint: %s\n' "$(/opt/humint/bin/humint-tls.sh fingerprint)" >/dev/tty1
+    fi
+    # A generated hotspot password goes on the same "write these down" screen.
+    if [ "$AP_PSK_GENERATED" = 1 ] && [ "$NET_MODE" = hotspot ]; then
+        install -d -m 755 "$HUMINT_RUN"
+        ( umask 077; python3 - "$LOGIN_SECRET_FILE" "$AP_SSID" "$AP_PSK" <<'PY'
+import json, os, sys, time
+path, ssid, psk = sys.argv[1:4]
+try:
+    d = json.load(open(path))
+except (OSError, ValueError):
+    d = {"time": int(time.time())}
+d.update({"ap_ssid": ssid, "ap_psk": psk})
+json.dump(d, open(path, "w"))
+PY
+        )
+        printf '\nThe field Wi-Fi is "%s", password: %s\n' "$AP_SSID" "$AP_PSK" >/dev/tty1
     fi
     if [ -n "$login_pw" ]; then
         printf '\nThis box'"'"'s login (SSH and keyboard) is now: %s / %s\n' "$(login_user)" "$login_pw" >/dev/tty1

@@ -1,9 +1,13 @@
 # HUMINT field server — appliance configuration
 #
-# Edit this file BEFORE the first boot, then rename it to
+# OPTIONAL. With no config file at all, the box boots with the defaults below:
+# a hotspot called humint-field with a password it makes up and shows on the
+# touch panel, the time zone the image was built in, and the Wi-Fi country of
+# that time zone. To change anything, copy this file to
 #   humint-appliance.conf
 # on the card's boot partition (the small FAT partition you can read on any
-# computer; on Raspberry Pi OS it is mounted at /boot/firmware on the Pi).
+# computer; on Raspberry Pi OS it is mounted at /boot/firmware on the Pi),
+# edit what you need — you can delete every line you leave alone — and boot.
 #
 # The first boot reads this once, sets the device up, and renames it to
 # humint-appliance.conf.done so your Wi-Fi passphrase is not left sitting on
@@ -21,7 +25,9 @@
 HOSTNAME=humint
 # Shown in the console's top bar and on exported reports.
 INSTANCE_NAME="HUMINT Field Server"
-TIMEZONE=UTC
+# e.g. America/Chicago, Europe/London. Empty: the time zone the image was
+# built in.
+TIMEZONE=
 
 # ---- the operator login (SSH and the keyboard console) --------------------
 # random : (recommended) first boot replaces the password the image was built
@@ -35,10 +41,10 @@ LOGIN_PASSWORD=random
 SSH_AUTHORIZED_KEY=""
 
 # ---- Wi-Fi regulatory domain ---------------------------------------------
-# REQUIRED to run the hotspot. Two-letter country code (US, GB, DE, …). A Pi
-# will not transmit on Wi-Fi at all until it knows which country's rules to
-# follow.
-WIFI_COUNTRY=US
+# Two-letter country code (US, GB, DE, …). A Pi will not transmit on Wi-Fi at
+# all until it knows which country's rules to follow. Empty: the country of
+# TIMEZONE. Set it when you deploy somewhere else.
+WIFI_COUNTRY=
 
 # ---- how the team connects in the field ----------------------------------
 # hotspot : the Pi's own Wi-Fi is the access point the team joins.
@@ -49,8 +55,9 @@ NET_MODE=hotspot
 
 # -- hotspot settings (NET_MODE=hotspot) --
 AP_SSID=humint-field
-# 8–63 characters. Change this before you deploy.
-AP_PSK=changeme-now
+# 8–63 characters. Empty: first boot makes one up and shows it on the touch
+# panel (and the panel's Join screen shows it, with a QR code, any time).
+AP_PSK=
 # bg = 2.4 GHz (longer range, slower). a = 5 GHz (shorter range, faster).
 AP_BAND=bg
 AP_CHANNEL=6

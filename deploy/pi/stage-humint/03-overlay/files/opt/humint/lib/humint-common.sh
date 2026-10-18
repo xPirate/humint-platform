@@ -58,10 +58,13 @@ load_config() {
     # Defaults first, so a short config file still yields a complete set.
     HOSTNAME=humint
     INSTANCE_NAME="HUMINT Field Server"
-    TIMEZONE=UTC
+    # Empty = decided at first boot: the image's own time zone, the country
+    # that time zone is in, and a generated hotspot password (see
+    # resolve_open_settings). The config file is optional.
+    TIMEZONE=""
     WIFI_COUNTRY=""
     NET_MODE=hotspot
-    AP_SSID=humint-field ; AP_PSK=changeme-now ; AP_BAND="bg" ; AP_CHANNEL=6 ; AP_HIDDEN=false
+    AP_SSID=humint-field ; AP_PSK="" ; AP_BAND="bg" ; AP_CHANNEL=6 ; AP_HIDDEN=false
     CLIENT_SSID="" ; CLIENT_PSK=""
     WIRED_DHCP_SERVER=true
     DATA_SIZE=16G
@@ -259,4 +262,46 @@ install_ssh_key() {
         >/etc/ssh/sshd_config.d/10-humint-keys-only.conf
     systemctl try-reload-or-restart ssh.service 2>/dev/null || true
     log "installed an SSH key for $user; SSH now accepts keys only"
+}
+
+# ---- settings nobody wrote down ---------------------------------------------
+
+# The country a time zone belongs to ("America/Chicago" -> US), from tzdata.
+country_for_timezone() {
+    awk -F'\t' -v tz="$1" '$1 !~ /^#/ && $3 == tz {print $1; exit}' /usr/share/zoneinfo/zone.tab 2>/dev/null
+}
+
+# Fill in what the config file left open (or the whole lot, with no file):
+#   TIMEZONE      the image's own (the builder's, see build-image.sh), else UTC
+#   WIFI_COUNTRY  the country of that time zone — the hotspot may not
+#                 transmit without one
+#   AP_PSK        generated (and shown on the panel with the login password)
+# Sets AP_PSK_GENERATED=1 when it made one up.
+resolve_open_settings() {
+    AP_PSK_GENERATED=0
+    if [ -z "${TIMEZONE:-}" ]; then
+        TIMEZONE="$(cat /etc/timezone 2>/dev/null || true)"
+        [ -n "$TIMEZONE" ] || TIMEZONE=UTC
+    fi
+    if [ -z "${WIFI_COUNTRY:-}" ]; then
+        WIFI_COUNTRY="$(country_for_timezone "$TIMEZONE")"
+    fi
+    if [ -z "${AP_PSK:-}" ] || [ "$AP_PSK" = changeme-now ]; then
+        local raw
+        raw="$(LC_ALL=C tr -dc 'abcdefghjkmnpqrstuvwxyz23456789' </dev/urandom | head -c 12)"
+        AP_PSK="${raw:0:4}-${raw:4:4}-${raw:8:4}"
+        AP_PSK_GENERATED=1
+    fi
+}
+
+# set_env_value FILE KEY VALUE — replace KEY's line, or add it. For the
+# values resolve_open_settings makes (no quotes or $ in them).
+set_env_value() {
+    local file="$1" key="$2" value="$3"
+    touch "$file"
+    K="$key" V="$value" awk '
+        $0 ~ "^"ENVIRON["K"]"=" { print ENVIRON["K"] "=\"" ENVIRON["V"] "\""; done=1; next }
+        { print }
+        END { if (!done) print ENVIRON["K"] "=\"" ENVIRON["V"] "\"" }' "$file" >"$file.tmp"
+    mv "$file.tmp" "$file"
 }
