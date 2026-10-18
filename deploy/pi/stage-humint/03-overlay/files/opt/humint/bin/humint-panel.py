@@ -51,6 +51,11 @@ DISPLAY = "/run/humint/display.json"
 MESSAGE = "/run/humint/message.json"
 BATTERY = "/run/humint/battery.json"
 TRIES = "/run/humint/unlock-tries"
+# First boot asks the panel for the PIN to set (see panel_ask_pin in
+# humint-common.sh): the request names the stage, the answer goes to the FIFO.
+PIN_SETUP_REQ = "/run/humint/pin-setup"
+PIN_SETUP_FIFO = "/run/humint/pin-setup.fifo"
+PIN_MIN_LENGTH = 4
 CAL = "/var/lib/humint/touch-cal.json"
 FP = "/var/lib/humint/ca.fingerprint"
 STORE_IMG = "/srv/humint.img"
@@ -133,6 +138,10 @@ class Status:
         d = {"env": env}
         d["store_exists"] = os.path.exists(STORE_IMG)
         d["firstboot_done"] = os.path.exists(FIRSTBOOT_DONE)
+        try:
+            d["pin_setup"] = open(PIN_SETUP_REQ).read().strip() or None
+        except OSError:
+            d["pin_setup"] = None
         d["unlocked"] = os.path.exists(READY) and os.path.ismount(DATA)
         max_tries = int(os.environ.get("HUMINT_UNLOCK_TRIES", "5"))
         try:
@@ -593,6 +602,7 @@ class Panel:
         self.pin_mode = "digits"        # or "text"
         self.shift = False
         self.pin_note = ""
+        self.setpin_first = None        # first entry while setting a new PIN
         self.busy = None                # text while a long action runs
         self.confirm = None             # (title, detail, action)
         self.show_wifi_secret = False
@@ -612,6 +622,8 @@ class Panel:
         if self.busy:
             return "busy"
         if not d.get("unlocked"):
+            if d.get("pin_setup") in ("new", "existing"):
+                return "setpin"
             if d.get("store_exists") and d.get("firstboot_done"):
                 return "lockout" if d.get("tries_left", 1) <= 0 else "pin"
             return "message"
@@ -632,6 +644,49 @@ class Panel:
         threading.Thread(target=work, daemon=True).start()
 
     # ---- actions ----------------------------------------------------------
+
+    def submit(self):
+        """OK / Enter on the PIN pad: unlock, or (first boot) set the PIN."""
+        if self.current(self.status.get()) == "setpin":
+            self.submit_setpin()
+        else:
+            self.submit_pin()
+
+    def submit_setpin(self):
+        stage = self.status.get().get("pin_setup")
+        pin = self.pin
+        if not pin:
+            return
+        if stage == "new":
+            if self.setpin_first is None:
+                if len(pin) < PIN_MIN_LENGTH:
+                    self.pin_note = f"Use at least {PIN_MIN_LENGTH} characters"
+                    return
+                self.setpin_first, self.pin, self.pin_note = pin, "", ""
+                return
+            if pin != self.setpin_first:
+                self.setpin_first, self.pin = None, ""
+                self.pin_note = "They didn't match — start again"
+                return
+        self.pin, self.setpin_first, self.pin_note = "", None, ""
+
+        def work():
+            try:
+                fd = os.open(PIN_SETUP_FIFO, os.O_WRONLY | os.O_NONBLOCK)
+                try:
+                    os.write(fd, (pin + "\n").encode())
+                finally:
+                    os.close(fd)
+            except OSError as e:
+                self.pin_note = f"Could not hand the PIN over ({e.strerror})"
+                return
+            # First boot takes it from here; wait for it to drop the request.
+            for _ in range(20):
+                if not os.path.exists(PIN_SETUP_REQ):
+                    break
+                time.sleep(0.25)
+            self.flash("PIN set — setting up the case file" if stage == "new" else "Opening the case file")
+        self.in_background("Saving PIN…" if stage == "new" else "Opening…", work)
 
     def submit_pin(self):
         if not self.pin:
@@ -700,7 +755,7 @@ class Panel:
                     b.action()
                     return
             return
-        if kind == "key" and state == "pin":
+        if kind == "key" and state in ("pin", "setpin"):
             name, ch = ev[1], ev[2]
             if name == "char" and len(self.pin) < 128:
                 self.pin += ch
@@ -708,7 +763,7 @@ class Panel:
             elif name == "back":
                 self.pin = self.pin[:-1]
             elif name == "enter":
-                self.submit_pin()
+                self.submit()
             elif name == "esc":
                 self.pin = ""
         elif kind == "key" and state in ("home", "join", "trust", "menu"):
@@ -732,7 +787,7 @@ class Panel:
         surf.fill(BG)
         state = self.current(d)
         if self.inp:
-            self.inp.grab_keyboards(state == "pin")
+            self.inp.grab_keyboards(state in ("pin", "setpin"))
         getattr(self, "draw_" + state)(surf, d)
         if state in ("home", "join", "trust", "menu"):
             self.draw_nav(surf, state)
@@ -825,18 +880,34 @@ class Panel:
         dots = "•" * (int(time.time() * 2) % 4)
         text(surf, dots, (self.W // 2, self.H - int(60 * s)), int(28 * s), ACCENT, anchor="center")
         if not d.get("firstboot_done"):
-            text(surf, "First boot: follow the prompts on the keyboard.",
+            text(surf, "First-time setup — this takes a few minutes.",
                  (self.W // 2, self.H - int(28 * s)), int(16 * s), MUTED, anchor="center")
 
-    def draw_pin(self, surf, d):
+    def draw_setpin(self, surf, d):
+        if d.get("pin_setup") == "existing":
+            words = ("Enter your PIN", "the one set before the restart",
+                     "Setup was interrupted; the case file already exists.", "Enter your passphrase")
+        elif self.setpin_first is None:
+            words = ("Set unlock PIN", "you'll enter it at every start",
+                     f"At least {PIN_MIN_LENGTH} digits or characters.",
+                     "Set unlock passphrase")
+        else:
+            words = ("Confirm PIN", "enter the same PIN again", "Enter it again to confirm.",
+                     "Confirm passphrase")
+        self.draw_pin(surf, d, words)
+
+    def draw_pin(self, surf, d, words=None):
         s = self.s
-        self.top_bar(surf, d)
+        title, sub, hint, text_title = words or (
+            "Enter unlock PIN", "to open the case file",
+            f"{d.get('tries_left', '?')} tries before it locks until restart", "Enter unlock passphrase")
+        self.top_bar(surf, d, title="First-time setup" if words else None)
         if self.pin_mode == "digits":
             left_w = int(self.W * 0.46)
-            text(surf, "Enter unlock PIN", (int(36 * s), int(96 * s)), int(32 * s), kind="bold")
-            text(surf, "to open the case file", (int(36 * s), int(138 * s)), int(19 * s), MUTED)
+            text(surf, title, (int(36 * s), int(96 * s)), int(32 * s), kind="bold")
+            text(surf, sub, (int(36 * s), int(138 * s)), int(19 * s), MUTED)
             self.pin_field(surf, (int(36 * s), int(186 * s), left_w - int(56 * s), int(64 * s)))
-            note = self.pin_note or f"{d.get('tries_left', '?')} tries before it locks until restart"
+            note = self.pin_note or hint
             text(surf, note, (int(36 * s), int(266 * s)), int(17 * s),
                  DANGER if self.pin_note else MUTED, maxw=left_w - int(40 * s))
             b = Button((int(36 * s), self.H - int(92 * s), int(180 * s), int(60 * s)),
@@ -853,13 +924,13 @@ class Panel:
                 if k == "BACK":
                     act, style = (lambda: setattr(self, "pin", self.pin[:-1])), "key"
                 elif k == "OK":
-                    act, style = self.submit_pin, "primary"
+                    act, style = self.submit, "primary"
                 else:
                     act, style = (lambda c=k: self.type_char(c)), "key"
                 b = Button(r, k, act, style=style, enabled=(k != "OK" or bool(self.pin)))
                 b.draw(surf, s); self.buttons.append(b)
         else:
-            text(surf, "Enter unlock passphrase", (int(28 * s), int(70 * s)), int(24 * s), kind="bold")
+            text(surf, text_title, (int(28 * s), int(70 * s)), int(24 * s), kind="bold")
             self.pin_field(surf, (int(28 * s), int(108 * s), self.W - int(56 * s), int(54 * s)))
             if self.pin_note:
                 text(surf, self.pin_note, (self.W - int(28 * s), int(84 * s)), int(16 * s), DANGER,
@@ -881,7 +952,7 @@ class Panel:
                      ("SHIFT", 1.3, lambda: setattr(self, "shift", not self.shift), "active" if self.shift else "normal"),
                      ("space", 3.4, lambda: self.type_char(" "), "key"),
                      ("BACK", 1.4, lambda: setattr(self, "pin", self.pin[:-1]), "key"),
-                     ("OK", 2.0, self.submit_pin, "primary")]
+                     ("OK", 2.0, self.submit, "primary")]
             unit = (self.W - int(40 * s)) / sum(w for _, w, _, _ in specs)
             x = int(20 * s)
             for label, w, act, style in specs:

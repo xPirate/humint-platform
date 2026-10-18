@@ -14,8 +14,6 @@ set -euo pipefail
 # shellcheck source=/dev/null
 . /opt/humint/lib/humint-common.sh
 
-panel_running() { systemctl -q is-active humint-panel.service 2>/dev/null; }
-
 keyboard_prompt() {
     local pin rc
     while :; do

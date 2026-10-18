@@ -36,7 +36,7 @@ What it does:
 | **Board** | Raspberry Pi 4 (4 GB minimum, 8 GB better) or Pi 5. 64-bit. |
 | **Storage** | An SD card (32 GB+, A2-rated) to boot. **Recommended:** boot from a USB-3 SSD (Pi 4) or NVMe (Pi 5) instead — database writes wear SD cards, and a card that loses power mid-write can corrupt the case file. |
 | **Screen** | Any of: **none** (type the PIN blind); a **0.96" SSD1306 I2C OLED** (status pages and PIN prompt); the **Elecrow 5" 800×480 HDMI touch screen** (or another HDMI/DSI screen — the touch control panel). An OLED and a panel can both be fitted. |
-| **Keyboard** | Needed for **first boot** (setting the PIN at base). In the field it is needed only **without a touch screen** — then the PIN is typed on it at every boot. A small foldable one lives in the bag. |
+| **Keyboard** | Needed only **without a touch screen** — then the PIN is set on it at first boot and typed on it at every boot. With the touch screen fitted, nothing needs a keyboard. A small foldable one lives in the bag as a fallback. |
 | **Battery** | A **Geekworm X1203** (Pi 5) or **Waveshare UPS HAT** (Pi 4) for the charge gauge and clean low-battery shutdown — or any USB-C power bank that can supply 5 V / 3 A (Pi 4) or 5 V / 5 A (Pi 5), shown on screen simply as external power. |
 | **Build machine** | A Debian/Ubuntu x86-64 machine (or anything that runs Docker) with internet, to run pi-gen. |
 
@@ -77,9 +77,11 @@ SD card.
 **Before deployment (once, at base):**
 
 1. Build and flash the image, edit one config file on the card.
-2. Power on **with a keyboard attached**. If a 5" touch screen is fitted, the
-   box sets up its driver and reboots once. First boot then sets the
-   hostname, asks you to **set the unlock PIN** (twice, on the keyboard),
+2. Power on. If a 5" touch screen is fitted, the box sets up its driver and
+   reboots once. First boot then sets the hostname, asks you to **set the
+   unlock PIN** — twice, on the touch screen's PIN pad (at least 4
+   characters; ABC for a passphrase), or on a keyboard when there is no
+   touch screen —
    creates the encrypted store and the database inside it, issues the HTTPS
    certificate, starts the console, and switches to the field network. Allow
    5–10 minutes; the screen shows each step.

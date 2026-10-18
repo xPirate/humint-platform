@@ -29,10 +29,14 @@ DB_NAME=humint_platform
 banner() { oled "HUMINT setup" "$1" "${2:-}"; log "$1 ${2:-}"; printf '%s %s\n' "$1" "${2:-}" >/dev/tty1; }
 
 ask_new_pin() {
-    # Read a new unlock PIN from the physical keyboard (this service owns
-    # tty1), confirming it, and echo it on stdout. The OLED tells the
-    # operator what to do, since a headless box has no monitor.
+    # Ask for a new unlock PIN, confirmed, and echo it on stdout. On the
+    # touch panel when one is fitted (it asks twice and checks they match);
+    # otherwise — or if the panel stops — on the physical keyboard (this
+    # service owns tty1), with the OLED saying what to do.
     local a b
+    if wait_for_panel && a="$(panel_ask_pin new)"; then
+        printf '%s' "$a"; return 0
+    fi
     while :; do
         oled "HUMINT setup" "Set unlock PIN" "type on keyboard"
         printf '\n\nHUMINT field server — set the unlock PIN.\n' >/dev/tty1
@@ -41,7 +45,10 @@ ask_new_pin() {
         IFS= read -rs a </dev/tty1; printf '\n' >/dev/tty1
         printf 'Confirm: ' >/dev/tty1
         IFS= read -rs b </dev/tty1; printf '\n' >/dev/tty1
-        if [ -z "$a" ]; then printf 'Empty — try again.\n' >/dev/tty1; continue; fi
+        if [ "${#a}" -lt "$PIN_MIN_LENGTH" ]; then
+            printf 'Use at least %d characters — try again.\n' "$PIN_MIN_LENGTH" >/dev/tty1
+            oled "Set unlock PIN" "too short" "try again"; continue
+        fi
         if [ "$a" != "$b" ]; then
             printf 'Did not match — try again.\n' >/dev/tty1
             oled "Set unlock PIN" "did not match" "try again"; continue
@@ -57,9 +64,11 @@ create_store() {
         log "store already exists; opening it"
         if [ ! -e "/dev/mapper/$HUMINT_MAP" ]; then
             local pin
-            oled "HUMINT setup" "Enter unlock PIN" "(set earlier)"
-            printf '\nThe case store was already created. Enter its PIN: ' >/dev/tty1
-            IFS= read -rs pin </dev/tty1; printf '\n' >/dev/tty1
+            if ! { wait_for_panel && pin="$(panel_ask_pin existing)"; }; then
+                oled "HUMINT setup" "Enter unlock PIN" "(set earlier)"
+                printf '\nThe case store was already created. Enter its PIN: ' >/dev/tty1
+                IFS= read -rs pin </dev/tty1; printf '\n' >/dev/tty1
+            fi
             printf '%s' "$pin" | cryptsetup open --key-file=- "$HUMINT_IMG" "$HUMINT_MAP" \
                 || die "wrong PIN for the existing store (delete $HUMINT_IMG to start over)"
             unset pin

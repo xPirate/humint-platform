@@ -27,6 +27,15 @@ PG_DATA="$HUMINT_DATA/postgresql"
 APP_ENV="$HUMINT_DATA/humint.env"
 APP_USER=humintd
 
+# Asking the touch panel for a PIN (first boot). The script writes what it
+# wants into PIN_SETUP_REQ ("new": set and confirm one; "existing": the one
+# set on an earlier, interrupted first boot) and reads the answer from a FIFO
+# only root can open. Nothing is ever written to disk.
+HUMINT_RUN=/run/humint
+PIN_SETUP_REQ="$HUMINT_RUN/pin-setup"
+PIN_SETUP_FIFO="$HUMINT_RUN/pin-setup.fifo"
+PIN_MIN_LENGTH=4
+
 # The OLED helper. Each call draws a frame and returns; it never holds the
 # display, so the unlock script and the status loop can take turns.
 OLED_SHOW="$HUMINT_HOME/venv/bin/python3 $HUMINT_HOME/bin/oled_show.py"
@@ -141,4 +150,52 @@ lock_store() {
         umount "$HUMINT_DATA" || die "store still in use — cannot unmount (see: fuser -vm $HUMINT_DATA)"
     fi
     cryptsetup close "$HUMINT_MAP" 2>/dev/null || true
+}
+
+# ---- the touch panel -------------------------------------------------------
+
+panel_running() { systemctl -q is-active humint-panel.service 2>/dev/null; }
+
+# humint-display found a screen the panel will drive.
+panel_expected() { grep -q '"panel": {' "$HUMINT_RUN/display.json" 2>/dev/null; }
+
+# Wait (briefly) for the panel to come up when one is fitted.
+wait_for_panel() {
+    local i
+    for i in $(seq 1 "${1:-15}"); do
+        panel_running && return 0
+        panel_expected || return 1
+        sleep 1
+    done
+    panel_running
+}
+
+# panel_ask_pin new|existing — the panel asks on screen; prints the PIN on
+# stdout. Returns 1 (having printed nothing) if there is no panel or it stops
+# while waiting, so the caller can fall back to the keyboard.
+panel_ask_pin() {
+    local stage="$1" pin=""
+    panel_running || return 1
+    install -d -m 755 "$HUMINT_RUN"
+    rm -f "$PIN_SETUP_FIFO"
+    mkfifo -m 600 "$PIN_SETUP_FIFO"
+    # Held open read-write, so the panel's open never blocks and a read
+    # never sees end-of-file between its attempts.
+    exec 3<>"$PIN_SETUP_FIFO"
+    printf '%s\n' "$stage" >"$PIN_SETUP_REQ"
+    chmod 644 "$PIN_SETUP_REQ"
+    while :; do
+        if IFS= read -r -t 3 pin <&3; then
+            break
+        fi
+        if ! panel_running; then
+            exec 3<&-
+            rm -f "$PIN_SETUP_REQ" "$PIN_SETUP_FIFO"
+            return 1
+        fi
+    done
+    exec 3<&-
+    rm -f "$PIN_SETUP_REQ" "$PIN_SETUP_FIFO"
+    [ -n "$pin" ] || return 1
+    printf '%s' "$pin"
 }

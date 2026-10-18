@@ -3,7 +3,7 @@ Description=HUMINT field server — touch control panel (HDMI/DSI screen)
 After=humint-display.service
 Requires=humint-display.service
 # Up before the PIN is asked for, so the PIN pad is what the operator sees.
-Before=humint-unlock.service
+Before=humint-unlock.service humint-firstboot.service
 
 [Service]
 Type=simple
