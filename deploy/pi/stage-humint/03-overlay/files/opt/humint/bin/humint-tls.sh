@@ -116,6 +116,10 @@ fingerprint() {
 srv_is_current() {
     [ -f "$SRV_CRT" ] && [ -f "$SRV_KEY" ] || return 1
     openssl x509 -in "$SRV_CRT" -noout -checkend $((30 * 86400)) >/dev/null || return 1
+    # Issued while the clock ran fast, and the clock has since been put right
+    # (humint-clock): not valid yet, so every browser would refuse it.
+    local nb; nb="$(openssl x509 -in "$SRV_CRT" -noout -startdate | cut -d= -f2)"
+    [ "$(date -d "$nb" +%s 2>/dev/null || echo 0)" -le "$(date +%s)" ] || return 1
     openssl verify -CAfile "$CA_CRT" "$SRV_CRT" >/dev/null 2>&1 || return 1
     local sans; sans="$(openssl x509 -in "$SRV_CRT" -noout -ext subjectAltName 2>/dev/null)"
     local host ip; host="$(host_name)"

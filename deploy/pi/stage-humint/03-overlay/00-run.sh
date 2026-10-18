@@ -43,6 +43,7 @@ systemctl enable humint-status.service
 systemctl enable humint-display.service
 systemctl enable humint-panel.service
 systemctl enable humint-battery.service
+systemctl enable humint-clock.service
 # Deliberately NOT enabled: humint.target, humint-api, humint-worker,
 # humint-http and the PostgreSQL cluster. They need the encrypted store, so only humint-unlock
 # (or first boot) starts them, after the PIN.

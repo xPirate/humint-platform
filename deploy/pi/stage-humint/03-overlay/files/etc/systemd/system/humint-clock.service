@@ -1,0 +1,13 @@
+[Unit]
+Description=HUMINT field server — set the clock from the devices that use it (no network time)
+After=local-fs.target systemd-timesyncd.service
+
+[Service]
+Type=simple
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/usr/bin/python3 /opt/humint/bin/humint-clock.py
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

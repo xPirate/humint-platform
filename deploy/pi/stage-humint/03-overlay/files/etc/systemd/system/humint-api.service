@@ -16,6 +16,9 @@ WorkingDirectory=/opt/humint-platform/api
 # With TLS on (the default): make sure the certificate exists and covers this
 # box's current addresses — as root ("+"), since the CA key is root-only —
 # then serve HTTPS on 443. humint-api-run picks HTTPS or HTTP from TLS=.
+# Where a signed-in browser's clock is left for humint-clock to apply (the box
+# has no clock of its own worth trusting; see api/clock.py).
+ExecStartPre=+/usr/bin/install -d -m 750 -o humintd -g humintd /srv/humint-data/clock
 ExecStartPre=+/bin/sh -c 'if [ "$${TLS:-on}" = on ]; then /opt/humint/bin/humint-tls.sh ensure; fi'
 ExecStart=/opt/humint/bin/humint-api-run
 # Lets an unprivileged account serve on 443 (or 80), so phones need no :port.
@@ -28,7 +31,8 @@ PrivateTmp=yes
 # Scratch files (backup bundles, OCR pages) hold case data too: keep them
 # inside the encrypted store, never on the plain SD card.
 Environment=TMPDIR=/srv/humint-data/tmp
-ReadWritePaths=/srv/humint-data/uploads /srv/humint-data/map-packs /srv/humint-data/tmp
+Environment=CLOCK_HINT_FILE=/srv/humint-data/clock/hint.json
+ReadWritePaths=/srv/humint-data/uploads /srv/humint-data/map-packs /srv/humint-data/tmp -/srv/humint-data/clock
 Restart=always
 RestartSec=3
 

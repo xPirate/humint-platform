@@ -25,3 +25,5 @@ python3-evdev
 python3-qrcode
 # pinctrl: reads the X1203's power-loss pin (works on the Pi 5's RP1)
 raspi-utils
+# saves the clock at shutdown so a box without network time boots close to it
+fake-hwclock

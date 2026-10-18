@@ -62,3 +62,8 @@ python3 -m venv /opt/humint/venv
 chown -R root:root /opt/humint-platform /opt/humint
 chmod -R a+rX /opt/humint-platform /opt/humint
 CHROOT
+
+# When this image was built: humint-clock never sets the clock earlier than
+# this, whatever a device claims.
+date +%s >"${ROOTFS_DIR}/opt/humint/build-epoch"
+chmod 644 "${ROOTFS_DIR}/opt/humint/build-epoch"

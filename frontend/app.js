@@ -1042,8 +1042,17 @@ function showAuthScreen(which) {
   document.getElementById("login-form").hidden = which !== "login";
 }
 
+// The field server has no clock of its own worth trusting (no battery-backed
+// clock, usually no network time); this device's clock is sent once per page
+// load so it can set itself. The console ignores it everywhere else.
+function sendTimeHint() {
+  api("/api/system/time-hint", { method: "POST", body: { client_epoch_ms: Date.now() } })
+    .catch(() => {});
+}
+
 function showApp() {
   state.sessionExpiredHandled = false;
+  sendTimeHint();
   document.getElementById("auth-screen").hidden = true;
   document.getElementById("app").hidden = false;
 

@@ -156,6 +156,21 @@ same way (e.g. Waveshare 5" (B)).
 
 ---
 
+## The clock
+
+A Pi has no battery-backed clock (a Pi 5 has one only with a cell fitted on
+its RTC connector), and in the field there is usually no network time. So the
+box sets its clock from the devices that use it: each signed-in browser that
+opens the console sends its own time, and `humint-clock` applies it when the
+box has no network time and is more than a minute out. Every change is in the
+audit log with who sent it; only signed-in users can send one.
+
+Until something has set it this boot, the panel shows the time in amber with
+a `?` and says so on Home. Open the console once on any phone or laptop and
+it is right. The time is saved at shutdown, so the next boot starts close.
+
+---
+
 ## HTTPS
 
 With `TLS=on` (the default) the console is served over HTTPS on port 443.

@@ -50,6 +50,7 @@ ENV = "/var/lib/humint/env"
 DISPLAY = "/run/humint/display.json"
 MESSAGE = "/run/humint/message.json"
 BATTERY = "/run/humint/battery.json"
+CLOCK = "/run/humint/clock.json"
 TRIES = "/run/humint/unlock-tries"
 # First boot asks the panel for the PIN to set (see panel_ask_pin in
 # humint-common.sh): the request names the stage, the answer goes to the FIFO.
@@ -178,6 +179,9 @@ class Status:
             state = out(["systemctl", "is-active", unit]).strip() or "unknown"
             d["services"].append((label, state))
         d["battery"] = read_json(BATTERY, {}) or {}
+        # "unset": nothing has confirmed the time this boot (no network time,
+        # no device has opened the console yet) — see humint-clock.py.
+        d["clock"] = read_json(CLOCK, {}) or {}
         try:
             u = shutil.disk_usage(DATA if d["unlocked"] else "/")
             d["disk"] = (u.free / 1e9, u.total / 1e9)
@@ -809,8 +813,9 @@ class Panel:
         text(surf, title or d.get("name", ""), (int(40 * s), int(26 * s)), int(20 * s),
              anchor="midleft", kind="bold", maxw=int(self.W * 0.5))
         x = self.W - int(16 * s)
-        r = text(surf, time.strftime("%H:%M"), (x, int(26 * s)), int(20 * s), MUTED,
-                 kind="mono", anchor="midright")
+        unsure = (d.get("clock") or {}).get("source") == "unset"
+        r = text(surf, time.strftime("%H:%M") + ("?" if unsure else ""), (x, int(26 * s)), int(20 * s),
+                 WARN if unsure else MUTED, kind="mono", anchor="midright")
         x = r.left - int(18 * s)
         b = d.get("battery") or {}
         if b.get("present"):
@@ -1051,7 +1056,10 @@ class Panel:
              ACCENT, kind="mono", maxw=r.width - int(32 * s))
         text(surf, d.get("local_url", ""), (r.x + int(16 * s), r.y + int(92 * s)), int(19 * s), TEXT,
              kind="mono", maxw=r.width - int(32 * s))
-        if d.get("tls"):
+        if (d.get("clock") or {}).get("source") == "unset":
+            text(surf, "Clock not confirmed — opening the console on any device sets it",
+                 (r.x + int(16 * s), r.bottom - int(30 * s)), int(15 * s), WARN, maxw=r.width - int(32 * s))
+        elif d.get("tls"):
             text(surf, "HTTPS · devices trust it once, from the Trust tab",
                  (r.x + int(16 * s), r.bottom - int(30 * s)), int(15 * s), MUTED, maxw=r.width - int(32 * s))
 

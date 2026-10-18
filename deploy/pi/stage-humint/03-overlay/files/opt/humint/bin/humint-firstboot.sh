@@ -100,7 +100,7 @@ create_store() {
 
 make_store_dirs() {
     install -d -m 750 -o "$APP_USER" -g "$APP_USER" \
-        "$HUMINT_DATA/uploads" "$HUMINT_DATA/map-packs" "$HUMINT_DATA/tmp"
+        "$HUMINT_DATA/uploads" "$HUMINT_DATA/map-packs" "$HUMINT_DATA/tmp" "$HUMINT_DATA/clock"
 }
 
 create_database() {
