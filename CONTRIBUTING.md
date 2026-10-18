@@ -132,9 +132,23 @@ Match what is around it. Concretely:
 
 Every change to behaviour needs a test that would have failed before it.
 
-The suites are end-to-end against a real Postgres and a real browser, not
-mocks: an API suite drives the HTTP endpoints, a UI suite drives Chromium
-through Playwright. They are deliberately written to read as sentences about
+The tests are end-to-end against a real Postgres, not mocks: each file in
+`tests/` builds a fresh database from `db/init.sql`, starts the API under
+uvicorn, drives its HTTP endpoints, and imports the worker in-process where
+it needs one.
+
+```bash
+tests/run.sh                  # every tests/test_*.py
+tests/run.sh clock sync       # only files whose name contains one of these
+```
+
+Postgres comes from `POSTGRES_HOST`/`PORT`/`USER`/`PASSWORD` if set (each test
+creates a database of its own there), or else a throwaway cluster started from
+the local `postgresql` install. GitHub Actions runs all of it on every push —
+on Python 3.11, the version the Docker images and Raspberry Pi OS run, because
+code newer Pythons accept can still fail there — along with shellcheck on the
+field-server scripts, a Docker build and the Android unit tests
+(`.github/workflows/ci.yml`). They are deliberately written to read as sentences about
 what the app promises — `check("an archived record is left out by default",
 ...)` — because a failing test should tell you what broke in the product, not
 just which assertion tripped.

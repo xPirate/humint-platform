@@ -4508,8 +4508,6 @@ debrief wizard, every admin section and the audit table open.
   Correlation runs off whatever text existed the first time something was
   embedded (`embedding IS NULL` is the trigger). Edit a report heavily
   after the fact and correlation won't reconsider it against anything new.
-- **No real entity-merge**, as covered above under Extraction and
-  correlation.
 - **Bulk CSV import has no duplicate detection.** Re-uploading a file that
   includes rows from a previous successful import creates a second set of
   entities, not an update to the first. This is on purpose scoped down: it
@@ -4517,13 +4515,11 @@ debrief wizard, every admin section and the audit table open.
   above), rather than adding "does this look like an existing entity"
   matching logic that would just be a narrower, worse version of what the
   correlation review queue already does after the fact.
-- **One theme.** The phosphor-green CRT look is fixed, not configurable
-  per-user.
-- **Single-worker assumptions, mostly harmless if violated.** The worker
-  uses `FOR UPDATE SKIP LOCKED` when claiming jobs, so running more than
-  one worker replica wouldn't double-process anything — but nothing in
-  this build actually needs more than one at personal/lab scale, so it's
-  never been exercised under real concurrent load.
+- **Built for one worker, safe with more.** The worker claims every job with
+  `FOR UPDATE SKIP LOCKED` and names itself on the claim, and recovery only
+  takes back work from a worker whose heartbeat has stopped — so a second
+  replica would neither double-process nor steal. Nothing at this scale needs
+  one, though, so it has never been run under real concurrent load.
 - **The map only shows Locations that have coordinates.** A Location
   entity created with just a free-text address (no lat/lon) is fully usable
   everywhere else in the app — reports, relationships, attachments all work
@@ -4559,15 +4555,7 @@ debrief wizard, every admin section and the audit table open.
   to omit a field. It also renders a deliberately small markdown subset — a
   table typed into a report body comes out as plain lines rather than a
   formatted table.
-- **A Word document's tables are read, and were not always.** Until recently
-  extraction walked only a `.docx`'s top-level paragraphs, which silently
-  dropped every table in it — and a leaked ledger, roster, badge log or payment
-  schedule *is* a table, so the documents where the substance lives were the
-  ones that lost it while reporting success. Tables now come through in document
-  order, one line per row, so a payee stays next to who approved it. If you have
-  a `.docx` that was uploaded before this build, re-run it from Documents →
-  Try again.
-- **Attachment preview covers images and PDFs only.** DOCX, RTF and
+- **Attachment preview covers images, PDFs, audio and video.** DOCX, RTF and
   everything else still downloads to open, since rendering those in a
   browser would mean shipping a document viewer. A PDF preview also depends
   on the browser's own built-in viewer; where that's disabled, the Download
