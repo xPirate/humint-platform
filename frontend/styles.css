@@ -2638,3 +2638,20 @@ details[open] > :not(summary){animation:fade-in var(--dur-2) ease-out;}
 .field-card .muted,#fieldsync-imports .muted{color:var(--muted);}
 [data-admin-panel="fieldsync"] .retention-block{margin-top:1.2em;}
 [data-admin-panel="fieldsync"] .retention-block h4{margin:0 0 .5em;}
+
+/* ---- Two-factor sign-in ---------------------------------------------------- */
+.tfa-steps{margin:.2em 0 .6em; padding-left:1.3em; color:var(--text); font-size:13px;}
+/* The QR code stays black on white whatever the theme: phone cameras read
+   that most reliably. */
+.tfa-qr{display:flex; justify-content:center; margin:.4em 0 .8em;}
+.tfa-qr svg{width:200px; height:200px; background:#fff; border-radius:var(--radius-sm); padding:6px;}
+.tfa-secret{font-size:12px; letter-spacing:.05em; word-break:break-all;}
+.tfa-enable{display:flex; gap:.6em; align-items:center;}
+.tfa-enable input{width:9em; font-size:18px; letter-spacing:.2em; text-align:center;}
+.tfa-codes{columns:2; font-size:15px; line-height:1.8; padding:.8em 1em; margin:.6em 0 1em;
+  background:var(--panel); border:1px solid var(--border); border-radius:var(--radius-sm); user-select:all;}
+.tfa-enrol{max-width:420px;}
+.tfa-enrol h2{margin:0 0 .3em;}
+.admin-check{display:flex; flex-wrap:wrap; gap:.4em .6em; align-items:baseline; margin:.2em 0 1em;
+  font-size:13px; color:var(--text);}
+.admin-check .view-hint{flex-basis:100%; margin:0 0 0 1.7em;}

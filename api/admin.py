@@ -20,7 +20,8 @@ from db import db_cursor
 
 router = APIRouter(prefix="/api", tags=["admin"])
 
-_USER_COLS = ["id", "username", "role", "is_active", "created_at", "failed_login_attempts", "locked_until"]
+_USER_COLS = ["id", "username", "role", "is_active", "created_at", "failed_login_attempts", "locked_until",
+              "totp_enabled_at"]
 
 
 class UserUpdate(BaseModel):

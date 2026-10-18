@@ -99,3 +99,28 @@ Edit the profile, pick the new status, and write a short note on why
   the note. Contact details are never written to the log.
 
 Keep it honest: it's what the team looks at when someone misses a check-in.
+
+## Two-factor sign-in
+
+Each person can make signing in take a code from their phone as well as
+their password: **account menu → Two-factor sign-in**. Scan the QR code with
+any authenticator app (Google Authenticator, Aegis, 1Password, Authy…), type
+the six-digit code it shows, and keep the ten **recovery codes** you are shown
+once — each signs you in a single time instead of the app, for a lost or flat
+phone. The same dialog makes new recovery codes or turns it off (both ask for
+your password).
+
+An admin can **require it for everyone** (Admin → Users → *Require two-factor
+sign-in for every account*). It takes effect at once: anyone signed in
+without it can do nothing until they have set it up, and anyone signing in
+is walked through setup first.
+
+**Lost phone, no recovery codes?** An admin presses **Reset two-factor** on
+that person's row. They are signed out everywhere and sign in with the
+password alone (then set it up again, if it is required). The reset is in the
+audit log.
+
+On a **field server** the codes depend on the box's clock, which it takes
+from the devices that use it (see the field server's README, "The clock"). If
+a code is refused with *the box's clock is being set from this device*, wait
+a few seconds and type the code showing then.

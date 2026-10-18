@@ -74,7 +74,8 @@ jobs:
       - name: dependencies
         run: |
           sudo apt-get install -y -qq tesseract-ocr poppler-utils fonts-dejavu-core cryptsetup-bin >/dev/null
-          python -m pip install -q -r api/requirements.txt -r worker/requirements.txt pygame pyotp
+          python -m pip install -q -r api/requirements.txt -r worker/requirements.txt pygame playwright
+          python -m playwright install --with-deps chromium
       - name: tests
         run: tests/run.sh
 

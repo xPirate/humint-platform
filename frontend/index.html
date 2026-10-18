@@ -104,6 +104,10 @@
     <form id="login-form" class="auth-form" hidden>
       <label>Username <input type="text" id="login-username" required autocomplete="username"></label>
       <label>Password <input type="password" id="login-password" required autocomplete="current-password"></label>
+      <!-- Shown once the password is accepted, for accounts with two-factor on. -->
+      <label id="login-otp-row" hidden>Code from your authenticator app
+        <input type="text" id="login-otp" inputmode="numeric" autocomplete="one-time-code" maxlength="16"
+               placeholder="123456, or a recovery code"></label>
       <button type="submit" class="btn-primary">Log in</button>
       <p class="auth-error" id="login-error"></p>
     </form>
@@ -174,6 +178,7 @@
           </div>
           <button type="button" class="user-menu-item" id="user-menu-admin" role="menuitem" hidden>Admin settings</button>
           <button type="button" class="user-menu-item" id="user-menu-profile" role="menuitem">My profile</button>
+          <button type="button" class="user-menu-item" id="user-menu-2fa" role="menuitem">Two-factor sign-in</button>
           <button type="button" class="user-menu-item" id="user-menu-analysts" role="menuitem">Search by analyst</button>
           <button type="button" class="user-menu-item" id="user-menu-audit" role="menuitem" hidden>Audit log</button>
           <button type="button" class="user-menu-item user-menu-item-danger" id="user-menu-logout" role="menuitem">Log out</button>
@@ -1025,6 +1030,11 @@
         <p class="view-hint">Change roles or deactivate accounts. There must always be one active admin.</p>
         <button id="admin-page-new-user-btn" class="btn-primary">+ New User</button>
       </div>
+      <label class="admin-check" id="admin-require-2fa-row">
+        <input type="checkbox" id="admin-require-2fa">
+        Require two-factor sign-in for every account
+        <span class="view-hint">Anyone without it is asked to set it up before they can do anything else.</span>
+      </label>
       <div id="admin-user-list" class="stack"></div>
         </div>
 

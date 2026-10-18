@@ -1033,6 +1033,7 @@ async function init() {
 
   try {
     state.user = await api("/api/auth/me");
+    if (state.user.needs_2fa_setup) { showTwoFactorEnrolment(); return; }
     showApp();
   } catch (e) {
     showAuthScreen("login");
@@ -1426,18 +1427,166 @@ document.getElementById("bootstrap-form").addEventListener("submit", async (e) =
 
 document.getElementById("login-form").addEventListener("submit", async (e) => {
   e.preventDefault();
-  try {
-    state.user = await api("/api/auth/login", {
-      method: "POST",
-      body: {
-        username: document.getElementById("login-username").value,
-        password: document.getElementById("login-password").value,
-      },
-    });
+  const errEl = document.getElementById("login-error");
+  const otpRow = document.getElementById("login-otp-row");
+  const otp = document.getElementById("login-otp").value.trim();
+  // Not api(): a right password on an account with two-factor comes back 401
+  // with {otp_required} as its detail, which is a step, not an error.
+  const res = await fetch("/api/auth/login", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      username: document.getElementById("login-username").value,
+      password: document.getElementById("login-password").value,
+      otp: otpRow.hidden ? null : otp || null,
+      client_epoch_ms: Date.now(),
+    }),
+  });
+  let data = null;
+  try { data = await res.json(); } catch (_) { /* empty body */ }
+  if (res.ok) {
+    state.user = data;
+    errEl.textContent = "";
+    if (data.needs_2fa_setup) { showTwoFactorEnrolment(); return; }
     showApp();
-  } catch (err) {
-    document.getElementById("login-error").textContent = err.message;
+    return;
   }
+  const detail = data && data.detail;
+  if (detail && detail.otp_required) {
+    otpRow.hidden = false;
+    errEl.textContent = otpRow.dataset.asked ? "Enter the code" : "";
+    otpRow.dataset.asked = "1";
+    document.getElementById("login-otp").focus();
+    return;
+  }
+  errEl.textContent = typeof detail === "string" ? detail : `Sign-in failed (HTTP ${res.status})`;
+  if (!otpRow.hidden) document.getElementById("login-otp").select();
+});
+
+// ---- Two-factor sign-in ------------------------------------------------------
+// The body of the setup flow, shared by the forced first-time screen (an admin
+// requires it) and Account → Two-factor sign-in. done(codes) gets the recovery
+// codes once a code from the app has been accepted.
+async function twoFactorSetupHtml(container, done) {
+  container.innerHTML = '<p class="empty-state">Preparing…</p>';
+  let setup;
+  try { setup = await api("/api/auth/2fa/setup", { method: "POST" }); }
+  catch (err) { container.innerHTML = `<p class="form-error">${escapeHtml(err.message)}</p>`; return; }
+  container.innerHTML = `
+    <ol class="tfa-steps">
+      <li>Open an authenticator app on your phone (Google Authenticator, Aegis, 1Password, Authy…)
+          and scan this code.</li>
+    </ol>
+    <div class="tfa-qr">${setup.qr_svg}</div>
+    <p class="view-hint">Can't scan? Enter this key by hand: <code class="tfa-secret">${escapeHtml(setup.secret.replace(/(.{4})/g, "$1 ").trim())}</code></p>
+    <ol class="tfa-steps" start="2"><li>Type the six-digit code the app shows now.</li></ol>
+    <form id="tfa-enable-form" class="tfa-enable">
+      <input type="text" id="tfa-code" inputmode="numeric" autocomplete="one-time-code" maxlength="6"
+             placeholder="123456" required>
+      <button type="submit" class="btn-primary">Turn on</button>
+    </form>
+    <p class="form-error" id="tfa-error"></p>`;
+  container.querySelector("#tfa-code").focus();
+  container.querySelector("#tfa-enable-form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    try {
+      const r = await api("/api/auth/2fa/enable", { method: "POST",
+        body: { code: container.querySelector("#tfa-code").value.trim() } });
+      done(r.recovery_codes);
+    } catch (err) {
+      container.querySelector("#tfa-error").textContent = err.message;
+    }
+  });
+}
+
+function recoveryCodesHtml(codes) {
+  return `
+    <p><b>Recovery codes.</b> Each one signs you in once, instead of the app — for a lost or flat phone.
+       Write them down or print them now: they are not shown again.</p>
+    <pre class="tfa-codes">${codes.map(escapeHtml).join("\n")}</pre>`;
+}
+
+// An admin requires two-factor and this person has not set it up: nothing
+// else works until they do, so this is all the app shows.
+function showTwoFactorEnrolment() {
+  document.getElementById("auth-screen").hidden = false;
+  document.getElementById("app").hidden = true;
+  document.getElementById("bootstrap-form").hidden = true;
+  document.getElementById("login-form").hidden = true;
+  let box = document.getElementById("tfa-enrol");
+  if (!box) {
+    box = document.createElement("div");
+    box.id = "tfa-enrol";
+    box.className = "auth-form tfa-enrol";
+    document.getElementById("login-form").after(box);
+  }
+  box.hidden = false;
+  box.innerHTML = `<h2>Set up two-factor sign-in</h2>
+    <p class="view-hint">This console requires a code from your phone as well as your password.</p>
+    <div id="tfa-enrol-body"></div>`;
+  twoFactorSetupHtml(box.querySelector("#tfa-enrol-body"), (codes) => {
+    box.innerHTML = `<h2>Two-factor sign-in is on</h2>${recoveryCodesHtml(codes)}
+      <button type="button" class="btn-primary" id="tfa-enrol-continue">I've saved them — continue</button>`;
+    box.querySelector("#tfa-enrol-continue").addEventListener("click", async () => {
+      box.hidden = true;
+      state.user = await api("/api/auth/me");
+      showApp();
+    });
+  });
+}
+
+async function openTwoFactorDialog() {
+  openModal('<h2>Two-factor sign-in</h2><div id="tfa-dialog"><p class="empty-state">Loading…</p></div>');
+  const body = document.getElementById("tfa-dialog");
+  let st;
+  try { st = await api("/api/auth/2fa"); }
+  catch (err) { body.innerHTML = `<p class="form-error">${escapeHtml(err.message)}</p>`; return; }
+  const close = '<div class="modal-actions"><button type="button" class="btn-secondary" id="tfa-close">Close</button></div>';
+  const wireClose = () => body.querySelector("#tfa-close").addEventListener("click", closeModal);
+  if (!st.enabled) {
+    body.innerHTML = `<p>Signing in will take your password <i>and</i> a code from an app on your phone.
+      ${st.required ? "<b>This console requires it.</b>" : ""}</p>
+      <div id="tfa-setup"></div>${close}`;
+    wireClose();
+    twoFactorSetupHtml(body.querySelector("#tfa-setup"), (codes) => {
+      body.innerHTML = `<p><b>Two-factor sign-in is on.</b></p>${recoveryCodesHtml(codes)}${close}`;
+      wireClose();
+    });
+    return;
+  }
+  body.innerHTML = `
+    <p>On since ${escapeHtml(new Date(st.enabled_at).toLocaleDateString())}.
+       ${st.recovery_codes_left} of 10 recovery codes left.</p>
+    <div class="form-row"><label>Your password (to change anything here)</label>
+      <input type="password" id="tfa-password" autocomplete="current-password"></div>
+    <p class="form-error" id="tfa-error"></p>
+    <div class="modal-actions">
+      <button type="button" class="btn-secondary" id="tfa-close">Close</button>
+      <button type="button" class="btn-secondary" id="tfa-new-codes">New recovery codes</button>
+      ${st.required ? "" : '<button type="button" class="btn-danger" id="tfa-off">Turn off</button>'}
+    </div>`;
+  wireClose();
+  const pw = () => body.querySelector("#tfa-password").value;
+  body.querySelector("#tfa-new-codes").addEventListener("click", async () => {
+    try {
+      const r = await api("/api/auth/2fa/recovery-codes", { method: "POST", body: { password: pw() } });
+      body.innerHTML = `${recoveryCodesHtml(r.recovery_codes)}<p class="view-hint">The old ones no longer work.</p>${close}`;
+      wireClose();
+    } catch (err) { body.querySelector("#tfa-error").textContent = err.message; }
+  });
+  const off = body.querySelector("#tfa-off");
+  if (off) off.addEventListener("click", async () => {
+    try {
+      await api("/api/auth/2fa/disable", { method: "POST", body: { password: pw() } });
+      showToast("Two-factor sign-in is off");
+      closeModal();
+    } catch (err) { body.querySelector("#tfa-error").textContent = err.message; }
+  });
+}
+
+document.getElementById("user-menu-2fa").addEventListener("click", () => {
+  toggleUserMenu(false);
+  openTwoFactorDialog();
 });
 
 document.getElementById("user-menu-logout").addEventListener("click", async () => {
@@ -11742,6 +11891,17 @@ function openAdminSections() {
 async function loadAdminUsers() {
   const el = document.getElementById("admin-user-list");
   el.innerHTML = '<p class="empty-state">Loading…</p>';
+  const req = document.getElementById("admin-require-2fa");
+  api("/api/admin/security-settings").then((r) => { req.checked = r.require_2fa; }).catch(() => {});
+  if (!req.dataset.wired) {
+    req.dataset.wired = "1";
+    req.addEventListener("change", async () => {
+      try {
+        const r = await api("/api/admin/security-settings", { method: "PATCH", body: { require_2fa: req.checked } });
+        showToast(r.note || (r.require_2fa ? "Two-factor sign-in is now required" : "No longer required"));
+      } catch (err) { showToast(err.message, true); req.checked = !req.checked; }
+    });
+  }
   try {
     const [data, prof] = await Promise.all([
       api("/api/users"), api("/api/profiles").catch(() => ({ items: [] }))]);
@@ -11765,7 +11925,7 @@ function renderAdminUserList(items) {
         <div class="card-title">${escapeHtml(u.username)}${u.profile && u.profile.display_name ? ` <span class="card-meta">${escapeHtml(u.profile.display_name)}</span>` : ""}${u.id === state.user.id ? ' <span class="card-meta">(you)</span>' : ""}
           ${u.profile && u.profile.status && u.profile.status !== "At liberty" ? profileStatusHtml(u.profile.status) : ""}</div>
         <div class="card-meta">
-          ${u.is_active ? "" : "Deactivated · "}${isLocked(u) ? "Locked out (too many failed logins) · " : ""}Created ${timeAgoHtml(u.created_at)}
+          ${u.is_active ? "" : "Deactivated · "}${isLocked(u) ? "Locked out (too many failed logins) · " : ""}${u.totp_enabled_at ? "Two-factor on · " : ""}Created ${timeAgoHtml(u.created_at)}
         </div>
       </div>
       <div class="admin-user-controls">
@@ -11776,12 +11936,25 @@ function renderAdminUserList(items) {
         <a class="btn-secondary btn-sm" href="#analyst/${encodeURIComponent(u.username)}">Profile</a>
         <button class="btn-secondary btn-sm admin-reset-pw-btn" data-user-id="${u.id}"
                 data-username="${escapeHtml(u.username)}">Reset password</button>
+        ${u.totp_enabled_at ? `<button class="btn-secondary btn-sm admin-reset-2fa-btn" data-user-id="${u.id}"
+                data-username="${escapeHtml(u.username)}" title="For a lost phone: they sign in with the password alone until they set it up again">Reset two-factor</button>` : ""}
         <button class="btn-secondary btn-sm admin-toggle-active-btn" data-user-id="${u.id}" data-active="${u.is_active}">
           ${u.is_active ? "Deactivate" : "Reactivate"}
         </button>
       </div>
     </div>
   `).join("");
+
+  el.querySelectorAll(".admin-reset-2fa-btn").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      if (!confirm(`Reset two-factor sign-in for ${btn.dataset.username}? They are signed out everywhere.`)) return;
+      try {
+        await api(`/api/admin/users/${btn.dataset.userId}/2fa/reset`, { method: "POST" });
+        showToast("Two-factor reset");
+      } catch (err) { showToast(err.message, true); }
+      loadAdminUsers();
+    });
+  });
 
   el.querySelectorAll(".admin-reset-pw-btn").forEach((btn) => {
     btn.addEventListener("click", () =>
