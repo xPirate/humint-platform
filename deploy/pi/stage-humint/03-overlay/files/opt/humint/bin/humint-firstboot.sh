@@ -225,6 +225,14 @@ main() {
     banner "Deploy network" "$NET_MODE"
     /opt/humint/bin/humint-net.sh deploy || die "could not apply $NET_MODE"
 
+    # This box's own login, replacing the one every copy of the image shares.
+    local login_pw=""
+    install_ssh_key "${SSH_AUTHORIZED_KEY:-}"
+    if [ "${LOGIN_PASSWORD:-random}" = random ]; then
+        banner "Login password" "new for this box"
+        login_pw="$(new_login_password)" || login_pw=""
+    fi
+
     touch "$HUMINT_FIRSTBOOT_DONE"
     # Rename the original so the passphrases are not left on the readable
     # boot partition. (The working copy lives in $HUMINT_ENV, root-only.)
@@ -242,6 +250,11 @@ main() {
         printf 'First, on each phone and laptop: open http://%s.local/trust and install the certificate.\n' \
             "$HOSTNAME" >/dev/tty1
         printf 'Its fingerprint: %s\n' "$(/opt/humint/bin/humint-tls.sh fingerprint)" >/dev/tty1
+    fi
+    if [ -n "$login_pw" ]; then
+        printf '\nThis box'"'"'s login (SSH and keyboard) is now: %s / %s\n' "$(login_user)" "$login_pw" >/dev/tty1
+        printf 'Write it down. It is shown once; Menu -> New login on the panel, or humint-ctl login-password, replaces it.\n' >/dev/tty1
+        oled "Login: $(login_user)" "${login_pw:0:9}" "${login_pw:10}"
     fi
     log "first boot complete — console at $url"
 }

@@ -23,6 +23,17 @@ HOSTNAME=humint
 INSTANCE_NAME="HUMINT Field Server"
 TIMEZONE=UTC
 
+# ---- the operator login (SSH and the keyboard console) --------------------
+# random : (recommended) first boot replaces the password the image was built
+#          with — the same on every box flashed from it — with one of this
+#          box's own, shown once on the screen. Lost it? Menu → New login
+#          password on the touch panel, or `sudo humint-ctl login-password`.
+# keep   : keep the build password.
+LOGIN_PASSWORD=random
+# Optional: one SSH public key line ("ssh-ed25519 AAAA… you@laptop"). When set,
+# it is installed for the login and SSH stops accepting passwords at all.
+SSH_AUTHORIZED_KEY=""
+
 # ---- Wi-Fi regulatory domain ---------------------------------------------
 # REQUIRED to run the hotspot. Two-letter country code (US, GB, DE, …). A Pi
 # will not transmit on Wi-Fi at all until it knows which country's rules to

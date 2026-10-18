@@ -51,6 +51,8 @@ DISPLAY = "/run/humint/display.json"
 MESSAGE = "/run/humint/message.json"
 BATTERY = "/run/humint/battery.json"
 CLOCK = "/run/humint/clock.json"
+# A new login password, shown until someone confirms it is written down.
+LOGIN_SECRET = "/run/humint/login-password.json"
 TRIES = "/run/humint/unlock-tries"
 # First boot asks the panel for the PIN to set (see panel_ask_pin in
 # humint-common.sh): the request names the stage, the answer goes to the FIFO.
@@ -182,6 +184,7 @@ class Status:
         # "unset": nothing has confirmed the time this boot (no network time,
         # no device has opened the console yet) — see humint-clock.py.
         d["clock"] = read_json(CLOCK, {}) or {}
+        d["login_secret"] = read_json(LOGIN_SECRET, None)
         try:
             u = shutil.disk_usage(DATA if d["unlocked"] else "/")
             d["disk"] = (u.free / 1e9, u.total / 1e9)
@@ -625,6 +628,8 @@ class Panel:
             return "confirm"
         if self.busy:
             return "busy"
+        if d.get("unlocked") and d.get("login_secret"):
+            return "secret"
         if not d.get("unlocked"):
             if d.get("pin_setup") in ("new", "existing"):
                 return "setpin"
@@ -1204,7 +1209,7 @@ class Panel:
         s = self.s
         self.top_bar(surf, d, "Menu")
         top, bottom = int(68 * s), self.H - int(82 * s)
-        cols, rows = 3, 3
+        cols, rows = 4, 3
         pad = int(12 * s)
         bw = (self.W - pad * (cols + 1)) // cols
         bh = (bottom - top - pad * (rows - 1)) // rows
@@ -1232,12 +1237,42 @@ class Panel:
              lambda: self.ask("Shut down?", "Wait for the screen to go dark before unplugging.",
                               lambda: self.ctl("Shutting down", "shutdown")), "danger"),
             ("Refresh", "re-read everything", lambda: (self.status.refresh(), self.flash("Refreshed")), "normal"),
+            ("New login", "password for SSH, keyboard",
+             lambda: self.ask("New login password?",
+                              "The old one stops working. The new one is shown here once.",
+                              lambda: self.ctl("New login password", "login-password"), danger=False),
+             "normal"),
         ]
         for i, (label, sub, act, style) in enumerate(items):
             r = (pad + (i % cols) * (bw + pad), top + (i // cols) * (bh + pad), bw, bh)
             b = Button(r, label, act, style=style, sub=sub,
                        enabled=not (label == "Renew certificate" and not d.get("tls")))
             b.draw(surf, s); self.buttons.append(b)
+
+    def draw_secret(self, surf, d):
+        s = self.s
+        sec = d.get("login_secret") or {}
+        self.top_bar(surf, d, "Login password")
+        text(surf, "This box's login", (self.W // 2, int(96 * s)), int(26 * s), kind="bold", anchor="center")
+        text(surf, "for SSH and the keyboard console — not the PIN, not the web console",
+             (self.W // 2, int(132 * s)), int(16 * s), MUTED, anchor="center", maxw=self.W - int(40 * s))
+        text(surf, sec.get("user", ""), (self.W // 2, int(186 * s)), int(24 * s), MUTED, kind="mono",
+             anchor="center")
+        text(surf, sec.get("password", ""), (self.W // 2, int(240 * s)), int(46 * s), ACCENT, kind="mono",
+             anchor="center", maxw=self.W - int(40 * s))
+        text(surf, "Write it down now. It is shown once; Menu → New login replaces it.",
+             (self.W // 2, int(300 * s)), int(16 * s), WARN, anchor="center", maxw=self.W - int(40 * s))
+        b = Button((self.W // 2 - int(170 * s), self.H - int(110 * s), int(340 * s), int(72 * s)),
+                   "I've written it down", self.dismiss_secret, style="primary")
+        b.draw(surf, s); self.buttons.append(b)
+
+    def dismiss_secret(self):
+        try:
+            os.unlink(LOGIN_SECRET)
+        except OSError:
+            pass
+        self.screen = "home"
+        self.status.refresh()
 
     def draw_calibrate(self, surf, d):
         s = self.s

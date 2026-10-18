@@ -32,6 +32,8 @@ humint-ctl — HUMINT field server
   net client SSID [PSK]  join an existing Wi-Fi and serve on it
   net wired              Ethernet only, Wi-Fi off
   pin                    change the unlock PIN
+  login-password         give the operator login a new random password
+                         (printed here and shown on the panel until confirmed)
   tls                    HTTPS status and the certificate fingerprint
   tls renew              issue a fresh server certificate now
   tls on | off           serve HTTPS (default) or plain HTTP
@@ -199,6 +201,9 @@ main() {
         lock)     cmd_lock "$@" ;;
         net)      cmd_net "$@" ;;
         pin)      cmd_pin "$@" ;;
+        login-password)
+                  pw="$(new_login_password)"
+                  printf 'Login %s, new password: %s\n' "$(login_user)" "$pw" ;;
         tls)      cmd_tls "$@" ;;
         battery)  /opt/humint/venv/bin/python3 /opt/humint/bin/humint-battery.py --once ;;
         screen-detect) /usr/bin/python3 /opt/humint/bin/humint-display.py detect --explain ;;

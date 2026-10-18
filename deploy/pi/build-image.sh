@@ -101,7 +101,8 @@ set_config() {   # set_config KEY VALUE — single-quoted, so any character is s
 
 if grep -q 'change-me-before-building' "$CONFIG"; then
     say "Choose the password for the 'humint' login on the finished box"
-    echo "  (used for SSH and the console's keyboard login — not the case-file PIN, which you set on first boot)"
+    echo "  (SSH and keyboard login until first boot — which replaces it with one of the box's own and"
+    echo "   shows it on screen; set LOGIN_PASSWORD=keep in the card's config to keep this one. Not the PIN.)"
     while :; do
         read -r -s -p "  Password: " p1; echo
         read -r -s -p "  Again:    " p2; echo

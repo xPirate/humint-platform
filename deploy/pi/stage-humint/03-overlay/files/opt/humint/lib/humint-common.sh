@@ -68,6 +68,7 @@ load_config() {
     TLS=on
     SCREEN=auto ; OLED=auto ; STATUS_ROTATE_SECONDS=6 ; SCREEN_SLEEP_MINUTES=5
     BATTERY=auto ; BATTERY_SHUTDOWN_PERCENT=8 ; BATTERY_CELLS=2
+    LOGIN_PASSWORD=random ; SSH_AUTHORIZED_KEY=""
 
     local f="$1"
     if [ -r "$f" ]; then
@@ -198,4 +199,53 @@ panel_ask_pin() {
     rm -f "$PIN_SETUP_REQ" "$PIN_SETUP_FIFO"
     [ -n "$pin" ] || return 1
     printf '%s' "$pin"
+}
+
+# ---- the operator login ----------------------------------------------------
+# Every box flashed from one image starts with the login password chosen when
+# the image was built — the same on all of them, and recoverable from anyone's
+# copy of the image. First boot replaces it with one of this box's own and
+# shows it once (panel, OLED, the keyboard console).
+
+LOGIN_SECRET_FILE="$HUMINT_RUN/login-password.json"
+
+# The account the image was built with (pi-gen's FIRST_USER_NAME): uid 1000.
+login_user() { getent passwd 1000 | cut -d: -f1; }
+
+# 16 characters from 32 that cannot be mistaken for each other (no 0/o, 1/l/i)
+# — 80 bits — grouped in fours so it can be read off a screen and typed.
+random_login_password() {
+    local raw
+    raw="$(LC_ALL=C tr -dc 'abcdefghjkmnpqrstuvwxyz23456789' </dev/urandom | head -c 16)"
+    printf '%s-%s-%s-%s' "${raw:0:4}" "${raw:4:4}" "${raw:8:4}" "${raw:12:4}"
+}
+
+# Set a new random password for the login and leave it for the panel to show
+# until someone confirms they have written it down. Prints it.
+new_login_password() {
+    local user pw
+    user="$(login_user)"
+    [ -n "$user" ] || { log "no login account (uid 1000) to set a password for"; return 1; }
+    pw="$(random_login_password)"
+    printf '%s:%s\n' "$user" "$pw" | chpasswd
+    install -d -m 755 "$HUMINT_RUN"
+    ( umask 077; printf '{"user": "%s", "password": "%s", "time": %s}\n' \
+        "$user" "$pw" "$(date +%s)" >"$LOGIN_SECRET_FILE" )
+    log "set a new login password for $user (shown on the screen until confirmed)"
+    printf '%s' "$pw"
+}
+
+# SSH_AUTHORIZED_KEY in the config: install it, and switch SSH to keys only.
+install_ssh_key() {
+    local key="$1" user home
+    [ -n "$key" ] || return 0
+    user="$(login_user)"; home="$(getent passwd "$user" | cut -d: -f6)"
+    install -d -m 700 -o "$user" -g "$user" "$home/.ssh"
+    printf '%s\n' "$key" >>"$home/.ssh/authorized_keys"
+    chown "$user:$user" "$home/.ssh/authorized_keys"; chmod 600 "$home/.ssh/authorized_keys"
+    install -d /etc/ssh/sshd_config.d
+    printf '# humint first boot: an SSH key was configured, so no passwords over SSH.\nPasswordAuthentication no\nKbdInteractiveAuthentication no\n' \
+        >/etc/ssh/sshd_config.d/10-humint-keys-only.conf
+    systemctl try-reload-or-restart ssh.service 2>/dev/null || true
+    log "installed an SSH key for $user; SSH now accepts keys only"
 }

@@ -388,6 +388,21 @@ the 5" touch screen is fitted — its touch controller uses it).
 
 ---
 
+## The login password
+
+The image carries the login password chosen when it was built — the same on
+every box flashed from it, and recoverable from anyone's copy. So first boot
+replaces it with a random one of this box's own (`LOGIN_PASSWORD=random`, the
+default) and shows it **once**: on the touch panel until you tap *I've written
+it down*, on the OLED, and on the keyboard console. Lost it? Panel **Menu →
+New login**, or `sudo humint-ctl login-password` from a session you still
+have. Put an SSH public key in `SSH_AUTHORIZED_KEY` and SSH accepts keys only.
+
+This is the operating-system login (SSH, keyboard console). It is not the
+unlock PIN and not the web console's accounts.
+
+---
+
 ## Security notes
 
 - **Encrypted at rest, data only.** The database cluster, the console's
