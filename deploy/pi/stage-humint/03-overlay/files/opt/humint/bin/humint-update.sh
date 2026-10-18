@@ -28,9 +28,10 @@ set -euo pipefail
 # Runs from a copy: step 5 replaces this very file, and bash reads a script
 # from disk as it goes.
 if [ "${HUMINT_UPDATE_COPY:-}" != 1 ] && [ "${1:-}" != status ] && [ "${1:-}" != verify ]; then
-    mkdir -p /run/humint
-    cp "$0" /run/humint/humint-update.run
-    HUMINT_UPDATE_COPY=1 exec bash /run/humint/humint-update.run "$@"
+    run_dir="${HUMINT_TEST_ROOT:-}/run/humint"
+    mkdir -p "$run_dir"
+    cp "$0" "$run_dir/humint-update.run"
+    HUMINT_UPDATE_COPY=1 exec bash "$run_dir/humint-update.run" "$@"
 fi
 
 # shellcheck source=/dev/null

@@ -15,8 +15,9 @@ old = subprocess.run(["git", "-C", ROOT, "show", f"{BASE}:db/init.sql"], capture
 if old.returncode != 0:
     print(f"(no {BASE} in git history here; using the schema from HEAD~1)")
     old = subprocess.run(["git", "-C", ROOT, "show", "HEAD~1:db/init.sql"], capture_output=True, text=True)
-path = os.path.join(os.environ.get("TMPDIR", "/tmp"), "humint-old-init.sql")
-with open(path, "w") as fh:
+import tempfile  # noqa: E402
+fd, path = tempfile.mkstemp(prefix="humint-old-init-", suffix=".sql")
+with os.fdopen(fd, "w") as fh:
     fh.write(old.stdout)
 
 def columns(console):
