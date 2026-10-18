@@ -41,7 +41,9 @@ SESSION_COOKIE_SECURE = os.environ.get("SESSION_COOKIE_SECURE", "false").lower()
 MAX_FAILED_ATTEMPTS = 5
 LOCKOUT_MINUTES = 15
 MIN_PASSWORD_LENGTH = 10
-VALID_ROLES = ("admin", "analyst")
+# viewer: reads everything an analyst can, changes nothing (enforced for
+# every endpoint at once by the read_only_accounts middleware in main.py).
+VALID_ROLES = ("admin", "analyst", "viewer")
 
 
 class RegisterRequest(BaseModel):
@@ -356,3 +358,15 @@ def logout(
 @router.get("/me")
 def me(user: dict = Depends(require_user_or_enrolling)):
     return user
+
+
+def session_role(token: Optional[str]) -> Optional[str]:
+    """The role behind a session cookie, or None. For middleware, which runs
+    before any dependency."""
+    if not token:
+        return None
+    with db_cursor() as cur:
+        cur.execute("SELECT u.role FROM sessions s JOIN users u ON u.id = s.user_id "
+                    "WHERE s.token = %s AND s.expires_at > now() AND u.is_active", (token,))
+        row = cur.fetchone()
+    return row[0] if row else None

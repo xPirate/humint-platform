@@ -37,6 +37,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Response
 import audit
 import bolo_pdf
 import auth
+import sources
 import contacts
 import entities
 import insights
@@ -796,7 +797,8 @@ def export_bolo(
         cur.execute(
             "SELECT b.entity_id, b.urgency, b.reason, b.created_at, b.expires_at, a.storage_path "
             "  FROM board_entries b JOIN entities e ON e.id = b.entity_id "
-            "  LEFT JOIN attachments a ON a.id = e.portrait_attachment_id "
+            "  LEFT JOIN attachments a ON a.id = e.portrait_attachment_id AND "
+            + sources.visible_attachment_sql(user["id"], "a.entity_id") + " "
             " WHERE b.board = 'bolo' AND b.status = 'active' "
             "   AND (b.expires_at IS NULL OR b.expires_at >= CURRENT_DATE) "
             " ORDER BY CASE b.urgency WHEN 'Critical' THEN 0 WHEN 'Urgent' THEN 1 "

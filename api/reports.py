@@ -29,6 +29,7 @@ from pydantic import BaseModel, Field
 
 import audit
 import auth
+import sources
 import entities
 import report_pdf
 from db import db_cursor
@@ -546,7 +547,9 @@ def get_attachment(attachment_id: int, user: dict = Depends(auth.require_user)):
             (attachment_id,),
         )
         row = cur.fetchone()
-        if row is None:
+        # A file on a protected source, for someone who does not handle it,
+        # does not exist as far as they can tell.
+        if row is None or sources.attachment_hidden(cur, attachment_id, user):
             raise HTTPException(status_code=404, detail="Attachment not found")
     return {
         "id": row[0], "report_id": row[1], "entity_id": row[2], "filename": row[3],
@@ -576,7 +579,7 @@ def download_attachment(
             (attachment_id,),
         )
         row = cur.fetchone()
-        if row is None:
+        if row is None or sources.attachment_hidden(cur, attachment_id, user):
             raise HTTPException(status_code=404, detail="Attachment not found")
     storage_path, filename, mime_type = row
     abs_path = os.path.join(UPLOAD_DIR, storage_path)

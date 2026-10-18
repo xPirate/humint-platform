@@ -15,6 +15,8 @@
 --   * two-factor sign-in: a TOTP secret per user, single-use recovery codes,
 --     a per-session "may only set up two-factor" flag, and the admin switch
 --     that requires it for everyone;
+--   * source protection: a protected Source's true identity in a table of its
+--     own, readable by its handlers only; and a read-only "viewer" role.
 -- ---------------------------------------------------------------------------
 
 BEGIN;
@@ -49,5 +51,38 @@ CREATE TABLE IF NOT EXISTS user_recovery_codes (
     used_at TIMESTAMPTZ
 );
 CREATE INDEX IF NOT EXISTS idx_user_recovery_codes_user ON user_recovery_codes (user_id);
+
+-- ---- source protection, and the viewer role -------------------------------------
+
+CREATE TABLE IF NOT EXISTS source_identity (
+    entity_id TEXT PRIMARY KEY REFERENCES entities(id) ON DELETE CASCADE,
+    true_name TEXT NOT NULL,
+    notes TEXT,
+    protected_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    protected_by INTEGER REFERENCES users(id),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_by INTEGER REFERENCES users(id)
+);
+CREATE TABLE IF NOT EXISTS source_handlers (
+    entity_id TEXT NOT NULL REFERENCES source_identity(entity_id) ON DELETE CASCADE,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    added_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    added_by INTEGER REFERENCES users(id),
+    PRIMARY KEY (entity_id, user_id)
+);
+
+-- Whatever the role constraint was called, replace it with one that knows
+-- 'viewer'.
+DO $$
+DECLARE c TEXT;
+BEGIN
+    FOR c IN SELECT conname FROM pg_constraint
+             WHERE conrelid = 'users'::regclass AND contype = 'c'
+               AND pg_get_constraintdef(oid) ILIKE '%role%'
+    LOOP
+        EXECUTE format('ALTER TABLE users DROP CONSTRAINT %I', c);
+    END LOOP;
+END $$;
+ALTER TABLE users ADD CONSTRAINT users_role_check CHECK (role IN ('admin', 'analyst', 'viewer'));
 
 COMMIT;

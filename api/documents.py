@@ -41,6 +41,7 @@ from pydantic import BaseModel, Field
 
 import audit
 import auth
+import sources
 import entities as entities_module
 import extraction as extraction_module
 from db import db_cursor
@@ -194,7 +195,7 @@ def get_document(document_id: int, user: dict = Depends(auth.require_user)):
             (document_id,),
         )
         row = cur.fetchone()
-        if row is None:
+        if row is None or sources.attachment_hidden(cur, document_id, user):
             raise HTTPException(status_code=404, detail="Document not found")
         doc = dict(zip(LIST_COLUMNS, row[: len(LIST_COLUMNS)]))
         doc["extracted_text"] = row[len(LIST_COLUMNS)]

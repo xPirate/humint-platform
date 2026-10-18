@@ -15,7 +15,8 @@ import os
 import re
 
 from fastapi import Depends, FastAPI
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, JSONResponse
+from starlette.concurrency import run_in_threadpool
 from fastapi.staticfiles import StaticFiles
 
 import admin
@@ -60,6 +61,7 @@ import zones
 import routes as routes_module
 import map_files
 import clock
+import sources
 import twofactor
 from db import db_cursor
 
@@ -81,6 +83,31 @@ async def audit_request_context(request, call_next):
         return await call_next(request)
     finally:
         audit.clear_request_context()
+
+# Read-only (viewer) accounts: one check for every endpoint there is or will
+# be, rather than a role test remembered in each write handler. A viewer may
+# do what concerns only their own account; nothing that changes the case file.
+VIEWER_MAY = (
+    ("POST", "/api/auth/logout"),
+    ("POST", "/api/auth/login"),
+    ("POST", "/api/auth/2fa/"),
+    ("POST", "/api/system/time-hint"),
+    ("PATCH", "/api/me/preferences"),
+    ("PUT", "/api/profiles/"),          # their own team page; the endpoint checks whose
+)
+
+
+@app.middleware("http")
+async def read_only_accounts(request, call_next):
+    method, path = request.method, request.url.path
+    if method in ("GET", "HEAD", "OPTIONS") or not path.startswith("/api/") or \
+            any(method == m and path.startswith(p) for m, p in VIEWER_MAY):
+        return await call_next(request)
+    token = request.cookies.get(auth.SESSION_COOKIE_NAME)
+    if token and await run_in_threadpool(auth.session_role, token) == "viewer":
+        return JSONResponse({"detail": "This account is read-only"}, status_code=403)
+    return await call_next(request)
+
 
 app.include_router(auth.router)
 app.include_router(admin.router)
@@ -151,6 +178,7 @@ app.include_router(audit_api.router)
 app.include_router(clock.router)
 app.include_router(twofactor.router)
 app.include_router(twofactor.admin_router)
+app.include_router(sources.router)
 
 class RevalidatingStatic(StaticFiles):
     """StaticFiles with a Cache-Control header on every response.

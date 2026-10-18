@@ -16,7 +16,7 @@ CREATE TABLE IF NOT EXISTS users (
     id SERIAL PRIMARY KEY,
     username TEXT UNIQUE NOT NULL,
     password_hash TEXT NOT NULL,
-    role TEXT NOT NULL DEFAULT 'analyst' CHECK (role IN ('admin', 'analyst')),
+    role TEXT NOT NULL DEFAULT 'analyst' CHECK (role IN ('admin', 'analyst', 'viewer')),  -- viewer: read-only (v1.13)
     is_active BOOLEAN NOT NULL DEFAULT TRUE,   -- disable an account without deleting it (preserves created_by/author_id history)
     -- Simple brute-force lockout: failed_login_attempts resets to 0 on any
     -- successful login; locked_until is set a short cooldown into the
@@ -395,6 +395,26 @@ CREATE TABLE IF NOT EXISTS source_details (
 -- the cracked bumper" is a lead, and a plate is a lead you can act on. Before
 -- this table those facts went into a Location's notes or a Person's physical
 -- description, where nothing could search them and nothing could relate them.
+-- Source protection (v1.13, see api/sources.py). A protected Source's record
+-- carries only its code name; who it really is lives here, read by its
+-- handlers only, every read audited.
+CREATE TABLE IF NOT EXISTS source_identity (
+    entity_id TEXT PRIMARY KEY REFERENCES entities(id) ON DELETE CASCADE,
+    true_name TEXT NOT NULL,
+    notes TEXT,
+    protected_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    protected_by INTEGER REFERENCES users(id),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_by INTEGER REFERENCES users(id)
+);
+CREATE TABLE IF NOT EXISTS source_handlers (
+    entity_id TEXT NOT NULL REFERENCES source_identity(entity_id) ON DELETE CASCADE,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    added_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    added_by INTEGER REFERENCES users(id),
+    PRIMARY KEY (entity_id, user_id)
+);
+
 CREATE TABLE IF NOT EXISTS vehicle_details (
     entity_id TEXT PRIMARY KEY REFERENCES entities(id) ON DELETE CASCADE,
     make TEXT,               -- Ford, Toyota, ...

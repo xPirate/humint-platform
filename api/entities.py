@@ -23,6 +23,7 @@ from pydantic import BaseModel, Field
 
 import audit
 import auth
+import sources
 import contacts
 from db import db_cursor
 from geo import maidenhead_locator
@@ -874,7 +875,8 @@ def get_entity(entity_id: str, user: dict = Depends(auth.require_user)):
 
         cur.execute(
             "SELECT id, filename, mime_type, file_size_bytes, uploaded_at, extraction_status "
-            "FROM attachments WHERE entity_id = %s ORDER BY uploaded_at",
+            "FROM attachments WHERE entity_id = %s AND " + sources.visible_attachment_sql(user["id"]) +
+            " ORDER BY uploaded_at",
             (entity_id,),
         )
         entity["attachments"] = [
@@ -884,6 +886,10 @@ def get_entity(entity_id: str, user: dict = Depends(auth.require_user)):
             }
             for r in cur.fetchall()
         ]
+        # A portrait on a protected source is one of its files: hidden with them.
+        if entity.get("portrait_attachment_id") and \
+                entity["portrait_attachment_id"] not in {a["id"] for a in entity["attachments"]}:
+            entity["portrait_attachment_id"] = None
 
     return entity
 
