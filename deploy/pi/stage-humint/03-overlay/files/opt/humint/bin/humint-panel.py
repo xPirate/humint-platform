@@ -628,6 +628,8 @@ class Panel:
             return "confirm"
         if self.busy:
             return "busy"
+        if d.get("pin_setup") == "duress" and d.get("unlocked"):
+            return "setpin"
         if d.get("unlocked") and d.get("login_secret"):
             return "secret"
         if not d.get("unlocked"):
@@ -666,7 +668,7 @@ class Panel:
         pin = self.pin
         if not pin:
             return
-        if stage == "new":
+        if stage in ("new", "duress"):
             if self.setpin_first is None:
                 if len(pin) < PIN_MIN_LENGTH:
                     self.pin_note = f"Use at least {PIN_MIN_LENGTH} characters"
@@ -694,8 +696,28 @@ class Panel:
                 if not os.path.exists(PIN_SETUP_REQ):
                     break
                 time.sleep(0.25)
-            self.flash("PIN set — setting up the case file" if stage == "new" else "Opening the case file")
-        self.in_background("Saving PIN…" if stage == "new" else "Opening…", work)
+            if stage != "duress":      # humint-ctl reports how that one went
+                self.flash("PIN set — setting up the case file" if stage == "new" else "Opening the case file")
+        self.in_background({"new": "Saving PIN…", "duress": "Saving…"}.get(stage, "Opening…"), work)
+
+    def cancel_setpin(self):
+        """Duress PIN setup only: an empty answer tells humint-ctl to stop."""
+        self.pin, self.setpin_first, self.pin_note = "", None, ""
+        try:
+            fd = os.open(PIN_SETUP_FIFO, os.O_WRONLY | os.O_NONBLOCK)
+            os.write(fd, b"\n")
+            os.close(fd)
+        except OSError:
+            pass
+
+    def ctl_waiting(self, label, args, messages):
+        """Run humint-ctl for something that will ask on this screen (the PIN
+        pad), so without the busy overlay that would cover it."""
+        def work():
+            rc = run([CTL, *args], timeout=900)
+            self.flash(messages.get(rc, f"{label}: failed ({rc})"))
+            self.status.refresh()
+        threading.Thread(target=work, daemon=True).start()
 
     def submit_pin(self):
         if not self.pin:
@@ -894,6 +916,19 @@ class Panel:
                  (self.W // 2, self.H - int(28 * s)), int(16 * s), MUTED, anchor="center")
 
     def draw_setpin(self, surf, d):
+        if d.get("pin_setup") == "duress":
+            if self.setpin_first is None:
+                words = ("Set duress PIN", "if typed, erases all",
+                         "Not a near-miss of the real PIN.", "Set duress passphrase")
+            else:
+                words = ("Confirm duress PIN", "enter the same PIN again", "Enter it again to confirm.",
+                         "Confirm duress passphrase")
+            self.draw_pin(surf, d, words)
+            s = self.s
+            b = Button((int(230 * s), self.H - int(92 * s), int(110 * s), int(60 * s)), "Cancel",
+                       self.cancel_setpin)
+            b.draw(surf, s); self.buttons.append(b)
+            return
         if d.get("pin_setup") == "existing":
             words = ("Enter your PIN", "the one set before the restart",
                      "Setup was interrupted; the case file already exists.", "Enter your passphrase")
@@ -911,7 +946,8 @@ class Panel:
         title, sub, hint, text_title = words or (
             "Enter unlock PIN", "to open the case file",
             f"{d.get('tries_left', '?')} tries before it locks until restart", "Enter unlock passphrase")
-        self.top_bar(surf, d, title="First-time setup" if words else None)
+        self.top_bar(surf, d, title=("Duress PIN" if d.get("pin_setup") == "duress" else "First-time setup")
+                     if words else None)
         if self.pin_mode == "digits":
             left_w = int(self.W * 0.46)
             text(surf, title, (int(36 * s), int(96 * s)), int(32 * s), kind="bold")
@@ -1237,6 +1273,17 @@ class Panel:
              lambda: self.ask("Shut down?", "Wait for the screen to go dark before unplugging.",
                               lambda: self.ctl("Shutting down", "shutdown")), "danger"),
             ("Refresh", "re-read everything", lambda: (self.status.refresh(), self.flash("Refreshed")), "normal"),
+            ("Wipe case file", "erase everything, for good",
+             lambda: self.ask("Wipe the case file?",
+                              "Every record, report and file on this box is destroyed. It restarts into setup.",
+                              lambda: self.ask("This cannot be undone.",
+                                               "Copies on USB sticks or other devices are not touched.",
+                                               lambda: self.ctl("Wiping", "wipe", "--yes"))), "danger"),
+            ("Duress PIN", "erases if typed at unlock",
+             lambda: self.ctl_waiting("Duress PIN", ["duress", "set", "--panel"],
+                                      {0: "Duress PIN set", 1: "Duress PIN not changed",
+                                       3: "That's the real PIN — choose another",
+                                       4: "Too short — at least 4 characters"}), "normal"),
             ("New login", "password for SSH, keyboard",
              lambda: self.ask("New login password?",
                               "The old one stops working. The new one is shown here once.",

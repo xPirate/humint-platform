@@ -73,7 +73,7 @@ jobs:
           cache: pip
       - name: dependencies
         run: |
-          sudo apt-get install -y -qq tesseract-ocr poppler-utils fonts-dejavu-core >/dev/null
+          sudo apt-get install -y -qq tesseract-ocr poppler-utils fonts-dejavu-core cryptsetup-bin >/dev/null
           python -m pip install -q -r api/requirements.txt -r worker/requirements.txt pygame pyotp
       - name: tests
         run: tests/run.sh

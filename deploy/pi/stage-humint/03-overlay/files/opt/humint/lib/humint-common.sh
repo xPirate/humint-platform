@@ -17,6 +17,7 @@ HUMINT_MAP=humint                        # /dev/mapper/humint when open
 HUMINT_DATA=/srv/humint-data             # where it mounts
 HUMINT_READY=/run/humint-data.ready      # marker: the store is open and mounted
 HUMINT_FIRSTBOOT_DONE="$HUMINT_STATE/firstboot.done"
+HUMINT_DURESS_FILE="$HUMINT_STATE/duress"   # hash of the duress PIN, if one is set
 
 # Inside the store: the database cluster and the console's settings (which
 # hold the database password, so they are encrypted at rest too).
@@ -122,6 +123,16 @@ try_unlock() {
     local pin
     IFS= read -r pin || true
     [ -n "$pin" ] || return 1
+    # The duress PIN (humint-ctl duress set): erase the case file and open an
+    # empty one instead, as if this were the right PIN. Checked first, and
+    # the same way whatever is typed, so it takes no noticeably longer.
+    if [ -f "$HUMINT_DURESS_FILE" ] &&
+       printf '%s\n' "$pin" | /usr/bin/python3 "$HUMINT_HOME/bin/humint-duress.py" check; then
+        printf '%s\n' "$pin" | "$HUMINT_HOME/bin/humint-wipe.sh" duress >/dev/null 2>&1 || true
+        unset pin
+        echo 0 >"$UNLOCK_TRIES_FILE"
+        return 0
+    fi
     if printf '%s' "$pin" | cryptsetup open --key-file=- "$HUMINT_IMG" "$HUMINT_MAP" 2>/dev/null; then
         unset pin
         echo 0 >"$UNLOCK_TRIES_FILE"

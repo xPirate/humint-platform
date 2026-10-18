@@ -32,6 +32,10 @@ humint-ctl — HUMINT field server
   net client SSID [PSK]  join an existing Wi-Fi and serve on it
   net wired              Ethernet only, Wi-Fi off
   pin                    change the unlock PIN
+  duress set | clear     a second PIN that, typed at unlock, erases the case
+                         file and opens an empty one as if nothing were wrong
+  duress                 whether one is set
+  wipe                   erase the case file for good; back to first-time setup
   login-password         give the operator login a new random password
                          (printed here and shown on the panel until confirmed)
   tls                    HTTPS status and the certificate fingerprint
@@ -114,6 +118,54 @@ cmd_pin() {
     echo "Changing the unlock PIN. Enter the current PIN, then the new one."
     cryptsetup luksChangeKey "$HUMINT_IMG"
     echo "PIN changed."
+}
+
+read_secret_twice() {   # read_secret_twice "Prompt" -> stdout
+    local a b
+    IFS= read -rs -p "$1: " a </dev/tty; echo >/dev/tty
+    IFS= read -rs -p "Again: " b </dev/tty; echo >/dev/tty
+    [ "$a" = "$b" ] || die "they did not match"
+    printf '%s' "$a"
+}
+
+cmd_duress() {
+    need_root "$@"
+    local dur=/opt/humint/bin/humint-duress.py
+    case "${1:-}" in
+        set)
+            # Exit codes (the panel turns them into messages): 1 cancelled,
+            # 3 that is the real PIN, 4 too short, 5 no case file.
+            [ -f "$HUMINT_IMG" ] || { echo "there is no case file yet" >&2; exit 5; }
+            local pin
+            if [ "${2:-}" = "--panel" ]; then
+                pin="$(panel_ask_pin duress)" || exit 1
+            else
+                pin="$(read_secret_twice "Duress PIN")"
+            fi
+            [ "${#pin}" -ge "$PIN_MIN_LENGTH" ] || { echo "use at least $PIN_MIN_LENGTH characters" >&2; exit 4; }
+            if printf '%s' "$pin" | cryptsetup open --test-passphrase --key-file=- "$HUMINT_IMG" 2>/dev/null; then
+                echo "that is the real PIN — the duress PIN must be a different one" >&2; exit 3
+            fi
+            printf '%s\n' "$pin" | /usr/bin/python3 "$dur" set
+            unset pin
+            echo "Duress PIN set. Typed at unlock, it erases the case file and opens an empty one."
+            echo "Choose one nobody types by accident — not a near-miss of the real PIN." ;;
+        clear) /usr/bin/python3 "$dur" clear; echo "Duress PIN removed." ;;
+        ""|status)
+            if /usr/bin/python3 "$dur" status; then echo "A duress PIN is set."; else echo "No duress PIN."; fi ;;
+        *) die "duress: set | clear | status" ;;
+    esac
+}
+
+cmd_wipe() {
+    need_root "$@"
+    if [ "${1:-}" != "--yes" ]; then
+        echo "This ERASES the case file on this box for good — every record, report and file."
+        echo "Copies elsewhere (USB backups, exported packages, other devices) are not touched."
+        local answer; IFS= read -r -p "Type WIPE to continue: " answer </dev/tty
+        [ "$answer" = WIPE ] || die "not wiped"
+    fi
+    exec /opt/humint/bin/humint-wipe.sh reset
 }
 
 cmd_lock() {
@@ -201,6 +253,8 @@ main() {
         lock)     cmd_lock "$@" ;;
         net)      cmd_net "$@" ;;
         pin)      cmd_pin "$@" ;;
+        duress)   cmd_duress "$@" ;;
+        wipe)     cmd_wipe "$@" ;;
         login-password)
                   pw="$(new_login_password)"
                   printf 'Login %s, new password: %s\n' "$(login_user)" "$pw" ;;

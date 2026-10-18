@@ -388,6 +388,35 @@ the 5" touch screen is fitted — its touch controller uses it).
 
 ---
 
+## Wiping it, and the duress PIN
+
+**Wipe case file** (panel Menu, asks twice; or `sudo humint-ctl wipe`) erases
+the case file for good and restarts the box into first-time setup with the
+same network settings. It takes seconds: the store's key exists only inside
+its encryption header, and destroying the header (`cryptsetup luksErase`,
+then the header area overwritten) leaves every byte of the store as noise to
+anyone, with or without the PIN.
+
+**Duress PIN** (panel Menu → Duress PIN, entered twice; or `sudo humint-ctl
+duress set`) is a second PIN for when somebody is made to open the box. Typed
+at the unlock screen, it erases the case file the same way, builds a new empty
+one under the PIN that was typed, and opens that — as if it were the right
+PIN. It must differ from the real PIN (the box refuses the real one); choose
+one nobody types by accident, not a near-miss. Only a hash of it is stored.
+
+What it cannot hide, so you know what an onlooker might notice:
+
+- the "unlock" takes longer than usual (about a minute: a new store and an
+  empty database are being built);
+- the console then has no accounts and asks for the first admin;
+- every phone and laptop sees a **new HTTPS certificate** (the box's
+  certificate authority lived in the erased store), so browsers warn again.
+
+Neither reaches copies made elsewhere: `humint-ctl backup` to USB, field
+packages already exported, or what the team's devices hold.
+
+---
+
 ## The login password
 
 The image carries the login password chosen when it was built — the same on
