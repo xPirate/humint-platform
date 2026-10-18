@@ -742,7 +742,8 @@ class Panel:
 
     def ctl(self, label, *args, after=None):
         def work():
-            rc = run([CTL, *args], timeout=300)
+            # An update can install Python packages and run migrations.
+            rc = run([CTL, *args], timeout=1800 if args[:1] == ("update",) else 300)
             self.flash(f"{label}: done" if rc == 0 else f"{label}: failed ({rc})")
             if after:
                 after()
