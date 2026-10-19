@@ -228,9 +228,21 @@ login_user() { getent passwd 1000 | cut -d: -f1; }
 
 # 16 characters from 32 that cannot be mistaken for each other (no 0/o, 1/l/i)
 # — 80 bits — grouped in fours so it can be read off a screen and typed.
+# random_chars N — N easy-to-read random characters (no 0/o, 1/l/i).
+# Reads a fixed amount of randomness first and filters it afterwards: the
+# obvious `tr </dev/urandom | head -c N` kills tr with SIGPIPE, which under
+# `set -euo pipefail` (first boot) silently aborts the whole script.
+random_chars() {
+    local n="$1" out=""
+    while [ "${#out}" -lt "$n" ]; do
+        out+="$(head -c 4096 /dev/urandom | LC_ALL=C tr -dc 'abcdefghjkmnpqrstuvwxyz23456789')"
+    done
+    printf '%s' "${out:0:$n}"
+}
+
 random_login_password() {
     local raw
-    raw="$(LC_ALL=C tr -dc 'abcdefghjkmnpqrstuvwxyz23456789' </dev/urandom | head -c 16)"
+    raw="$(random_chars 16)"
     printf '%s-%s-%s-%s' "${raw:0:4}" "${raw:4:4}" "${raw:8:4}" "${raw:12:4}"
 }
 
@@ -288,7 +300,7 @@ resolve_open_settings() {
     fi
     if [ -z "${AP_PSK:-}" ] || [ "$AP_PSK" = changeme-now ]; then
         local raw
-        raw="$(LC_ALL=C tr -dc 'abcdefghjkmnpqrstuvwxyz23456789' </dev/urandom | head -c 12)"
+        raw="$(random_chars 12)"
         AP_PSK="${raw:0:4}-${raw:4:4}-${raw:8:4}"
         AP_PSK_GENERATED=1
     fi

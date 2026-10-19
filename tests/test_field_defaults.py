@@ -11,9 +11,14 @@ LIB = os.path.join(ROOT, "deploy/pi/stage-humint/03-overlay/files/opt/humint/lib
 
 
 def resolve(prelude):
-    r = subprocess.run(["bash", "-c", f". {LIB}\nload_config /nonexistent\n{prelude}\nresolve_open_settings\n"
-                        'echo "$TIMEZONE|$WIFI_COUNTRY|$AP_PSK|$AP_PSK_GENERATED"'],
+    # Exactly as first boot runs it: strict mode, and SIGPIPE ignored the way
+    # systemd starts services. A pipeline that dies here kills first boot.
+    r = subprocess.run(["bash", "-c", "set -euo pipefail\ntrap '' PIPE\n"
+                        f". {LIB}\nload_config /nonexistent\n{prelude}\nresolve_open_settings\n"
+                        'echo "$TIMEZONE|$WIFI_COUNTRY|$AP_PSK|${AP_PSK_GENERATED:-}"\n'
+                        'p="$(random_login_password)"; [ "${#p}" = 19 ]'],
                        capture_output=True, text=True)
+    check(r.returncode == 0, f"survives first boot's strict shell ({r.stderr.strip()[:200]})")
     return r.stdout.strip().split("|")
 
 
