@@ -62,19 +62,20 @@ class Api(QObject):
 
     # ---- requests ---------------------------------------------------------------
 
-    def _finish(self, rid, resp: requests.Response | None, error: str = ""):
+    def _finish(self, rid, resp: requests.Response | None, error: str = "", body: bool = True):
         if resp is None:
             self.finished.emit(rid, 0, None, error or "The console is not answering")
             return
         data = None
         ctype = resp.headers.get("content-type", "")
-        if "json" in ctype:
+        if body or resp.status_code >= 400:
             try:
-                data = resp.json()
-            except ValueError:
+                if "json" in ctype:
+                    data = resp.json()
+                elif "text/" in ctype:
+                    data = resp.text
+            except (ValueError, RuntimeError):
                 data = None
-        elif resp.text and "text/" in ctype:
-            data = resp.text
         err = ""
         if resp.status_code >= 400:
             detail = data.get("detail") if isinstance(data, dict) else None
@@ -83,16 +84,26 @@ class Api(QObject):
             err = detail if isinstance(detail, str) else f"The console said {resp.status_code}"
         self.finished.emit(rid, resp.status_code, data, err)
 
-    def _submit(self, fn):
+    def _submit(self, fn, body=True):
         rid = next(self._ids)
 
         def work():
+            # Whatever happens, the screen that asked hears back.
             try:
                 resp = fn()
             except requests.RequestException as e:
                 self._finish(rid, None, f"The console is not answering ({e.__class__.__name__})")
                 return
-            self._finish(rid, resp)
+            except OSError as e:
+                self._finish(rid, None, f"Could not read or write the file ({e.strerror or e})")
+                return
+            except Exception as e:  # noqa: BLE001 — never leave a screen waiting forever
+                self._finish(rid, None, f"Something went wrong ({e.__class__.__name__})")
+                return
+            try:
+                self._finish(rid, resp, body=body)
+            except Exception as e:  # noqa: BLE001
+                self.finished.emit(rid, 0, None, f"Something went wrong ({e.__class__.__name__})")
         self._pool.submit(work)
         return rid
 
@@ -129,7 +140,7 @@ class Api(QObject):
                     for chunk in r.iter_content(65536):
                         fh.write(chunk)
             return r
-        return self._submit(go)
+        return self._submit(go, body=False)
 
     @Slot()
     def signOut(self):

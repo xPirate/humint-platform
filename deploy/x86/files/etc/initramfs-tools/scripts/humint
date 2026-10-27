@@ -29,8 +29,10 @@ mountroot() {
     mkdir -p /run/live/medium /run/live/rootfs /run/live/rw
     mount -o ro "/dev/disk/by-label/$label" /run/live/medium ||
         panic "Could not read the USB stick."
-    loop="$(losetup -f)"
-    losetup -r "$loop" /run/live/medium/humint/rootfs.squashfs ||
+    # util-linux's losetup, which the hook puts at /usr/sbin (klibc's in /bin
+    # cannot attach a file read-only).
+    loop="$(/usr/sbin/losetup -f)"
+    /usr/sbin/losetup -r "$loop" /run/live/medium/humint/rootfs.squashfs ||
         panic "Could not open the system image on the USB stick."
     mount -t squashfs -o ro "$loop" /run/live/rootfs || panic "Could not mount the system image."
     mount -t tmpfs -o size=60%,mode=755 tmpfs /run/live/rw

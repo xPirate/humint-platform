@@ -212,6 +212,9 @@ rsync -aHAX "$BASE/" "$ROOT/"
 chroot_mount "$ROOT"
 cp /etc/resolv.conf "$ROOT/etc/resolv.conf"
 copy_build_ca "$ROOT"
+# Python packages are cached between builds, outside the image.
+mkdir -p "$WORK/pip-cache" "$ROOT/var/cache/humint-pip"
+mount --bind "$WORK/pip-cache" "$ROOT/var/cache/humint-pip"; mounted+=("$ROOT/var/cache/humint-pip")
 
 say "Installing the console (API, worker, frontend)"
 install -d "$ROOT/opt/humint-platform"
@@ -223,8 +226,8 @@ install -m 644 "$WORK/BUILD.json" "$ROOT/opt/humint-platform/BUILD.json"
 in_root "$ROOT" "
     id humintd >/dev/null 2>&1 || adduser --system --group --home /var/lib/humintd --no-create-home humintd
     python3 -m venv /opt/humint/venv
-    /opt/humint/venv/bin/pip install -q --no-cache-dir --upgrade pip wheel
-    /opt/humint/venv/bin/pip install -q --no-cache-dir \
+    /opt/humint/venv/bin/pip install -q --cache-dir /var/cache/humint-pip --upgrade pip wheel
+    /opt/humint/venv/bin/pip install -q --cache-dir /var/cache/humint-pip \
         -r /opt/humint-platform/api/requirements.txt -r /opt/humint-platform/worker/requirements.txt
     /opt/humint/venv/bin/python -m compileall -q /opt/humint-platform/api /opt/humint-platform/worker || true
 " || die "installing the console's Python packages failed"
@@ -235,8 +238,8 @@ in_root "$ROOT" "
     id humint-ui >/dev/null 2>&1 || useradd --system --gid humint-ui --groups video,render,input \
         --home-dir /var/lib/humint-ui --create-home --shell /usr/sbin/nologin humint-ui
     python3 -m venv /opt/humint/ui-venv
-    /opt/humint/ui-venv/bin/pip install -q --no-cache-dir --upgrade pip
-    /opt/humint/ui-venv/bin/pip install -q --no-cache-dir -r /opt/humint/native/requirements.txt
+    /opt/humint/ui-venv/bin/pip install -q --cache-dir /var/cache/humint-pip --upgrade pip
+    /opt/humint/ui-venv/bin/pip install -q --cache-dir /var/cache/humint-pip -r /opt/humint/native/requirements.txt
     /opt/humint/ui-venv/bin/python -m compileall -q /opt/humint/native || true
 " || die "installing the native app failed"
 date +%s >"$ROOT/opt/humint/build-epoch"

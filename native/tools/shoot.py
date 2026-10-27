@@ -33,6 +33,9 @@ class FakeMachine:
                                         'echo $((n+1)) > "%s/run/humint/unlock-tries"; exit 1'
                                  % (self.log, self.root, self.root, self.root))
         self.sock = os.path.join(self.root, "box.sock")
+        # Folders standing in for USB sticks.
+        self.usb = os.path.join(self.root, "usb")
+        os.makedirs(os.path.join(self.usb, "KINGSTON"), exist_ok=True)
         self.write("var/lib/humint/env", "HOSTNAME=humint\nINSTANCE_NAME=\"Field Kit 1\"\nNET_MODE=hotspot\n"
                    "AP_SSID=humint-field\nAP_PSK=abcd-efgh-jkmn\nTLS=on\n")
         self.write("opt/humint-platform/BUILD.json", json.dumps({"build": 412, "commit": "3a746e4c1d"}))
@@ -61,7 +64,7 @@ class FakeMachine:
     def start(self, console_url=""):
         env = dict(os.environ, HUMINT_TEST_ROOT=self.root, HUMINT_BOX_SOCK=self.sock,
                    HUMINT_CTL=self.ctl, HUMINT_TRY=self.try_, HUMINT_BOX_ALLOW_UID=str(os.getuid()),
-                   HUMINT_CONSOLE_URL=console_url, PYTHONUNBUFFERED="1")
+                   HUMINT_CONSOLE_URL=console_url, HUMINT_USB_FAKE=self.usb, PYTHONUNBUFFERED="1")
         self.proc = subprocess.Popen([sys.executable, BOXD], env=env,
                                      stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
         for _ in range(50):
@@ -72,6 +75,12 @@ class FakeMachine:
 
     def stop(self):
         self.proc.terminate()
+
+    def unlock(self):
+        """Straight to an open case file (first boot done, PIN given)."""
+        self.write("srv/humint.img", "x")
+        self.write("var/lib/humint/firstboot.done", "")
+        self.write("run/humint-data.ready", "")
 
     def calls(self):
         try:

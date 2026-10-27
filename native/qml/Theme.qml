@@ -86,6 +86,16 @@ QtObject {
                   source: c.source, vehicle: c.vehicle, record: c.record })[kind] || c.muted
     }
 
+    // Message precedence and report status, as the console colours them.
+    function critColor(c) {
+        return ({ Flash: c_.red, Immediate: c_.amber, Priority: c_.teal, Routine: c_.muted })[c] || c_.muted
+    }
+    function statusColor(st) {
+        return ({ draft: c_.amber, confirmed: c_.accent, pending: c_.amber, rejected: c_.red,
+                  accepted: c_.accent, done: c_.accent, failed: c_.red })[st] || c_.muted
+    }
+    readonly property var c_: c
+
     readonly property string mono: "IBM Plex Mono, DejaVu Sans Mono, monospace"
     readonly property string sans: "Inter, Noto Sans, DejaVu Sans, sans-serif"
     readonly property string serif: "Newsreader, Noto Serif, DejaVu Serif, serif"

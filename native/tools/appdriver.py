@@ -92,6 +92,34 @@ class AppDriver:
                 return i
         raise LookupError(f"no field {placeholder!r}")
 
+    def field(self, placeholder):
+        for i in self.items():
+            if i.property("placeholderText") == placeholder and self.visible(i):
+                return i
+        raise LookupError(f"no field {placeholder!r}")
+
+    def type(self, placeholder, text):
+        """Type at the end of a field, as a person would (handlers that watch
+        the cursor see it)."""
+        f = self.field(placeholder)
+        f.forceActiveFocus()
+        self.pump(0.05)
+        from PySide6.QtCore import Q_ARG, QMetaObject
+        for ch in text:
+            end = len(f.property("text") or "")
+            f.setProperty("cursorPosition", end)
+            QMetaObject.invokeMethod(f, "insert", Q_ARG(int, end), Q_ARG(str, ch))
+            self.pump(0.01)
+        self.pump(0.3)
+        return f
+
+    def login(self, username, password):
+        self.until(lambda: self.has_text("Sign in to the case file"), 20, "sign-in screen")
+        self.type_into("Username", username)
+        self.type_into("Password", password)
+        self.tap("Sign in")
+        self.until(lambda: self.has_text("Dashboard"), 15, "signed in")
+
     def accept(self, placeholder):
         for i in self.items():
             if i.property("placeholderText") == placeholder and self.visible(i):

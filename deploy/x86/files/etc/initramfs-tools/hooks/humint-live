@@ -1,11 +1,11 @@
 #!/bin/sh
 # Put what the installer stick's boot needs into the initramfs: the modules
-# for its system image, and losetup (busybox's would do, but not every
-# busybox build has it).
+# for its system image, and util-linux's losetup at its own path (klibc's,
+# which the initramfs puts in /bin, cannot attach a file read-only).
 PREREQ=""
 prereqs() { echo "$PREREQ"; }
 case "$1" in prereqs) prereqs; exit 0 ;; esac
 . /usr/share/initramfs-tools/hook-functions
 manual_add_modules squashfs overlay loop
-copy_exec /usr/sbin/losetup /bin/losetup
+copy_exec /usr/sbin/losetup /usr/sbin/losetup
 exit 0

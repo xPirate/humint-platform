@@ -17,11 +17,11 @@ Item {
     function go(name, a) {
         history.push({ section: section, arg: arg })
         if (history.length > 50) history.shift()
-        section = name; arg = (a === undefined ? null : a); boxOpen = false
+        arg = (a === undefined ? null : a); section = name; boxOpen = false
     }
     function back() {
         if (!history.length) { section = "dashboard"; arg = null; return }
-        var h = history.pop(); section = h.section; arg = h.arg
+        var h = history.pop(); arg = h.arg; section = h.section
     }
 
     readonly property bool admin: !!(Net.me && Net.me.role === "admin")
@@ -99,6 +99,7 @@ Item {
                             return !(p.adminOnly && !shell.admin) && !(p.noViewer && shell.viewer)
                         })
                         delegate: AbstractButton {
+                            text: shell.pages[modelData].label
                             width: navCol.width
                             height: 42 * Theme.s
                             readonly property bool current: shell.section === modelData
@@ -114,11 +115,11 @@ Item {
                                 leftPadding: 14 * Theme.s
                                 verticalAlignment: Text.AlignVCenter
                                 wrapMode: Text.NoWrap
-                                text: shell.pages[modelData].label
+                                text: parent.text
                                 color: parent.current ? Theme.accent : Theme.text
                                 font.weight: parent.current ? Font.DemiBold : Font.Normal
                             }
-                            onClicked: { shell.history = []; shell.section = modelData; shell.arg = null }
+                            onClicked: { shell.history = []; shell.arg = null; shell.section = modelData }
                         }
                     }
                     Item { width: 1; height: Theme.gap }
@@ -136,8 +137,11 @@ Item {
             id: page
             anchors.top: strip.bottom; anchors.bottom: parent.bottom
             anchors.left: rail.right; anchors.right: parent.right
-            source: Net.me ? shell.pages[shell.section].file : ""
-            onStatusChanged: if (status === Loader.Error) source = "Missing.qml"
+            // A section whose screen is missing or broken shows a placeholder
+            // instead (without breaking this binding).
+            property string failed: ""
+            source: !Net.me ? "" : failed === shell.section ? "Missing.qml" : shell.pages[shell.section].file
+            onStatusChanged: if (status === Loader.Error) { var f = shell.section; Qt.callLater(function() { page.failed = f }) }
         }
     }
 

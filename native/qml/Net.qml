@@ -11,6 +11,9 @@ QtObject {
     property var _box: ({})
     // The signed-in person ({id, username, role}), or null.
     property var me: null
+    // A new report being written, kept in memory if its editor is left
+    // before saving (never written to disk: it is case material).
+    property var draft: null
     signal signedOut()
 
     function req(method, path, body) {
@@ -63,6 +66,7 @@ QtObject {
             if (!p) return
             delete net._api[id]
             if (status >= 200 && status < 300) {
+                if (status === 204) data = null
                 p.resolve(data)
             } else {
                 // A session that ended (expired, signed out elsewhere, account

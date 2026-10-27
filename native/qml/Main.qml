@@ -36,6 +36,7 @@ ApplicationWindow {
         // The case file closed (locked, wiped, restarted): nobody stays signed in.
         if (mode !== "app" && mode !== "secret" && mode !== "setpin" && Net.me) {
             Net.me = null
+            Net.draft = null
             Api.signOut()
         }
     }
@@ -47,8 +48,9 @@ ApplicationWindow {
         property string toastText: ""
         property bool toastError: false
         property var confirmData: null
-        function toast(msg, error) { toastText = msg; toastError = !!error; toastTimer.restart() }
+        function toast(msg, error) { ui.toastText = msg; toastError = !!error; toastTimer.restart() }
         function busy(text) { busyText = text || "" }
+        function deleteRecords(body, onDone) { deleteDialog.open(body, onDone) }
         function confirm(title, detail, action, danger, okText) {
             confirmData = { title: title, detail: detail || "", action: action,
                             danger: danger === undefined ? true : danger, ok: okText || "Yes" }
@@ -83,6 +85,10 @@ ApplicationWindow {
             Spinner { anchors.horizontalCenter: parent.horizontalCenter }
         }
     }
+
+    Viewer { id: fileViewer }
+    UsbPicker { id: usb }
+    DeleteDialog { id: deleteDialog }
 
     Rectangle {
         anchors.fill: parent
@@ -124,13 +130,13 @@ ApplicationWindow {
         anchors.bottom: parent.bottom
         anchors.bottomMargin: (keyboard.item && keyboard.item.active ? keyboard.item.height : 0) + 28 * Theme.s
         visible: ui.toastText !== ""
-        width: Math.min(toastText.implicitWidth + 2 * Theme.pad, parent.width - 2 * Theme.pad)
-        height: toastText.implicitHeight + Theme.pad
+        width: Math.min(toastLabel.implicitWidth + 2 * Theme.pad, parent.width - 2 * Theme.pad)
+        height: toastLabel.implicitHeight + Theme.pad
         radius: Theme.radius
         color: ui.toastError ? Qt.darker(Theme.red, Theme.light ? 1 : 2.4) : Theme.panel
         border.color: ui.toastError ? Theme.red : Theme.accentDim
         Txt {
-            id: toastText
+            id: toastLabel
             anchors.centerIn: parent
             width: Math.min(implicitWidth, win.width - 4 * Theme.pad)
             text: ui.toastText

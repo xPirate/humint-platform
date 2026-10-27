@@ -322,7 +322,95 @@ def op_upload_code(req):
     return console_api("POST", "/api/panel/upload/code", body)
 
 
+# ---- USB sticks --------------------------------------------------------------
+# There is no desktop to mount sticks, so the helper does: every partition on
+# a removable or USB disk, under /media/humint/<name>, owned by the app's
+# account where the filesystem allows it, never executable. Files come in
+# from them (attachments, documents) and go out to them (PDFs, exports).
+
+USB_BASE = os.environ.get("HUMINT_USB_BASE", "/media/humint")
+USB_FAKE = os.environ.get("HUMINT_USB_FAKE")       # tests: folders standing in for sticks
+
+
+def _usb_partitions():
+    try:
+        raw = subprocess.run(["lsblk", "-J", "-b", "-o", "NAME,PATH,RM,HOTPLUG,TRAN,TYPE,FSTYPE,LABEL,SIZE,MOUNTPOINT"],
+                             capture_output=True, text=True, timeout=10).stdout
+        devs = json.loads(raw).get("blockdevices", [])
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return []
+    out = []
+    for disk in devs:
+        removable = disk.get("tran") == "usb" or str(disk.get("rm")) in ("1", "True", "true") \
+            or str(disk.get("hotplug")) in ("1", "True", "true")
+        if not removable or disk.get("type") != "disk":
+            continue
+        for p in (disk.get("children") or [disk]):
+            if p.get("fstype") in ("vfat", "exfat", "ntfs", "ext4", "ext3", "ext2"):
+                out.append(p)
+    return out
+
+
+def op_usb_list(req):
+    if USB_FAKE:
+        return {"sticks": [{"name": n, "label": n, "path": os.path.join(USB_FAKE, n), "writable": True}
+                           for n in sorted(os.listdir(USB_FAKE))]}
+    sticks = []
+    try:
+        gid = grp.getgrnam(UI_GROUP).gr_gid
+        uid = pwd.getpwnam(UI_GROUP).pw_uid
+    except KeyError:
+        uid = gid = 0
+    for p in _usb_partitions():
+        name = "".join(c if c.isalnum() or c in "-_" else "_" for c in (p.get("label") or p["name"]))
+        where = os.path.join(USB_BASE, name)
+        if not os.path.ismount(where):
+            os.makedirs(where, exist_ok=True)
+            opts = "nosuid,nodev,noexec"
+            if p["fstype"] in ("vfat", "exfat", "ntfs"):
+                opts += f",uid={uid},gid={gid},umask=007"
+            fstype = "ntfs3" if p["fstype"] == "ntfs" else p["fstype"]
+            if subprocess.run(["mount", "-t", fstype, "-o", opts, p["path"], where],
+                              capture_output=True, timeout=30).returncode != 0:
+                continue
+            if p["fstype"].startswith("ext"):
+                # A Linux-formatted stick: let the app write a folder of its own.
+                d = os.path.join(where, "HUMINT")
+                try:
+                    os.makedirs(d, exist_ok=True)
+                    os.chown(d, uid, gid)
+                except OSError:
+                    pass
+        sticks.append({"name": name, "label": p.get("label") or p["name"], "path": where,
+                       "size": int(p.get("size") or 0), "fstype": p["fstype"],
+                       "writable": os.access(where, os.W_OK)})
+    return {"sticks": sticks}
+
+
+def op_usb_eject(req):
+    if USB_FAKE:
+        return {"ejected": True}
+    subprocess.run(["sync"], timeout=120)
+    left = []
+    if os.path.isdir(USB_BASE):
+        for name in os.listdir(USB_BASE):
+            where = os.path.join(USB_BASE, name)
+            if os.path.ismount(where):
+                if subprocess.run(["umount", where], capture_output=True, timeout=60).returncode != 0:
+                    left.append(name)
+                    continue
+            try:
+                os.rmdir(where)
+            except OSError:
+                pass
+    if left:
+        raise Refused("Still in use: " + ", ".join(left) + " — close what is open on it and try again")
+    return {"ejected": True}
+
+
 OPS = {
+    "usb_list": op_usb_list,
+    "usb_eject": op_usb_eject,
     "status": lambda req: status(),
     "unlock": op_unlock,
     "setup_pin": op_setup_pin,

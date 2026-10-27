@@ -53,6 +53,7 @@ def build(argv=None):
 
     from .api import Api, ApiImages
     from .box import Box
+    from .pdf import Pdf, PdfPages
     from .qr import QrImages
     from .util import Util
 
@@ -77,13 +78,16 @@ def build(argv=None):
     qmlRegisterSingletonInstance(Box, "Humint", 1, 0, "Box", box)
     qmlRegisterSingletonInstance(Api, "Humint", 1, 0, "Api", api)
     qmlRegisterSingletonInstance(Util, "Humint", 1, 0, "Util", util)
+    pdf = Pdf()
+    qmlRegisterSingletonInstance(Pdf, "Humint", 1, 0, "Pdf", pdf)
 
     engine = QQmlApplicationEngine()
     engine.addImportPath(QML)
     engine.addImageProvider("qr", QrImages())
     engine.addImageProvider("api", ApiImages(api))
+    engine.addImageProvider("pdf", PdfPages())
     engine.load(QUrl.fromLocalFile(os.path.join(QML, "Main.qml")))
-    return app, engine, {"box": box, "api": api, "util": util}
+    return app, engine, {"box": box, "api": api, "util": util, "pdf": pdf}
 
 
 def main(argv=None) -> int:
