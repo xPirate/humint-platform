@@ -159,6 +159,21 @@ class AppDriver:
                 return c
         raise LookupError(f"no drop-down under {label!r}")
 
+    def choose_select(self, current, option):
+        """Pick an option from a visible drop-down showing `current`."""
+        from PySide6.QtCore import Q_ARG, QMetaObject
+        for c in self.items():
+            opts = c.property("options")
+            if hasattr(opts, "toVariant"):
+                opts = opts.toVariant()
+            if opts and c.metaObject().indexOfSignal("activated(int)") >= 0 and self.visible(c) \
+                    and c.property("displayText") == current:
+                i = [o[1] for o in opts].index(option)
+                QMetaObject.invokeMethod(c, "activated", Q_ARG(int, i))
+                self.pump(0.05)
+                return c
+        raise LookupError(f"no drop-down showing {current!r}")
+
     def login(self, username, password):
         self.until(lambda: self.has_text("Sign in to the case file"), 20, "sign-in screen")
         self.type_into("Username", username)
