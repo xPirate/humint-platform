@@ -76,6 +76,19 @@ check(H.decide({"client_epoch": now - 7200, "monotonic": mono, "anonymous": True
       and H.decide({"client_epoch": now + 7200, "monotonic": mono, "anonymous": True}, now, mono, floor)[0],
       "an anonymous hint only ever moves the clock forward (enforced again as root)")
 
+# A battery-backed clock that reads a sane time is believed (every x86
+# machine; a Pi 5 with its cell). One reset to 1970, or out of step, is not.
+rtc_file = os.path.join(tmp, "since_epoch")
+H.RTC_EPOCH = rtc_file
+check(not H.rtc_trusted(now, floor), "no real-time clock: not trusted")
+open(rtc_file, "w").write(f"{int(now)}\n")
+check(H.rtc_trusted(now, floor), "a real-time clock agreeing with the system, after the build: trusted")
+open(rtc_file, "w").write("86400\n")
+check(not H.rtc_trusted(86400, floor), "one reset to 1970 (no cell) is not")
+open(rtc_file, "w").write(f"{int(now) - 3600}\n")
+check(not H.rtc_trusted(now, floor), "nor one an hour out from the system clock")
+H.RTC_EPOCH = os.path.join(tmp, "no-rtc")
+
 # apply(), with the actual clock-setting stubbed out
 H.STATE = state_file
 H.HINT = hint_file
@@ -97,6 +110,13 @@ check(not os.path.exists(hint_file), "the hint is used once")
 H.ntp_synced = lambda: True
 H.tick({})
 check(json.load(open(state_file))["source"] == "ntp", "network time, when it appears, takes over")
+H.ntp_synced = lambda: False
+os.unlink(state_file)
+H.RTC_EPOCH = rtc_file
+open(rtc_file, "w").write(f"{int(time.time())}\n")
+H.tick({})
+check(json.load(open(state_file))["source"] == "rtc", "with no network time, a sane battery-backed clock confirms the time")
+H.RTC_EPOCH = os.path.join(tmp, "no-rtc")
 
 # ---- the panel shows an unconfirmed clock -----------------------------------
 os.environ["SDL_VIDEODRIVER"] = "dummy"

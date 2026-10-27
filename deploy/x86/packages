@@ -67,6 +67,9 @@ pv
 
 # ---- the native app: a bare Wayland compositor and the graphics stack ------------
 cage
+# Qt's Wayland client needs these two (cage alone does not pull them in)
+libwayland-cursor0
+libwayland-egl1
 libgl1-mesa-dri
 libegl1
 libgles2

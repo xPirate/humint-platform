@@ -122,6 +122,32 @@ def run(cmd, stdin=None, timeout=300) -> int:
 
 _cache = {"at": 0.0, "data": None}
 _cache_lock = threading.Lock()
+# The facts that cost a process each to learn (addresses, who is on the
+# hotspot, which services run) change rarely; the screen asks every two
+# seconds. Learned at most every SLOW_EVERY seconds — on battery, fewer
+# wake-ups — and at once after anything done through here (invalidate()).
+SLOW_EVERY = 10.0
+_slow = {"at": 0.0, "key": None, "data": None}
+
+
+def slow_facts(tls: bool, hotspot: bool) -> dict:
+    key = (tls, hotspot)
+    with _cache_lock:
+        if _slow["data"] is not None and _slow["key"] == key and time.time() - _slow["at"] < SLOW_EVERY:
+            return _slow["data"]
+    f = {}
+    # The network's own address first; a self-assigned 169.254 one (kept for
+    # a bare switch with no DHCP) only when there is nothing else.
+    f["ips"] = sorted(out(["hostname", "-I"]).split(), key=lambda a: a.startswith("169.254."))
+    f["hostname"] = out(["hostname", "-s"]).strip()
+    f["clients"] = out(["iw", "dev", "wlan0", "station", "dump"]).count("Station ") if hotspot else None
+    units = [(label, unit) for label, unit in SERVICES if tls or unit != "humint-http"]
+    # One systemctl for all of them: a line per unit, in order.
+    states = out(["systemctl", "is-active"] + [u for _, u in units]).split()
+    f["services"] = [[label, states[i] if i < len(states) else "unknown"] for i, (label, _) in enumerate(units)]
+    with _cache_lock:
+        _slow.update(at=time.time(), key=key, data=f)
+    return f
 
 
 def status() -> dict:
@@ -145,11 +171,13 @@ def status() -> dict:
     d["tries_left"] = max(0, max_tries - used)
     msg = read_json(MESSAGE, {}) or {}
     d["message"] = msg if time.time() - msg.get("time", 0) < 600 else {}
-    ips = out(["hostname", "-I"]).split()
-    d["ip"] = ips[0] if ips else ""
-    d["host"] = env.get("HOSTNAME") or out(["hostname", "-s"]).strip() or "humint"
-    d["name"] = env.get("INSTANCE_NAME") or "HUMINT field server"
     d["tls"] = env.get("TLS", "on") == "on"
+    d["net_mode"] = env.get("NET_MODE", "hotspot")
+    slow = slow_facts(d["tls"], d["net_mode"] == "hotspot")
+    ips = slow["ips"]
+    d["ip"] = ips[0] if ips else ""
+    d["host"] = env.get("HOSTNAME") or slow["hostname"] or "humint"
+    d["name"] = env.get("INSTANCE_NAME") or "HUMINT field server"
     if d["tls"]:
         d["url"] = f"https://{d['ip']}" if d["ip"] else ""
     else:
@@ -161,19 +189,11 @@ def status() -> dict:
         else f"http://127.0.0.1:{env.get('API_PORT', '80')}")
     d["local_url"] = ("https://" if d["tls"] else "http://") + f"{d['host']}.local"
     d["trust_url"] = f"http://{d['ip'] or d['host'] + '.local'}/trust"
-    d["net_mode"] = env.get("NET_MODE", "hotspot")
     d["ssid"] = env.get("AP_SSID") if d["net_mode"] == "hotspot" else env.get("CLIENT_SSID")
     d["psk"] = env.get("AP_PSK") if d["net_mode"] == "hotspot" else env.get("CLIENT_PSK")
     d["hidden"] = env.get("AP_HIDDEN", "false") == "true"
-    d["clients"] = None
-    if d["net_mode"] == "hotspot":
-        d["clients"] = out(["iw", "dev", "wlan0", "station", "dump"]).count("Station ")
-    d["services"] = []
-    for label, unit in SERVICES:
-        if unit == "humint-http" and not d["tls"]:
-            continue
-        state = out(["systemctl", "is-active", unit]).strip() or "unknown"
-        d["services"].append([label, state])
+    d["clients"] = slow["clients"]
+    d["services"] = slow["services"]
     d["battery"] = read_json(BATTERY, {}) or {}
     d["clock"] = read_json(CLOCK, {}) or {}
     d["login_secret"] = read_json(LOGIN_SECRET, None)
@@ -209,6 +229,7 @@ def status() -> dict:
 def invalidate():
     with _cache_lock:
         _cache["data"] = None
+        _slow["data"] = None
 
 
 # ---- actions ------------------------------------------------------------------
@@ -488,7 +509,7 @@ def main() -> int:
         pass
     os.chmod(SOCK, 0o660)
     print(f"humint-boxd: listening on {SOCK}", flush=True)
-    srv.serve_forever()
+    srv.serve_forever(poll_interval=5)   # only for shutdown checks; requests wake it at once
     return 0
 
 

@@ -75,6 +75,20 @@ def read_state() -> dict:
         return {}
 
 
+RTC_EPOCH = os.environ.get("RTC_EPOCH_FILE", "/sys/class/rtc/rtc0/since_epoch")
+
+
+def rtc_trusted(now: float, floor: float) -> bool:
+    """A battery-backed real-time clock (every x86 machine; a Pi 5 with its
+    cell fitted) that reads a sane time and agrees with the system clock:
+    the time can be believed without network or a device having set it."""
+    try:
+        rtc = float(open(RTC_EPOCH).read().strip())
+    except (OSError, ValueError):
+        return False
+    return rtc >= floor and abs(rtc - now) < THRESHOLD
+
+
 def save_clock() -> None:
     if shutil.which("fake-hwclock"):
         subprocess.run(["fake-hwclock", "save", "force"], capture_output=True)
@@ -128,6 +142,9 @@ def tick(seen: dict) -> None:
             save_clock()
             log("network time is synchronised")
         return
+    if read_state().get("source") in (None, "unset") and rtc_trusted(time.time(), build_epoch()):
+        write_state({"source": "rtc", "set_at": time.time()})
+        log("the battery-backed clock reads a sane time; trusting it")
     if not os.path.exists(STATE):
         write_state({"source": "unset", "since": time.time()})
     try:

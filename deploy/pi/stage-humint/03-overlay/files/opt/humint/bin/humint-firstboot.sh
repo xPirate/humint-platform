@@ -58,6 +58,15 @@ ask_new_pin() {
 }
 
 create_store() {
+    # The space is set aside before the PIN is asked for, so power lost while
+    # the machine waits at "set a PIN" leaves a file that was never
+    # encrypted — no PIN opens it. Without a LUKS header it is only that
+    # leftover: discard it and set up afresh, rather than asking for a PIN
+    # nobody ever chose.
+    if [ -f "$HUMINT_IMG" ] && [ ! -e "/dev/mapper/$HUMINT_MAP" ] && ! cryptsetup isLuks "$HUMINT_IMG" 2>/dev/null; then
+        log "found an unfinished store from an interrupted first boot (never encrypted); starting it again"
+        rm -f "$HUMINT_IMG"
+    fi
     if [ -f "$HUMINT_IMG" ]; then
         # A previous attempt got this far and then failed. The store exists;
         # it must be opened with the PIN set then.
@@ -148,6 +157,8 @@ main() {
 
     banner "Deploy network" "$NET_MODE"
     /opt/humint/bin/humint-net.sh deploy || die "could not apply $NET_MODE"
+    # No usable Wi-Fi: it fell back to the wired network (humint-net.sh).
+    [ -s /run/humint/net-fallback ] && NET_MODE=wired
 
     # This box's own login, replacing the one every copy of the image shares.
     local login_pw=""

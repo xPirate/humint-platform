@@ -65,6 +65,7 @@ ApplicationWindow {
     Loader {
         id: screen
         anchors.fill: parent
+        focus: true             // keys reach the screen (Enter, the PIN)
         source: ({
             starting: "screens/Starting.qml",
             message: "screens/Message.qml",

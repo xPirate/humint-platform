@@ -9,6 +9,10 @@ Rectangle {
     id: root
     color: Theme.bg
     readonly property var sec: (Box.state || {}).login_secret || ({})
+    // On a laptop, Enter confirms.
+    focus: true
+    Keys.onReturnPressed: done.clicked()
+    Keys.onEnterPressed: done.clicked()
     StatusStrip { anchors.top: parent.top; width: parent.width; title: "Write these down" }
     Column {
         anchors.centerIn: parent
@@ -32,10 +36,11 @@ Rectangle {
         }
         Txt {
             width: parent.width; color: Theme.amber; horizontalAlignment: Text.AlignHCenter
-            text: "The Wi-Fi password is under Box → Join any time. The login is shown once; "
-                  + "Box → New login replaces it."
+            text: (root.sec.ap_psk ? "The Wi-Fi password is under Box → Join any time. " : "")
+                  + "The login is shown once; Box → New login replaces it."
         }
         Btn {
+            id: done
             anchors.horizontalCenter: parent.horizontalCenter
             kind: "primary"; minWidth: 340 * Theme.s
             text: "I've written it down"

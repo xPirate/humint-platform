@@ -113,6 +113,10 @@ cmd_net() {
         *) die "net needs: hotspot | client SSID [PSK] | wired" ;;
     esac
     /opt/humint/bin/humint-net.sh deploy
+    if [ "$mode" != wired ] && [ -s /run/humint/net-fallback ]; then
+        echo "Could not switch to $mode: $(cat /run/humint/net-fallback). Using the wired network." >&2
+        exit 3
+    fi
     echo "Network switched to $mode."
 }
 

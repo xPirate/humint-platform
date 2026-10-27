@@ -86,7 +86,8 @@ load_config() {
 # The address to hand the team: https://<ip> with TLS on, else http://<ip>[:port].
 console_url() {
     local ip="${1:-}"
-    [ -n "$ip" ] || ip="$(hostname -I 2>/dev/null | awk '{print $1}')"
+    # The network's own address; a self-assigned 169.254 one only if alone.
+    [ -n "$ip" ] || ip="$(hostname -I 2>/dev/null | awk '{for (i = 1; i <= NF; i++) if ($i !~ /^169\.254\./) {print $i; exit}; print $1}')"
     if [ "${TLS:-on}" = "on" ]; then
         echo "https://${ip}"
     else

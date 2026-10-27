@@ -92,6 +92,16 @@ d.until(lambda: d.button("Box") is not None and d.has_text("Dashboard"), timeout
 check(c.sql("SELECT username, role FROM users") == [("ana", "admin")], "it creates the first admin account")
 shot(d, "03-shell")
 
+# ---- first boot's secrets: shown until confirmed (Enter, on a laptop) -----------------
+m.write("run/humint/login-password.json", json.dumps({"user": "humint", "password": "abcd-efgh-ijkl", "time": time.time()}))
+d.until(lambda: d.has_text("Write these down"), what="the secrets screen")
+check(d.has_text("abcd-efgh-ijkl") and not d.has_text("Wi-Fi password"),
+      "the new machine login is shown, with no Wi-Fi password when there is no hotspot one")
+d.key("Return")
+d.until(lambda: not os.path.exists(m.path("run/humint/login-password.json")), what="dismissed")
+d.until(lambda: d.has_text("Dashboard"), what="back to the app")
+check(True, "Enter confirms it is written down, and the app comes back")
+
 # ---- the Box panel ----------------------------------------------------------------------
 d.tap("Box")
 d.until(lambda: d.has_text("Team address"), what="box status")

@@ -19,6 +19,7 @@ StandardOutput=journal
 StandardError=journal
 UtmpIdentifier=tty2
 UtmpMode=user
+ExecStartPre=+/opt/humint/bin/humint-ui-launch --prepare
 ExecStartPre=+/usr/bin/chvt 2
 Environment=XDG_SESSION_TYPE=wayland
 Environment=QT_QPA_PLATFORM=wayland
@@ -26,7 +27,10 @@ Environment=HUMINT_FONTS=/opt/humint-platform/frontend/vendor/fonts
 # auto: the on-screen keyboard only when no keyboard is attached; on | off
 Environment=HUMINT_KEYBOARD=auto
 WorkingDirectory=/opt/humint/native
-ExecStart=/usr/bin/cage -d -s -- /opt/humint/ui-venv/bin/python -m humint_ui
+# cage + the app; falls back to drawing in software if the graphics chip
+# makes it crash at start-up (see the script).
+ExecStart=/opt/humint/bin/humint-ui-launch
+ExecStopPost=+/opt/humint/bin/humint-ui-launch --stopped
 Restart=always
 RestartSec=2
 

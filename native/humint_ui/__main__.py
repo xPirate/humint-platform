@@ -48,7 +48,7 @@ def build(argv=None):
         os.environ.setdefault("QT_IM_MODULE", "qtvirtualkeyboard")
 
     from PySide6.QtCore import QUrl
-    from PySide6.QtGui import QFontDatabase, QGuiApplication
+    from PySide6.QtGui import QFont, QFontDatabase, QGuiApplication
     from PySide6.QtQml import QQmlApplicationEngine, qmlRegisterSingletonInstance
 
     from .api import Api, ApiImages
@@ -65,6 +65,13 @@ def build(argv=None):
         for name in sorted(os.listdir(FONTS)):
             if name.endswith((".ttf", ".otf", ".woff", ".woff2")):
                 QFontDatabase.addApplicationFont(os.path.join(FONTS, name))
+    # Drawn in software (a machine whose graphics chip crashes the screen —
+    # see humint-ui-launch), full hinting snaps each letter's width to whole
+    # pixels and spaces words unevenly ("c ase"). Vertical-only hinting keeps
+    # it crisp and evenly spaced; drawing on the graphics chip ignores it.
+    base = app.font()
+    base.setHintingPreference(QFont.PreferVerticalHinting)
+    app.setFont(base)
 
     box = Box()
     api = Api(os.environ.get("HUMINT_CONSOLE_URL", ""))

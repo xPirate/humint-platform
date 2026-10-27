@@ -158,7 +158,8 @@ class Status:
         d["tries_left"] = max(0, max_tries - used)
         msg = read_json(MESSAGE, {}) or {}
         d["message"] = msg if time.time() - msg.get("time", 0) < 600 else {}
-        ips = out(["hostname", "-I"]).split()
+        # The network's own address before a self-assigned 169.254 one.
+        ips = sorted(out(["hostname", "-I"]).split(), key=lambda a: a.startswith("169.254."))
         d["ip"] = ips[0] if ips else ""
         d["host"] = env.get("HOSTNAME") or out(["hostname", "-s"]).strip() or "humint"
         d["name"] = env.get("INSTANCE_NAME") or "HUMINT field server"

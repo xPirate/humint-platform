@@ -263,7 +263,7 @@ install -m 644 "$HERE/humint-appliance.conf.example" "$ROOT/opt/humint/humint-ap
 install -m 644 "$WORK/update-signing.pub" "$ROOT/opt/humint/update-signing.pub"
 chmod 0755 "$ROOT"/opt/humint/bin/*.sh "$ROOT"/opt/humint/bin/*.py "$ROOT"/opt/humint/bin/humint-ctl \
     "$ROOT"/opt/humint/bin/humint-api-run "$ROOT"/opt/humint/bin/humint-unlock-try \
-    "$ROOT"/etc/initramfs-tools/hooks/humint-live "$ROOT"/opt/humint/bin/humint-install.sh
+    "$ROOT"/etc/initramfs-tools/hooks/humint-live "$ROOT"/opt/humint/bin/humint-install.sh "$ROOT"/opt/humint/bin/humint-ui-launch
 chown root:root "$ROOT"/etc/NetworkManager/dispatcher.d/90-humint-tls
 chmod 0755 "$ROOT"/etc/NetworkManager/dispatcher.d/90-humint-tls
 ln -sf /opt/humint/bin/humint-ctl "$ROOT/usr/local/bin/humint-ctl"

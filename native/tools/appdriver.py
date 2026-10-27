@@ -116,6 +116,17 @@ class AppDriver:
         self.pump(0.3)
         return f
 
+    def key(self, name):
+        """Press and release a key on the window, as a physical keyboard
+        would (name: "Return", "Escape", "Tab", ...)."""
+        from PySide6.QtCore import QCoreApplication, QEvent, Qt
+        from PySide6.QtGui import QKeyEvent
+        k = getattr(Qt.Key, "Key_" + name)
+        for kind in (QEvent.Type.KeyPress, QEvent.Type.KeyRelease):
+            QCoreApplication.sendEvent(self.win, QKeyEvent(kind, k, Qt.KeyboardModifier.NoModifier))
+            self.pump(0.05)
+        self.pump(0.3)
+
     def _under_label(self, label):
         for i in self.items():
             if i.property("label") == label and i.property("hint") is not None and self.visible(i):

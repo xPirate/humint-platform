@@ -108,3 +108,8 @@ API_PORT=80
 #   auto | laptop | none
 BATTERY=auto
 BATTERY_SHUTDOWN_PERCENT=8
+
+# How the screen draws. auto: with the graphics chip, switching to software
+# by itself if that crashes at start-up (some chips, most virtual machines).
+# gpu or software to force one.
+HUMINT_RENDER=auto
