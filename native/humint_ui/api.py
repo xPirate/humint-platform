@@ -142,6 +142,21 @@ class Api(QObject):
             return r
         return self._submit(go, body=False)
 
+    @Slot(str, "QVariant", str, result=int)
+    def downloadPost(self, path, body, file_path):
+        """A file the console makes on request (a field package): POST, save."""
+        file_path = file_path.replace("file://", "", 1) if file_path.startswith("file://") else file_path
+
+        def go():
+            r = self._session.post(self._url(path), data=json.dumps(body or {}), timeout=900, verify=False, stream=True,
+                                   headers={"Content-Type": "application/json"})
+            if r.status_code < 400:
+                with open(file_path, "wb") as fh:
+                    for chunk in r.iter_content(65536):
+                        fh.write(chunk)
+            return r
+        return self._submit(go, body=False)
+
     @Slot()
     def signOut(self):
         self._session.cookies.clear()

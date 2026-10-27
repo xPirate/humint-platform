@@ -1,6 +1,7 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Window
+import QtCore
 import Humint
 
 ApplicationWindow {
@@ -18,6 +19,9 @@ ApplicationWindow {
     }
 
     readonly property var st: Box.state || ({})
+    // Light or dark, chosen on this machine (Account); not case data.
+    Settings { id: looks; category: "look"; property bool light: false }
+    Component.onCompleted: Theme.light = looks.light
 
     // Which screen the machine needs right now — the same decision the Pi's
     // touch panel makes (humint-panel.py, Panel.current).

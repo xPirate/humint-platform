@@ -19,6 +19,7 @@ Rectangle {
     property string folder: ""
     property var onPicked: null
     property string apiPath: ""
+    property var postBody: null      // a POST that makes the file (field packages)
     property string fileName: ""
     property bool busy: false
 
@@ -30,7 +31,7 @@ Rectangle {
         }).catch(function(e) { u.busy = false; ui.toast(e.message, true) })
     }
     function pickFile(cb) { u.mode = "pick"; u.onPicked = cb; u.stick = null; u.refresh() }
-    function exportFile(path, name) { u.mode = "save"; u.apiPath = path; u.fileName = name; u.stick = null; u.refresh() }
+    function exportFile(path, name, body) { u.mode = "save"; u.apiPath = path; u.fileName = name; u.postBody = body || null; u.stick = null; u.refresh() }
     function openStick(s) { u.stick = s; u.folder = "file://" + s.path }
     function close() { u.mode = ""; u.stick = null; u.onPicked = null }
     function eject() {
@@ -41,7 +42,7 @@ Rectangle {
         var dir = u.stick.fstype && u.stick.fstype.indexOf("ext") === 0 ? u.stick.path + "/HUMINT" : u.stick.path
         var target = dir + "/" + u.fileName
         u.busy = true
-        Net.download(u.apiPath, target).then(function() {
+        (u.postBody ? Net.downloadPost(u.apiPath, u.postBody, target) : Net.download(u.apiPath, target)).then(function() {
             u.busy = false
             ui.toast("Saved " + u.fileName + " to " + u.stick.label + " — eject before removing it")
         }).catch(function(e) { u.busy = false; ui.toast(e.message, true) })

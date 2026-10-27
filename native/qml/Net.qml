@@ -40,6 +40,13 @@ QtObject {
         })
     }
 
+    function downloadPost(path, body, file) {
+        return new Promise(function(resolve, reject) {
+            var id = Api.downloadPost(path, body || {}, file)
+            net._api[id] = { resolve: resolve, reject: reject }
+        })
+    }
+
     function box(op, args) {
         return new Promise(function(resolve, reject) {
             var id = Box.request(op, args || {})
