@@ -23,7 +23,6 @@ ExecStartPre=+/opt/humint/bin/humint-ui-launch --prepare
 ExecStartPre=+/usr/bin/chvt 2
 Environment=XDG_SESSION_TYPE=wayland
 Environment=QT_QPA_PLATFORM=wayland
-Environment=HUMINT_FONTS=/opt/humint-platform/frontend/vendor/fonts
 # auto: the on-screen keyboard only when no keyboard is attached; on | off
 Environment=HUMINT_KEYBOARD=auto
 WorkingDirectory=/opt/humint/native

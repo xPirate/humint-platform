@@ -13,7 +13,8 @@ import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 QML = os.path.join(os.path.dirname(HERE), "qml")
-FONTS = os.environ.get("HUMINT_FONTS", "/opt/humint-platform/frontend/vendor/fonts")
+# Complete desktop fonts (fonts/README.md) — not the console's split web fonts.
+FONTS = os.environ.get("HUMINT_FONTS", os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "fonts"))
 
 
 def keyboard_attached(path="/proc/bus/input/devices") -> bool:

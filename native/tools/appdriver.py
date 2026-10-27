@@ -11,7 +11,6 @@ class AppDriver:
     def __init__(self, box_sock, console_url="", size=(1280, 800), keyboard=False):
         os.environ["QT_QPA_PLATFORM"] = "offscreen"
         os.environ["HUMINT_BOX_SOCK"] = box_sock
-        os.environ.setdefault("HUMINT_FONTS", os.path.join(os.path.dirname(NATIVE), "frontend/vendor/fonts"))
         if console_url:
             os.environ["HUMINT_CONSOLE_URL"] = console_url
         if not keyboard:
