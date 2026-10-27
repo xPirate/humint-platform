@@ -241,6 +241,9 @@ check(c.index("pg_dump") < c.index("dist-upgrade") < c.index("systemctl stop"),
       "after the database backup, and before the console stops for the new code")
 check("Dir::Etc::SourceParts=/dev/null" in c and "Dir::State::Lists=" in c,
       "from the bundle alone, not the machine's usual package sources")
+stage = os.path.join(R, "srv/humint-data/updates/stage")
+check(os.path.isdir(stage) and oct(os.stat(stage).st_mode & 0o777) == "0o700" and not os.listdir(stage),
+      "unpacked in a root-only folder inside the encrypted store, and nothing left there after")
 make_x86_box()
 open(os.path.join(tmp, "fail-apt"), "w").close()
 r = update("apply", with_os(debs))

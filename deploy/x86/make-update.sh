@@ -58,6 +58,8 @@ while [ $# -gt 0 ]; do
 done
 WORK="${HUMINT_X86_DIR:-$HOME/humint-x86}"
 ROOTFS="$WORK/rootfs"
+# Behind a proxy with its own certificate (as build-x86.sh finds it).
+BUILD_CA="${BUILD_CA:-${PIP_CERT:-${SSL_CERT_FILE:-${REQUESTS_CA_BUNDLE:-}}}}"
 
 say() { printf '\033[1m==> %s\033[0m\n' "$*"; }
 die() { printf 'make-update: %s\n' "$*" >&2; exit 1; }
@@ -167,7 +169,7 @@ if [ "$WITH_OS" = 1 ]; then
     # shellcheck disable=SC2016  # expanded inside the chroot
     in_rootfs '
         B=/var/tmp/humint-bundle
-        apt=(apt-get -q -o Dir::State::Lists=$B/lists -o Dir::Cache::Archives=$B/archives)
+        apt=(apt-get -q -o Dir::State::Lists=$B/lists -o Dir::Cache::Archives=$B/archives -o APT::Sandbox::User=root)
         "${apt[@]}" update >/dev/null
         since=(); [ -f $B/since.txt ] && since=($B/since.txt)
         : >$B/pick.txt

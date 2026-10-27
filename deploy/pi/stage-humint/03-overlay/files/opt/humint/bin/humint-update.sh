@@ -81,19 +81,42 @@ installed_req() { [ -f "$BUILD_FILE" ] && json_get "$BUILD_FILE" requirements_sh
 native_req() { [ -f "$HOME_DIR/native/requirements.txt" ] && sha256sum "$HOME_DIR/native/requirements.txt" | cut -d' ' -f1 || echo; }
 
 WORK=""
-cleanup() { if [ -n "$WORK" ]; then rm -rf "$WORK"; fi; }
+PICK=""
+cleanup() {
+    if [ -n "$WORK" ]; then rm -rf "$WORK"; fi
+    if [ -n "$PICK" ]; then rm -rf "$PICK"; fi
+}
+
+# Where an update is unpacked: inside the encrypted store when it is open —
+# it is where the room is (on x86 the store takes most of the disk, and a
+# bundle with Ubuntu's packages is over a gigabyte), and a root-only folder,
+# so nothing but root can change a file between its check and its use.
+stage_dir() {
+    local d
+    if data_ready; then
+        d="$HUMINT_DATA/updates/stage"
+        install -d -m 700 "$d"
+    else
+        d="${TMPDIR:-/var/tmp}"
+    fi
+    echo "$d"
+}
 trap cleanup EXIT
+BUNDLE=""
+OS_SHA=""
 
 # unpack_and_verify FILE -> sets WORK, NEW_BUILD; exits 3 on any doubt.
 unpack_and_verify() {
     local file="$1"
     [ -f "$file" ] || { echo "no such file: $file" >&2; exit 2; }
     [ -f "$PUBKEY" ] || { echo "this box has no update key ($PUBKEY): it was built before updates existed — re-image it once" >&2; exit 3; }
-    WORK="$(mktemp -d "${TMPDIR:-/var/tmp}/humint-update.XXXXXX")"
-    # Only the names a bundle has: nothing else is extracted.
+    WORK="$(mktemp -d "$(stage_dir)/humint-update.XXXXXX")"
+    # Only the names a bundle has: nothing else is extracted. (Ubuntu's
+    # packages are checked and unpacked straight from the bundle, below and
+    # in apply_os_packages, rather than copied out first.)
     tar -xf "$file" -C "$WORK" manifest.json manifest.sig payload.tar.gz 2>/dev/null ||
-        { echo "not an update bundle (or damaged)" >&2; exit 3; }
-    tar -xf "$file" -C "$WORK" os-packages.tar 2>/dev/null || true
+        { echo "not an update bundle (or damaged — or no room to unpack it)" >&2; exit 3; }
+    BUNDLE="$file"
     openssl pkeyutl -verify -pubin -inkey "$PUBKEY" -rawin -in "$WORK/manifest.json" \
         -sigfile "$WORK/manifest.sig" >/dev/null 2>&1 ||
         { echo "SIGNATURE DOES NOT MATCH — not made by this box's builder, or altered. Not applied." >&2; exit 3; }
@@ -101,12 +124,10 @@ unpack_and_verify() {
         { echo "unknown bundle format" >&2; exit 3; }
     [ "$(sha256sum "$WORK/payload.tar.gz" | cut -d' ' -f1)" = "$(json_get "$WORK/manifest.json" payload_sha256)" ] ||
         { echo "payload does not match its signed manifest — damaged copy. Not applied." >&2; exit 3; }
-    local os_sha; os_sha="$(json_get "$WORK/manifest.json" os_sha256)"
-    if [ -n "$os_sha" ]; then
-        [ -f "$WORK/os-packages.tar" ] && [ "$(sha256sum "$WORK/os-packages.tar" | cut -d' ' -f1)" = "$os_sha" ] ||
+    OS_SHA="$(json_get "$WORK/manifest.json" os_sha256)"
+    if [ -n "$OS_SHA" ]; then
+        [ "$(tar -xOf "$file" os-packages.tar 2>/dev/null | sha256sum | cut -d' ' -f1)" = "$OS_SHA" ] ||
             { echo "the system packages do not match the signed manifest — damaged copy. Not applied." >&2; exit 3; }
-    else
-        rm -f "$WORK/os-packages.tar"      # unsigned: never used
     fi
     local made_for; made_for="$(json_get "$WORK/manifest.json" platform)"
     [ "${made_for:-pi}" = "$PLATFORM" ] ||
@@ -179,7 +200,9 @@ fail_and_roll_back() {   # fail_and_roll_back MESSAGE DUMP
 apply_os_packages() {
     local repo="$WORK/os" lists="$WORK/os-lists"
     mkdir -p "$repo" "$lists/partial"
-    tar -xf "$WORK/os-packages.tar" -C "$repo" || return 1
+    # Straight from the bundle (checked in unpack_and_verify; a copy in
+    # root's own folder, so unchanged since).
+    tar -xOf "$BUNDLE" os-packages.tar | tar -x -C "$repo" || return 1
     printf 'deb [trusted=yes] file:%s ./\n' "$repo" >"$WORK/os.list"
     local apt=(apt-get -q -o "Dir::Etc::SourceList=$WORK/os.list" -o Dir::Etc::SourceParts=/dev/null
                -o "Dir::State::Lists=$lists" -o APT::Get::List-Cleanup=0)
@@ -228,7 +251,7 @@ cmd_apply() {
     chmod 600 "$dump"
     ln -sf "$(basename "$dump")" "$HUMINT_DATA/backups/pre-update-latest.dump"
 
-    if [ -f "$WORK/os-packages.tar" ]; then
+    if [ -n "$OS_SHA" ]; then
         note "installing Ubuntu's updated packages from the bundle"
         status applying "system packages (security updates) — a few minutes"
         apply_os_packages || {
@@ -320,7 +343,8 @@ cmd_usb() {
     # Every partition that is not the SD card or the boot NVMe, mounted
     # read-only in turn; the newest bundle found anywhere is copied off first.
     local mnt=/run/humint/usb dev f b best="" best_build=-1 pick
-    pick="$(mktemp -d)"
+    pick="$(mktemp -d "$(stage_dir)/usb.XXXXXX")"
+    PICK="$pick"
     mkdir -p "$mnt"
     # Not the disk this machine runs from, whatever it is called.
     local own; own="$(lsblk -rpno PKNAME "$(findmnt -no SOURCE /)" 2>/dev/null | head -1)"
@@ -349,8 +373,10 @@ cmd_usb() {
 
 cmd_inbox() {
     [ -f "$INBOX" ] || exit 0
-    local f="$HUMINT_DATA/updates/applying.tar"
-    mv -f "$INBOX" "$f"
+    # A copy of the upload, in root's own folder: the console that wrote the
+    # upload cannot touch this one.
+    local f; f="$(stage_dir)/applying.tar"
+    cp "$INBOX" "$f" && rm -f "$INBOX" || { rm -f "$f"; status failed "no room to take the update"; return 0; }
     local rc=0
     ( cmd_apply "$f" ) || rc=$?
     case "$rc" in
