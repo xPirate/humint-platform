@@ -19,7 +19,8 @@ Rectangle {
     property var recoveryCodes: []
     property var pendingUser: null
 
-    Component.onCompleted: check()
+    // Typing goes straight into the first field (a laptop with no mouse).
+    Component.onCompleted: { check(); Qt.callLater(function() { user.forceActiveFocus() }) }
     function check() {
         Net.get("/api/auth/bootstrap-status").then(function(r) {
             root.step = r.needs_bootstrap ? "bootstrap" : "login"

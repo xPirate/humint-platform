@@ -84,6 +84,7 @@ check(m.calls()[:2] == ["try 5555", "try 1234"], "both tries went through humint
 
 # ---- the first admin account ----------------------------------------------------------
 shot(d, "02-bootstrap")
+check(d.field("Username").property("activeFocus"), "typing goes straight into the username (a laptop with no mouse)")
 d.type_into("Username", "ana")
 d.type_into("Password", "correct horse battery")
 d.type_into("Password again (at least 10 characters)", "correct horse battery")
