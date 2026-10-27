@@ -6,6 +6,9 @@ QML sees one object, `api`:
   api.call(method, path, body) → id   then api.finished(id, status, data, error)
   api.upload(path, filePath, fields) → id   (multipart, same signal)
   api.download(path, filePath) → id         (saves the response, same signal)
+  api.stream(path, body) → id   POST, then api.streamed(id, event) for each
+                                JSON line as it arrives (the assistant's
+                                /ask), then api.finished as usual
   api.signOut()
 
 and images from the console as  image://api/<path>  (signed in as the app).
@@ -34,6 +37,7 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 class Api(QObject):
     finished = Signal(int, int, "QVariant", str)
+    streamed = Signal(int, "QVariant")
     baseChanged = Signal()
 
     def __init__(self, base: str = "", parent=None):
@@ -156,6 +160,34 @@ class Api(QObject):
                         fh.write(chunk)
             return r
         return self._submit(go, body=False)
+
+    @Slot(str, "QVariant", result=int)
+    def stream(self, path, body=None):
+        """Newline-delimited JSON, read as it comes: one streamed() per line.
+        An error status is reported through finished() like any call."""
+        rid = next(self._ids)
+
+        def work():
+            try:
+                with self._session.post(self._url(path), data=json.dumps(body or {}), verify=False, stream=True,
+                                        timeout=(15, 900), headers={"Content-Type": "application/json"}) as r:
+                    if r.status_code >= 400:
+                        r.content          # read it, for the error detail
+                        self._finish(rid, r)
+                        return
+                    for line in r.iter_lines(decode_unicode=True):
+                        if line and line.strip():
+                            try:
+                                self.streamed.emit(rid, json.loads(line))
+                            except ValueError:
+                                pass
+                    self.finished.emit(rid, r.status_code, None, "")
+            except requests.RequestException as e:
+                self._finish(rid, None, f"The console is not answering ({e.__class__.__name__})")
+            except Exception as e:  # noqa: BLE001 — never leave a screen waiting forever
+                self.finished.emit(rid, 0, None, f"Something went wrong ({e.__class__.__name__})")
+        self._pool.submit(work)
+        return rid
 
     @Slot()
     def signOut(self):

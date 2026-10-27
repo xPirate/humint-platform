@@ -13,6 +13,8 @@ Column {
     property var types: []
     property bool allowCreate: false
     property string placeholder: "Search records"
+    // Extra fields for a record made here: function(type) → {details: …}
+    property var newDetails: null
     property var results: []
     property string query: ""
     signal chosen(var entity)
@@ -58,7 +60,8 @@ Column {
             model: ep.allowCreate && ep.query !== "" && !ep.results.some(function(e) { return e.name.toLowerCase() === ep.query.toLowerCase() })
                    ? (ep.types.length ? ep.types : Fmt.ENTITY_TYPES.slice(0, 8)) : []
             Btn { compact: true; kind: "ghost"; text: "+ New " + Fmt.typeLabel(modelData).toLowerCase(); sub: "“" + ep.query + "”"
-                  onClicked: Net.post("/api/entities", { entity_type: modelData, name: ep.query }).then(function(e) {
+                  onClicked: Net.post("/api/entities", Object.assign({ entity_type: modelData, name: ep.query },
+                                                     ep.newDetails ? (ep.newDetails(modelData) || {}) : {})).then(function(e) {
                       e.isNew = true; ep.choose(e) }).catch(function(err) { ui.toast(err.message, true) }) }
         }
     }

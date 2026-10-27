@@ -14,6 +14,11 @@ QtObject {
     // A new report being written, kept in memory if its editor is left
     // before saving (never written to disk: it is case material).
     property var draft: null
+    // The same for a guided debrief left unfinished.
+    property var debriefDraft: null
+    // Drafts belong to whoever wrote them: gone when they sign out (or are
+    // signed out), never offered to the next person at this screen.
+    onMeChanged: if (!me) { draft = null; debriefDraft = null }
     signal signedOut()
 
     function req(method, path, body) {
@@ -47,6 +52,15 @@ QtObject {
         })
     }
 
+    // POST and read the reply as it streams (newline-delimited JSON): onEvent
+    // for each line as it arrives; resolves when the stream ends.
+    function stream(path, body, onEvent) {
+        return new Promise(function(resolve, reject) {
+            var id = Api.stream(path, body || {})
+            net._api[id] = { resolve: resolve, reject: reject, onEvent: onEvent }
+        })
+    }
+
     function box(op, args) {
         return new Promise(function(resolve, reject) {
             var id = Box.request(op, args || {})
@@ -68,6 +82,10 @@ QtObject {
 
     property Connections _apiConn: Connections {
         target: Api
+        function onStreamed(id, ev) {
+            var p = net._api[id]
+            if (p && p.onEvent) p.onEvent(ev)
+        }
         function onFinished(id, status, data, error) {
             var p = net._api[id]
             if (!p) return

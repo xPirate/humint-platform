@@ -39,8 +39,7 @@ ApplicationWindow {
     onModeChanged: {
         // The case file closed (locked, wiped, restarted): nobody stays signed in.
         if (mode !== "app" && mode !== "secret" && mode !== "setpin" && Net.me) {
-            Net.me = null
-            Net.draft = null
+            Net.me = null           // drops any drafts too (Net.qml)
             Api.signOut()
         }
     }

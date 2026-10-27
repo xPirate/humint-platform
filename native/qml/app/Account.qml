@@ -39,7 +39,11 @@ Rectangle {
                 title: Net.me ? Net.me.username : ""
                 subtitle: Net.me ? "Role: " + Net.me.role : ""
                 Btn { compact: true; text: "Sign out"
-                      onClicked: Net.post("/api/auth/logout", {}).finally(function() { Api.signOut(); Net.me = null; Net.signedOut() }) }
+                      // Signed out here whether or not the console answers. (No Promise.finally in Qt's JavaScript.)
+                      onClicked: {
+                          function out() { Api.signOut(); Net.me = null; Net.signedOut() }
+                          Net.post("/api/auth/logout", {}).then(out, out)
+                      } }
             }
 
             Card {

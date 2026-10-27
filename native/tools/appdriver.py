@@ -83,6 +83,11 @@ class AppDriver:
     def tap(self, label, timeout=5):
         self.until(lambda: self.button(label) is not None, timeout, f"button {label!r}")
         b = self.button(label)
+        if b.property("checkable"):
+            # A real press flips a checkbox before clicked(); the signal alone does not.
+            b.metaObject().invokeMethod(b, "toggle")
+            if b.metaObject().indexOfSignal("toggled()") >= 0:
+                b.metaObject().invokeMethod(b, "toggled")
         b.metaObject().invokeMethod(b, "clicked")
         self.pump(0.2)
 
