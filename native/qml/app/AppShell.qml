@@ -19,6 +19,14 @@ Item {
         if (history.length > 50) history.shift()
         arg = (a === undefined ? null : a); section = name; boxOpen = false
     }
+    // Swap the current screen (a form) for another without a history step:
+    // after saving, Back goes where it would have before the form opened.
+    function replace(name, a) {
+        a = (a === undefined ? null : a)
+        var top = history.length ? history[history.length - 1] : null
+        if (top && top.section === name && JSON.stringify(top.arg) === JSON.stringify(a)) history.pop()
+        arg = a; section = name
+    }
     function back() {
         if (!history.length) { section = "dashboard"; arg = null; return }
         var h = history.pop(); arg = h.arg; section = h.section
@@ -36,6 +44,7 @@ Item {
         reportEdit:{ file: "ReportEditor.qml", parent: "reports" },
         entities:  { file: "Entities.qml", label: "Records" },
         entity:    { file: "EntityDetail.qml", parent: "entities" },
+        entityEdit:{ file: "EntityForm.qml", parent: "entities" },
         map:       { file: "MapPage.qml", label: "Map" },
         documents: { file: "Documents.qml", label: "Documents" },
         document:  { file: "DocumentDetail.qml", parent: "documents" },

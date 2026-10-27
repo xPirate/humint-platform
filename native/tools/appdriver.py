@@ -113,6 +113,52 @@ class AppDriver:
         self.pump(0.3)
         return f
 
+    def _under_label(self, label):
+        for i in self.items():
+            if i.property("label") == label and i.property("hint") is not None and self.visible(i):
+                return i
+        raise LookupError(f"no field labelled {label!r}")
+
+    def _descendants(self, item):
+        out = []
+
+        def walk(x):
+            for c in x.childItems():
+                out.append(c)
+                walk(c)
+        walk(item)
+        return out
+
+    def set_field(self, label, text):
+        """Fill the text field under a form label."""
+        box = self._under_label(label)
+        for c in self._descendants(box):
+            if c.metaObject().indexOfProperty("cursorPosition") >= 0 and c.metaObject().indexOfProperty("placeholderText") >= 0:
+                c.forceActiveFocus()
+                c.setProperty("text", text)
+                # what typing would announce
+                if c.metaObject().indexOfSignal("textEdited()") >= 0:
+                    c.metaObject().invokeMethod(c, "textEdited")
+                self.pump(0.05)
+                return c
+        raise LookupError(f"no text field under {label!r}")
+
+    def choose(self, label, option):
+        """Pick an option from the drop-down under a form label."""
+        from PySide6.QtCore import Q_ARG, QMetaObject
+        box = self._under_label(label)
+        for c in self._descendants(box):
+            opts = c.property("options")
+            if hasattr(opts, "toVariant"):
+                opts = opts.toVariant()
+            if opts is not None and c.metaObject().indexOfSignal("activated(int)") >= 0:
+                labels = [o[1] for o in opts]
+                i = labels.index(option)
+                QMetaObject.invokeMethod(c, "activated", Q_ARG(int, i))
+                self.pump(0.05)
+                return c
+        raise LookupError(f"no drop-down under {label!r}")
+
     def login(self, username, password):
         self.until(lambda: self.has_text("Sign in to the case file"), 20, "sign-in screen")
         self.type_into("Username", username)

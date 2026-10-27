@@ -10,6 +10,9 @@ Column {
     id: al
     property var items: []
     property bool canDelete: false
+    // On a record's page: images can become its portrait.
+    property string portraitFor: ""
+    property int portraitId: 0
     signal changed()
     spacing: 6 * Theme.s
 
@@ -52,6 +55,12 @@ Column {
                                  modelData.extraction_status || ""].filter(function(x) { return x }).join(" · ") }
                 }
                 Btn { compact: true; text: "Open"; onClicked: fileViewer.show(modelData) }
+                Btn { compact: true; kind: "ghost"; visible: al.portraitFor !== "" && al.isImage(modelData) && al.canDelete
+                      text: al.portraitId === modelData.id ? "Portrait \u2713" : "Use as portrait"
+                      onClicked: Net.post("/api/entities/" + al.portraitFor + "/portrait",
+                                          { attachment_id: al.portraitId === modelData.id ? null : modelData.id })
+                          .then(function() { ui.toast(al.portraitId === modelData.id ? "Portrait cleared" : "Portrait set"); al.changed() })
+                          .catch(function(e) { ui.toast(e.message, true) }) }
                 Btn { compact: true; kind: "danger"; text: "Delete"; visible: al.canDelete
                       onClicked: ui.confirm("Delete this attachment?", modelData.filename, function() {
                           Net.del("/api/attachments/" + modelData.id).then(function() { ui.toast("Deleted"); al.changed() })

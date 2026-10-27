@@ -60,7 +60,7 @@ Rectangle {
             page.saving = false; page.dirty = false; page.error = ""
             page.report = r; page.linked = r.entities.slice(); Net.draft = null
             page.status = "Saved just now"
-            if (!silent) { shell.history.pop(); shell.arg = r.id; shell.section = "report" }
+            if (!silent) shell.replace("report", r.id)
         }).catch(function(e) { page.saving = false; page.status = "Not saved — " + e.message; if (!silent) page.error = e.message })
     }
     Timer { interval: 15000; repeat: true; running: !!page.report

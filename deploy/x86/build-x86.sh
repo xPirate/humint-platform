@@ -75,7 +75,7 @@ if [ "$AS_ROOT" = 0 ]; then
 
     mkdir -p "$WORK"
     free_gb=$(df -Pk "$WORK" | awk 'NR==2 {print int($4/1048576)}')
-    [ "$free_gb" -ge 20 ] || die "only ${free_gb} GB free in $WORK; the build needs about 25 GB"
+    [ "$free_gb" -ge 15 ] || die "only ${free_gb} GB free in $WORK; the build needs about 15 GB (25 GB to keep a few builds around)"
 
     CONF="$WORK/build.conf"
     if [ ! -f "$CONF" ]; then
