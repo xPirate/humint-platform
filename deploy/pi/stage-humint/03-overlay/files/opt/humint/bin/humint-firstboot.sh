@@ -77,6 +77,13 @@ create_store() {
         return 0
     fi
 
+    if [ "${DATA_SIZE:-}" = auto ]; then
+        # Most of the free space, leaving room for updates and logs.
+        local free_mb
+        free_mb="$(df -Pm "$(dirname "$HUMINT_IMG")" | awk 'NR==2 {print $4}')"
+        DATA_SIZE="$(( free_mb * 7 / 10 ))M"
+        [ "${DATA_SIZE%M}" -ge 4096 ] || DATA_SIZE=4096M
+    fi
     banner "Making store" "$DATA_SIZE"
     mkdir -p "$(dirname "$HUMINT_IMG")"
     # Real (not sparse) allocation: a half-written encrypted volume that ran

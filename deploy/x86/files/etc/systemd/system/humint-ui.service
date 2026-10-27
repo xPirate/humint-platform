@@ -1,0 +1,34 @@
+[Unit]
+Description=HUMINT field server — the screen (native app)
+# A bare Wayland compositor (cage) showing only the app, as its own
+# unprivileged account, on the second console. The first console stays a
+# text console: the keyboard fallback for the PIN, and logs.
+After=humint-boxd.service systemd-user-sessions.service
+Wants=humint-boxd.service
+Conflicts=getty@tty2.service
+
+[Service]
+User=humint-ui
+PAMName=login
+TTYPath=/dev/tty2
+TTYReset=yes
+TTYVHangup=yes
+TTYVTDisallocate=yes
+StandardInput=tty-fail
+StandardOutput=journal
+StandardError=journal
+UtmpIdentifier=tty2
+UtmpMode=user
+ExecStartPre=+/usr/bin/chvt 2
+Environment=XDG_SESSION_TYPE=wayland
+Environment=QT_QPA_PLATFORM=wayland
+Environment=HUMINT_FONTS=/opt/humint-platform/frontend/vendor/fonts
+# auto: the on-screen keyboard only when no keyboard is attached; on | off
+Environment=HUMINT_KEYBOARD=auto
+WorkingDirectory=/opt/humint/native
+ExecStart=/usr/bin/cage -d -s -- /opt/humint/ui-venv/bin/python -m humint_ui
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target

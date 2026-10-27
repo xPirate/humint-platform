@@ -1,0 +1,44 @@
+# shellcheck shell=sh
+# Booting the installer USB stick: the root filesystem is the image's own
+# read-only system (humint/rootfs.squashfs on the partition labelled
+# HUMINT-USB) with a RAM-backed layer on top, so nothing on the stick changes.
+#
+# initramfs-tools runs this when the kernel command line says boot=humint
+# (only the stick's GRUB menu does). An installed machine never boots this
+# way, so the script is inert there.
+
+mountroot() {
+    label=HUMINT-USB
+    for x in $(cat /proc/cmdline); do
+        case "$x" in humint.live=*) label="${x#humint.live=}" ;; esac
+    done
+
+    modprobe -q squashfs
+    modprobe -q overlay
+    modprobe -q loop
+
+    log_begin_msg "Waiting for the HUMINT USB stick ($label)"
+    i=0
+    while [ ! -e "/dev/disk/by-label/$label" ] && [ "$i" -lt 60 ]; do
+        sleep 1; i=$((i + 1))
+        [ -x /bin/udevadm ] && /bin/udevadm trigger --action=add >/dev/null 2>&1
+    done
+    log_end_msg
+    [ -e "/dev/disk/by-label/$label" ] || panic "The HUMINT USB stick ($label) was not found."
+
+    mkdir -p /run/live/medium /run/live/rootfs /run/live/rw
+    mount -o ro "/dev/disk/by-label/$label" /run/live/medium ||
+        panic "Could not read the USB stick."
+    loop="$(losetup -f)"
+    losetup -r "$loop" /run/live/medium/humint/rootfs.squashfs ||
+        panic "Could not open the system image on the USB stick."
+    mount -t squashfs -o ro "$loop" /run/live/rootfs || panic "Could not mount the system image."
+    mount -t tmpfs -o size=60%,mode=755 tmpfs /run/live/rw
+    mkdir -p /run/live/rw/upper /run/live/rw/work
+    # shellcheck disable=SC2154  # rootmnt comes from initramfs-tools
+    mount -t overlay overlay \
+        -o "lowerdir=/run/live/rootfs,upperdir=/run/live/rw/upper,workdir=/run/live/rw/work" \
+        "${rootmnt}" || panic "Could not assemble the live system."
+    # /run is moved into the new root by init, so the installer still sees
+    # /run/live/medium and /run/live/rootfs.
+}

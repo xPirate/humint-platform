@@ -1,0 +1,80 @@
+# Packages in the x86 field server image (Ubuntu 24.04 LTS, amd64).
+# One per line; comments and blank lines are ignored. Changing this list
+# rebuilds the base system on the next build.
+
+# ---- booting on any laptop or mini PC ------------------------------------
+linux-generic
+linux-firmware
+intel-microcode
+amd64-microcode
+initramfs-tools
+busybox-initramfs
+zstd
+grub-efi-amd64-signed
+grub-efi-amd64-bin
+shim-signed
+efibootmgr
+systemd-sysv
+systemd-timesyncd
+dbus
+udev
+kmod
+sudo
+locales
+tzdata
+keyboard-configuration
+console-setup
+kbd
+less
+nano
+iproute2
+iputils-ping
+openssh-server
+
+# ---- the appliance (as on the Pi) --------------------------------------------
+cryptsetup
+network-manager
+wpasupplicant
+dnsmasq-base
+avahi-daemon
+openssl
+curl
+ca-certificates
+gnupg
+rfkill
+iw
+wireless-regdb
+python3-venv
+python3-dev
+build-essential
+libpq5
+libopenjp2-7
+libjpeg-turbo8
+fonts-dejavu-core
+tesseract-ocr
+poppler-utils
+postgresql-16
+postgresql-client-16
+rsync
+
+# ---- the installer on the USB stick ------------------------------------------
+whiptail
+gdisk
+parted
+dosfstools
+e2fsprogs
+pv
+
+# ---- the native app: a bare Wayland compositor and the graphics stack ------------
+cage
+libgl1-mesa-dri
+libegl1
+libgles2
+libgbm1
+libinput10
+libxkbcommon0
+libfontconfig1
+libdbus-1-3
+libnss3
+fonts-noto-core
+fonts-noto-mono

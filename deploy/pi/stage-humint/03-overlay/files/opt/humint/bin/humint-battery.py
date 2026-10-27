@@ -26,9 +26,11 @@ with a box about to die mid-write: stops the console, re-locks the case file,
 and powers off. A database cut off mid-write can be repaired; one shut down
 cleanly never needs to be.
 
-  BATTERY=auto        look for an X1203, then a Waveshare HAT (default)
+  BATTERY=auto        look for an X1203, then a Waveshare HAT, then a
+                      laptop's own battery (default)
   BATTERY=x1203       require the X1203
   BATTERY=waveshare   require the Waveshare HAT
+  BATTERY=laptop      the machine's own battery (x86 laptops; auto finds it)
   BATTERY=none        no gauge
   BATTERY_SHUTDOWN_PERCENT=8
   BATTERY_CELLS=2           Waveshare only: cells in series (1 for UPS HAT (C))
@@ -213,24 +215,126 @@ def percent_from_volts(volts: float, cells: int) -> float:
 
 
 # ---------------------------------------------------------------------------
+# Laptops and mini PCs (x86): the kernel's own battery and charger reports
+# ---------------------------------------------------------------------------
+
+class Laptop:
+    """/sys/class/power_supply: every battery the firmware reports (a laptop
+    with two — internal and hot-swap — shows both, and the total), and whether
+    the charger is plugged in. No guessing from voltages: the machine knows."""
+    name = "Laptop battery"
+    cells = 1
+
+    def __init__(self, root=None):
+        self.root = root or os.environ.get("POWER_SUPPLY_ROOT", "/sys/class/power_supply")
+
+    def _read(self, dev, key):
+        try:
+            return open(os.path.join(self.root, dev, key)).read().strip()
+        except OSError:
+            return None
+
+    def _num(self, dev, key):
+        v = self._read(dev, key)
+        try:
+            return float(v) if v is not None else None
+        except ValueError:
+            return None
+
+    def _devices(self):
+        try:
+            names = sorted(os.listdir(self.root))
+        except OSError:
+            return [], []
+        bats, mains = [], []
+        for n in names:
+            kind = self._read(n, "type")
+            # scope=Device: a wireless mouse or keyboard's battery, not ours.
+            if kind == "Battery" and self._read(n, "scope") != "Device" and self._read(n, "present") != "0":
+                bats.append(n)
+            elif kind in ("Mains", "USB"):
+                mains.append(n)
+        return bats, mains
+
+    def looks_right(self) -> bool:
+        return bool(self._devices()[0])
+
+    def sample(self) -> dict:
+        bats, mains = self._devices()
+        now = full = power = 0.0
+        each, statuses = [], []
+        for b in bats:
+            # Energy (µWh) where the firmware reports it, charge (µAh) otherwise.
+            n = self._num(b, "energy_now")
+            f = self._num(b, "energy_full")
+            p = self._num(b, "power_now")
+            if n is None or not f:
+                # µAh × V → µWh, so two batteries reporting differently still add up.
+                v = (self._num(b, "voltage_min_design") or self._num(b, "voltage_now") or 0) / 1e6
+                cn, cf, cur = self._num(b, "charge_now"), self._num(b, "charge_full"), self._num(b, "current_now")
+                n = cn * v if cn is not None and v else None
+                f = cf * v if cf and v else None
+                p = cur * v if cur is not None and v else None
+            cap = self._num(b, "capacity")
+            pct = (n / f * 100.0) if n is not None and f else cap
+            each.append({"name": b, "percent": round(pct, 1) if pct is not None else None,
+                         "status": self._read(b, "status") or "Unknown"})
+            statuses.append(self._read(b, "status") or "Unknown")
+            if n is not None and f:
+                now, full = now + n, full + f
+            if p:
+                power += abs(p)
+        if full:
+            pct = now / full * 100.0
+        else:
+            known = [e["percent"] for e in each if e["percent"] is not None]
+            pct = sum(known) / len(known) if known else None
+        online = [self._read(m, "online") for m in mains]
+        if any(o == "1" for o in online):
+            ac = True
+        elif online and all(o == "0" for o in online):
+            ac = False
+        elif "Discharging" in statuses:
+            ac = False
+        elif statuses and all(s in ("Charging", "Full", "Not charging") for s in statuses):
+            ac = True
+        else:
+            ac = None
+        if pct is None:
+            raise OSError("the battery reports no charge level")
+        volts = self._num(bats[0], "voltage_now") if bats else None
+        out = {"voltage": (volts or 0) / 1e6, "percent": pct, "current_ma": None,
+               "ac_present": ac, "batteries": each}
+        # Minutes left straight from the firmware's power reading.
+        if ac is False and power > 0 and full:
+            out["minutes_left"] = int(now / power * 60)
+        return out
+
+
+# ---------------------------------------------------------------------------
 
 def find(mode: str, cfg: dict):
-    try:
-        bus = _bus(1)
-    except Exception as exc:
-        if mode in ("x1203", "waveshare"):
-            print(f"humint-battery: no I2C bus: {exc}", file=sys.stderr)
-        return None
-    if mode in ("auto", "x1203"):
-        dev = X1203(bus, int(cfg.get("BATTERY_PLD_GPIO") or 6),
-                    int(cfg.get("BATTERY_PLD_AC_LEVEL") or 1))
-        if dev.looks_right():
-            return dev
-    if mode in ("auto", "waveshare"):
-        for addr in INA219.ADDRESSES:
-            dev = INA219(bus, addr, max(1, int(cfg.get("BATTERY_CELLS") or 2)))
+    if mode in ("auto", "x1203", "waveshare"):
+        try:
+            bus = _bus(1)
+        except Exception as exc:
+            bus = None
+            if mode in ("x1203", "waveshare"):
+                print(f"humint-battery: no I2C bus: {exc}", file=sys.stderr)
+        if bus is not None and mode in ("auto", "x1203"):
+            dev = X1203(bus, int(cfg.get("BATTERY_PLD_GPIO") or 6),
+                        int(cfg.get("BATTERY_PLD_AC_LEVEL") or 1))
             if dev.looks_right():
                 return dev
+        if bus is not None and mode in ("auto", "waveshare"):
+            for addr in INA219.ADDRESSES:
+                dev = INA219(bus, addr, max(1, int(cfg.get("BATTERY_CELLS") or 2)))
+                if dev.looks_right():
+                    return dev
+    if mode in ("auto", "laptop"):
+        dev = Laptop()
+        if dev.looks_right():
+            return dev
     return None
 
 
@@ -282,6 +386,8 @@ class Tracker:
                  "updated": int(now)}
         if s["current_ma"] is not None:
             state["current_ma"] = round(s["current_ma"], 1)
+        if s.get("batteries"):
+            state["batteries"] = s["batteries"]
 
         # Time left: from the current where the board measures it, otherwise
         # from how fast the charge has been falling over the last ~10 minutes.
@@ -294,6 +400,8 @@ class Tracker:
                 (t0, p0), (t1, p1) = self.pct_hist[0], self.pct_hist[-1]
                 if t1 - t0 >= 180 and p0 > p1:
                     mins = int(p1 / ((p0 - p1) / (t1 - t0)) / 60)
+            if s.get("minutes_left") is not None:
+                mins = s["minutes_left"]
             if mins is not None:
                 state["minutes_left"] = mins
         else:

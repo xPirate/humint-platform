@@ -1,0 +1,110 @@
+# HUMINT field server (x86) — appliance configuration
+#
+# OPTIONAL. With no config file at all, the machine boots with the defaults
+# below: a hotspot called humint-field with a password it makes up and shows
+# on screen, the time zone the installer was built in, and the Wi-Fi country
+# of that time zone. To change anything, copy this file to
+#   humint-appliance.conf
+# on the installer USB stick's HUMINT-BOOT partition (readable on any
+# computer), edit what you need — you can delete every line you leave
+# alone — and install. The installer copies it onto the machine (its EFI
+# partition, /boot/efi). On an installed machine, put it at
+# /boot/efi/humint-appliance.conf before first boot.
+#
+# The first boot reads this once, sets the machine up, and renames it to
+# humint-appliance.conf.done so your Wi-Fi passphrase is not left sitting on
+# a partition any computer can read. The network settings can be changed
+# later from the app's Box menu or with `humint-ctl net`.
+#
+# The first boot needs NO internet: everything is already installed.
+#
+# This is sourced as a shell file: KEY=value, no spaces around =, quote any
+# value with spaces.
+
+# ---- identity -------------------------------------------------------------
+# The device's name on the network. Phones reach the console at
+# http://<HOSTNAME>.local as well as by IP.
+HOSTNAME=humint
+# Shown in the console's top bar and on exported reports.
+INSTANCE_NAME="HUMINT Field Server"
+# e.g. America/Chicago, Europe/London. Empty: the time zone the image was
+# built in.
+TIMEZONE=
+
+# ---- the operator login (SSH and the keyboard console) --------------------
+# random : (recommended) first boot replaces the password the image was built
+#          with — the same on every box flashed from it — with one of this
+#          box's own, shown once on the screen. Lost it? Menu → New login
+#          password on the screen, or `sudo humint-ctl login-password`.
+# keep   : keep the build password.
+LOGIN_PASSWORD=random
+# Optional: one SSH public key line ("ssh-ed25519 AAAA… you@laptop"). When set,
+# it is installed for the login and SSH stops accepting passwords at all.
+SSH_AUTHORIZED_KEY=""
+
+# ---- Wi-Fi regulatory domain ---------------------------------------------
+# Two-letter country code (US, GB, DE, …). The machine will not transmit on Wi-Fi at
+# all until it knows which country's rules to follow. Empty: the country of
+# TIMEZONE. Set it when you deploy somewhere else.
+WIFI_COUNTRY=
+
+# ---- how the team connects in the field ----------------------------------
+# hotspot : the machine's own Wi-Fi is the access point the team joins.
+# client  : the machine joins an existing Wi-Fi (e.g. a hotel network) and serves
+#           the console on it. No access point.
+# wired   : Ethernet only; Wi-Fi left off. Plug it into a switch.
+NET_MODE=hotspot
+
+# -- hotspot settings (NET_MODE=hotspot) --
+AP_SSID=humint-field
+# 8–63 characters. Empty: first boot makes one up and shows it on the touch
+# screen (and the app's Join screen shows it, with a QR code, any time).
+AP_PSK=
+# bg = 2.4 GHz (longer range, slower). a = 5 GHz (shorter range, faster).
+AP_BAND=bg
+AP_CHANNEL=6
+# true hides the network name; the team must type the SSID to join.
+AP_HIDDEN=false
+
+# -- client settings (NET_MODE=client) --
+CLIENT_SSID=
+CLIENT_PSK=
+
+# -- wired settings (NET_MODE=wired) --
+# true: the machine hands out addresses on its Ethernet port, so a switch full of
+#       laptops gets on the network with no other kit. false: it expects
+#       to receive an address from a router already on the wire.
+WIRED_DHCP_SERVER=true
+
+# ---- the case file's encrypted store -------------------------------------
+# All case data (the database, its settings, uploaded files, map packs)
+# lives in one
+# encrypted volume this large. It is created once, at setup, and cannot be
+# grown later without rebuilding, so size it for the deployment. Suffix with
+# G for gigabytes, or auto: 70% of the disk space left after the system
+# (about 8 GB), which leaves room for updates and logs.
+DATA_SIZE=auto
+
+# ---- HTTPS ----------------------------------------------------------------
+# on  : the console is served over HTTPS (port 443) with a certificate the
+#       box issues itself. Each phone and laptop installs the box's
+#       certificate ONCE, from http://<HOSTNAME>.local/trust (the screen and
+#       `humint-ctl tls` show its fingerprint to check). That certificate is
+#       restricted to local names and private addresses, so it cannot be
+#       used to impersonate any other site. Port 80 then only hands out the
+#       certificate and redirects to https://.
+# off : plain HTTP on API_PORT, as on a home LAN.
+TLS=on
+
+# The plain-HTTP port, used only with TLS=off. 80 lets phones use
+# http://<ip> with no port.
+API_PORT=80
+
+
+# ---- battery ---------------------------------------------------------------
+# A laptop's own battery is found by itself. On battery power, when the
+# charge falls to BATTERY_SHUTDOWN_PERCENT the machine locks the case file
+# and shuts down cleanly, before the battery dies mid-write.
+#   auto | laptop | none
+BATTERY=auto
+BATTERY_SHUTDOWN_PERCENT=8

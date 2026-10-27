@@ -1,0 +1,15 @@
+[Unit]
+Description=HUMINT field server — the native app's hands on the machine (root helper)
+# Before first boot and unlock, so the screen can take the PIN.
+Before=humint-firstboot.service humint-unlock.service
+After=local-fs.target
+
+[Service]
+Type=simple
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/usr/bin/python3 /opt/humint/bin/humint-boxd.py
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target

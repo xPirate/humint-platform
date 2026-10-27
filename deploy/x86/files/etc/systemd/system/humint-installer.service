@@ -1,0 +1,22 @@
+[Unit]
+Description=HUMINT field server — install from the USB stick
+# Only on the stick's live system (its GRUB menu adds humint.install).
+ConditionKernelCommandLine=humint.install
+After=systemd-udev-settle.service systemd-user-sessions.service
+Conflicts=getty@tty1.service
+Before=getty@tty1.service
+
+[Service]
+Type=oneshot
+Environment=TERM=linux
+StandardInput=tty-force
+StandardOutput=tty
+StandardError=journal+console
+TTYPath=/dev/tty1
+TTYReset=yes
+TTYVHangup=yes
+ExecStart=/opt/humint/bin/humint-install.sh
+TimeoutStartSec=0
+
+[Install]
+WantedBy=multi-user.target

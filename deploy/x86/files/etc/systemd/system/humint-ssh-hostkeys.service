@@ -1,0 +1,13 @@
+[Unit]
+Description=HUMINT field server — this machine's own SSH host keys
+# The image carries none (every machine installed from it would share
+# them); each machine makes its own before SSH first starts.
+Before=ssh.service ssh.socket
+ConditionPathExists=!/etc/ssh/ssh_host_ed25519_key
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/ssh-keygen -A
+
+[Install]
+WantedBy=multi-user.target ssh.service ssh.socket

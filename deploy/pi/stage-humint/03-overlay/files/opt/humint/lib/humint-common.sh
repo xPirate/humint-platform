@@ -169,10 +169,19 @@ lock_store() {
 
 # ---- the touch panel -------------------------------------------------------
 
-panel_running() { systemctl -q is-active humint-panel.service 2>/dev/null; }
+# The touch panel (Pi) or the native app's helper (x86, humint-boxd) — either
+# takes the PIN on screen.
+panel_running() {
+    systemctl -q is-active humint-panel.service 2>/dev/null ||
+        systemctl -q is-active humint-boxd.service 2>/dev/null
+}
 
-# humint-display found a screen the panel will drive.
-panel_expected() { grep -q '"panel": {' "$HUMINT_RUN/display.json" 2>/dev/null; }
+# humint-display found a screen the panel will drive, or this machine has
+# the native app.
+panel_expected() {
+    grep -q '"panel": {' "$HUMINT_RUN/display.json" 2>/dev/null ||
+        systemctl -q is-enabled humint-boxd.service 2>/dev/null
+}
 
 # Wait (briefly) for the panel to come up when one is fitted.
 wait_for_panel() {

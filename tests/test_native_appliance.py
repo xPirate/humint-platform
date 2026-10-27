@@ -1,0 +1,139 @@
+"""The x86 native app's machine screens, end to end: the real app (off-screen),
+the real machine helper (humint-boxd, against a fake machine's files) and a
+real console — first boot's PIN, unlock, the first admin account, the Box
+panel and a phone upload code."""
+import json
+import os
+import sys
+import time
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from harness import ROOT, Console, check, finish  # noqa: E402
+
+sys.path.insert(0, os.path.join(ROOT, "native", "tools"))
+from shoot import FakeMachine  # noqa: E402
+from appdriver import AppDriver  # noqa: E402
+
+SHOTS = os.environ.get("SHOTS")
+
+
+def shot(d, name):
+    if SHOTS:
+        os.makedirs(SHOTS, exist_ok=True)
+        d.shot(os.path.join(SHOTS, name + ".png"))
+
+
+m = FakeMachine()
+token = "panel-token-for-tests"
+m.write("srv/humint-data/panel.token", token + "\n")
+tf = os.path.join(m.root, "console-panel.token")
+open(tf, "w").write(token + "\n")
+c = Console("native_app", env={"PANEL_TOKEN_FILE": tf}).start()
+m.start(console_url=c.url)
+d = AppDriver(m.sock, console_url=c.url)
+
+# ---- first boot -------------------------------------------------------------------
+m.write("run/humint/message.json", json.dumps({"lines": ["Making store", "12G"], "time": time.time()}))
+d.until(lambda: d.has_text("Making store"), what="setup progress")
+check(d.has_text("First-time setup"), "first boot shows what it is doing, and that it is first-time setup")
+
+# First boot asks for the PIN: the app takes it twice and hands it over.
+os.mkfifo(m.path("run/humint/pin-setup.fifo"), 0o600)
+fifo = os.open(m.path("run/humint/pin-setup.fifo"), os.O_RDWR | os.O_NONBLOCK)
+m.write("run/humint/pin-setup", "new\n")
+d.until(lambda: d.has_text("Choose the unlock PIN"), what="set-PIN screen")
+shot(d, "01-setpin")
+for k in "12":
+    d.tap(k)
+d.tap("Next")
+check(d.has_text("Use at least 4 characters"), "a PIN under four characters is refused before it goes anywhere")
+for k in "2468":
+    d.tap(k)
+d.tap("Next")
+d.until(lambda: d.has_text("Type it again"), what="confirm")
+for k in "2469":
+    d.tap(k)
+d.tap("Set PIN")
+check(d.has_text("didn't match"), "a mismatch starts again")
+for k in "2468":
+    d.tap(k)
+d.tap("Next")
+for k in "2468":
+    d.tap(k)
+d.tap("Set PIN")
+time.sleep(0.3)
+d.pump(0.3)
+got = os.read(fifo, 100).decode()
+check(got == "2468\n", f"the PIN goes to first boot through its pipe, once ({got!r})")
+m.remove("run/humint/pin-setup")
+
+# ---- later boots: unlock ----------------------------------------------------------
+m.write("srv/humint.img", "x")
+m.write("var/lib/humint/firstboot.done", "")
+d.until(lambda: d.has_text("Unlock the case file"), what="unlock")
+for k in "5555":
+    d.tap(k)
+d.tap("Unlock")
+d.until(lambda: d.has_text("Wrong PIN"), what="wrong PIN")
+check(d.has_text("4 tries left"), "a wrong PIN says how many tries are left")
+for k in "1234":
+    d.tap(k)
+d.tap("Unlock")
+d.until(lambda: d.has_text("A new case file"), timeout=20, what="sign-in (bootstrap)")
+check(m.calls()[:2] == ["try 5555", "try 1234"], "both tries went through humint-unlock-try")
+
+# ---- the first admin account ----------------------------------------------------------
+shot(d, "02-bootstrap")
+d.type_into("Username", "ana")
+d.type_into("Password", "correct horse battery")
+d.type_into("Password again (at least 10 characters)", "correct horse battery")
+d.tap("Create admin account")
+d.until(lambda: d.button("Box") is not None and d.has_text("Dashboard"), timeout=15, what="signed in")
+check(c.sql("SELECT username, role FROM users") == [("ana", "admin")], "it creates the first admin account")
+shot(d, "03-shell")
+
+# ---- the Box panel ----------------------------------------------------------------------
+d.tap("Box")
+d.until(lambda: d.has_text("Team address"), what="box status")
+shot(d, "04-box-status")
+d.tap("Join")
+d.until(lambda: d.has_text("Join the field Wi-Fi"), what="join")
+shot(d, "05-box-join")
+d.tap("Trust")
+d.until(lambda: d.has_text("Check its fingerprint"), what="trust")
+d.tap("Actions")
+d.until(lambda: d.button("Lock case file") is not None, what="actions")
+shot(d, "06-box-actions")
+d.tap("Restart console")
+d.until(lambda: "ctl restart" in m.calls(), what="restart")
+check(True, "Restart console runs humint-ctl restart")
+d.tap("Wipe case file")
+d.tap("Yes")
+check(d.has_text("This cannot be undone."), "the wipe asks twice")
+d.tap("Cancel")
+check("ctl wipe --yes" not in m.calls(), "and cancelling the second question wipes nothing")
+
+# Phone upload codes, through the helper and the panel's token.
+d.tap("Phone upload")
+d.until(lambda: d.button("ana") is not None, what="people")
+d.tap("ana")
+d.until(lambda: d.has_text("It closes in"), timeout=10, what="upload code")
+shot(d, "07-box-upload")
+audit = c.sql("SELECT actor_username, actor_kind, action FROM audit_log WHERE action LIKE 'field.device.%%'")
+check(audit == [("touch panel", "panel", "field.device.enroll")], f"the code is issued as the touch panel ({audit})")
+d.tap("Done")
+check(not d.has_text("It closes in"), "Done takes the code off the screen")
+
+# The helper refuses anything outside its list.
+from humint_ui.box import call  # noqa: E402
+os.environ["HUMINT_BOX_SOCK"] = m.sock
+check(not call("ctl", {"action": "net", "args": ["client", "evil"]})["ok"], "the helper refuses commands it does not know")
+check(not call("ctl", {"action": "logs", "args": []})["ok"], "including real humint-ctl commands not offered to the app")
+
+# Locking from elsewhere signs the app out.
+m.remove("run/humint-data.ready")
+d.until(lambda: d.has_text("Unlock the case file"), what="locked again")
+check(not d.has_text("Dashboard"), "when the case file locks, nobody stays signed in")
+m.stop()
+c.stop()
+finish()
