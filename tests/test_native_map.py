@@ -82,7 +82,6 @@ if SHOTS:
     os.makedirs(SHOTS, exist_ok=True)
     d.shot(os.path.join(SHOTS, "50-map.png"))
 # Tap a marker
-from PySide6.QtCore import QMetaObject  # noqa: E402,F401
 markers = mp.property("markers").toVariant() if hasattr(mp.property("markers"), "toVariant") else mp.property("markers")
 east = [x for x in markers if x["label"] == "East gate"][0]
 check(east["color"].lower() in ("#ff4d3d",), f"a Non-permissive location is drawn in its colour ({east['color']})")

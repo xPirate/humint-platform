@@ -18,17 +18,21 @@
 #                 reused while the package list is unchanged)
 #   --no-tmux     do not wrap the build in tmux when on SSH
 #   --no-compress leave out/humint-x86-installer.img uncompressed (tests)
+#   --quick       reuse the last build's system and only refresh the code,
+#                 scripts and app in it (for changes to those; a change to
+#                 Python requirements or packages needs a full build)
 #   HUMINT_X86_DIR=...   where the build goes (default ~/humint-x86)
 #   UBUNTU_MIRROR=...    package mirror (default archive.ubuntu.com)
 set -euo pipefail
 
-CLEAN=0 USE_TMUX=1 COMPRESS=1 AS_ROOT=0
+CLEAN=0 USE_TMUX=1 COMPRESS=1 AS_ROOT=0 QUICK=0
 ARGS=("$@")
 for a in "$@"; do
     case "$a" in
         --clean) CLEAN=1 ;;
         --no-tmux) USE_TMUX=0 ;;
         --no-compress) COMPRESS=0 ;;
+        --quick) QUICK=1 ;;
         --as-root) AS_ROOT=1 ;;
         -h|--help) sed -n '2,24p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
         *) echo "unknown option: $a (see --help)" >&2; exit 2 ;;
@@ -205,10 +209,15 @@ else
 fi
 
 # ---- 2. this build's system: base + app + appliance files -----------------------------
-say "Copying the base system"
-rm -rf "$ROOT"
-mkdir -p "$ROOT"
-rsync -aHAX "$BASE/" "$ROOT/"
+if [ "$QUICK" = 1 ] && [ -d "$ROOT/opt/humint/ui-venv" ]; then
+    say "Reusing the last build's system (--quick): refreshing the code and the app"
+else
+    QUICK=0
+    say "Copying the base system"
+    rm -rf "$ROOT"
+    mkdir -p "$ROOT"
+    rsync -aHAX "$BASE/" "$ROOT/"
+fi
 chroot_mount "$ROOT"
 cp /etc/resolv.conf "$ROOT/etc/resolv.conf"
 copy_build_ca "$ROOT"
@@ -223,7 +232,7 @@ for part in api worker frontend db; do
 done
 install -m 644 "$REPO/.env.example" "$ROOT/opt/humint-platform/.env.example"
 install -m 644 "$WORK/BUILD.json" "$ROOT/opt/humint-platform/BUILD.json"
-in_root "$ROOT" "
+[ "$QUICK" = 1 ] || in_root "$ROOT" "
     id humintd >/dev/null 2>&1 || adduser --system --group --home /var/lib/humintd --no-create-home humintd
     python3 -m venv /opt/humint/venv
     /opt/humint/venv/bin/pip install -q --cache-dir /var/cache/humint-pip --upgrade pip wheel
@@ -233,7 +242,7 @@ in_root "$ROOT" "
 " || die "installing the console's Python packages failed"
 say "Installing the native app (the machine's own screen)"
 rsync -a --delete --exclude '__pycache__' --exclude 'tools' "$REPO/native/" "$ROOT/opt/humint/native/"
-in_root "$ROOT" "
+[ "$QUICK" = 1 ] || in_root "$ROOT" "
     getent group humint-ui >/dev/null || groupadd --system humint-ui
     id humint-ui >/dev/null 2>&1 || useradd --system --gid humint-ui --groups video,render,input \
         --home-dir /var/lib/humint-ui --create-home --shell /usr/sbin/nologin humint-ui

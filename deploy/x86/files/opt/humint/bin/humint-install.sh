@@ -45,7 +45,10 @@ ask() { [ "$YES" = 1 ] || whiptail --title "$TITLE" "$@" 3>&1 1>&2 2>&3; }
 
 fail() {
     log "FAILED: $*"
-    if [ "$YES" = 1 ]; then echo "FAILED: $*" >&2; exit 1; fi
+    if [ "$YES" = 1 ]; then
+        { echo "HUMINT-INSTALL-FAILED: $*"; tail -25 "$LOG"; } >/dev/console 2>/dev/null || true
+        echo "FAILED: $*" >&2; exit 1
+    fi
     local choice
     choice="$(whiptail --title "$TITLE" --menu "The install stopped:\n\n$*\n\nThe last lines of the log are in $LOG." 20 74 3 \
         retry "Start again" shell "Open a shell (advanced)" off "Power off" 3>&1 1>&2 2>&3)" || choice=off
@@ -173,15 +176,20 @@ EOF
     if [ -d /sys/firmware/efi/efivars ]; then
         mount --bind /sys/firmware/efi/efivars "$TARGET/sys/firmware/efi/efivars" 2>/dev/null || true
     fi
-    # --force-extra-removable also writes EFI/BOOT/BOOTX64.EFI, so machines
-    # whose firmware forgets boot entries still find it.
+    # Twice: once as a named boot entry (EFI/humint, registered with the
+    # firmware), once at the removable-media path (EFI/BOOT/BOOTX64.EFI), so
+    # machines whose firmware forgets boot entries still find it. Both are the
+    # signed shim + GRUB, so Secure Boot can stay on.
     if ! chroot "$TARGET" grub-install --target=x86_64-efi --efi-directory=/boot/efi \
-            --bootloader-id=humint --uefi-secure-boot --force-extra-removable >>"$LOG" 2>&1; then
+            --bootloader-id=humint --uefi-secure-boot >>"$LOG" 2>&1; then
         log "grub-install could not write a boot entry; retrying without one"
         chroot "$TARGET" grub-install --target=x86_64-efi --efi-directory=/boot/efi \
-            --bootloader-id=humint --uefi-secure-boot --force-extra-removable --no-nvram >>"$LOG" 2>&1 ||
+            --bootloader-id=humint --uefi-secure-boot --no-nvram >>"$LOG" 2>&1 ||
             fail "Installing the boot loader failed."
     fi
+    chroot "$TARGET" grub-install --target=x86_64-efi --efi-directory=/boot/efi \
+        --uefi-secure-boot --removable --no-nvram >>"$LOG" 2>&1 ||
+        log "the removable-media copy of the boot loader was not written (the named entry stands)"
     chroot "$TARGET" update-grub >>"$LOG" 2>&1 || fail "Writing the boot menu failed."
     sync
     cp "$LOG" "$TARGET/var/log/humint-install.log" 2>/dev/null || true

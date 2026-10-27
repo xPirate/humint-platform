@@ -9,6 +9,7 @@ AbstractButton {
     property string meta: ""
     property string snippet: ""
     property color accent: "transparent"
+    text: title          // for screen readers and the tests
     hoverEnabled: true
     implicitHeight: col.implicitHeight + 2 * 12 * Theme.s
     background: Rectangle {
