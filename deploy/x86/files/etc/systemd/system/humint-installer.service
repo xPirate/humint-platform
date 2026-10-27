@@ -11,7 +11,11 @@ Type=oneshot
 Environment=TERM=linux
 StandardInput=tty-force
 StandardOutput=tty
-StandardError=journal+console
+# The screen, not the log: whiptail draws its dialogs on stderr (the
+# installer swaps its streams to read the answer), and pv its progress.
+# Sent to the journal they never appeared — the disk menu came out as lines
+# of log on the console. The installer keeps its own log in /run.
+StandardError=tty
 TTYPath=/dev/tty1
 TTYReset=yes
 TTYVHangup=yes
