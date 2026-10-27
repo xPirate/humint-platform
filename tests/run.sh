@@ -2,6 +2,8 @@
 # Run every test file; exit non-zero if any fails.
 #   tests/run.sh                 all of them
 #   tests/run.sh worker auth     only files whose name contains one of these
+#   HUMINT_SKIP_NATIVE=1         leave out the native app's (tests/test_native_*),
+#                                which CI runs on their own Python (3.12)
 # On GitHub Actions each failing file is also an annotation carrying the end
 # of its output, so the failure can be read from the run's summary.
 set -uo pipefail
@@ -10,6 +12,7 @@ failed=()
 out="$(mktemp)"
 trap 'rm -f "$out"' EXIT
 for t in tests/test_*.py; do
+    case "$t" in tests/test_native_*) [ -n "${HUMINT_SKIP_NATIVE:-}" ] && continue ;; esac
     if [ $# -gt 0 ]; then
         hit=0; for w in "$@"; do case "$t" in *"$w"*) hit=1;; esac; done
         [ $hit = 1 ] || continue

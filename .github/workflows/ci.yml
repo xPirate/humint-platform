@@ -5,8 +5,10 @@
 #            on the field-server scripts (Pi and x86), and the frontend's
 #            JavaScript.
 #   tests    tests/run.sh against a real Postgres 16: the API under uvicorn,
-#            the worker in-process, nothing mocked — and the x86 machine's
-#            native app (tests/test_native_*.py), off-screen.
+#            the worker in-process, nothing mocked.
+#   native   the x86 machine's native app (tests/test_native_*.py), off-screen,
+#            on Python 3.12 — what it runs on (Ubuntu 24.04); PySide6 has a
+#            reference-count bug that only Python 3.11 exposes.
 #   docker   the api and worker images still build.
 #   android  the app's JVM unit tests (title parity with the console, …).
 name: CI
@@ -83,16 +85,48 @@ jobs:
           cache: pip
       - name: dependencies
         run: |
-          # (and what Qt needs to run the native app off-screen). The runner's
-          # package lists go stale: refresh them first, or installs 404.
+          # The runner's package lists go stale: refresh them first, or installs 404.
           sudo apt-get update -qq
-          sudo apt-get install -y -qq tesseract-ocr poppler-utils fonts-dejavu-core cryptsetup-bin \
-            libegl1 libgl1 libxkbcommon0 libfontconfig1 libdbus-1-3 >/dev/null
-          python -m pip install -q -r api/requirements.txt -r worker/requirements.txt -r native/requirements.txt \
-            pygame playwright
+          sudo apt-get install -y -qq tesseract-ocr poppler-utils fonts-dejavu-core cryptsetup-bin >/dev/null
+          python -m pip install -q -r api/requirements.txt -r worker/requirements.txt pygame playwright
           python -m playwright install --with-deps chromium
       - name: tests
         run: tests/run.sh
+        env:
+          HUMINT_SKIP_NATIVE: "1"
+
+  native:
+    runs-on: ubuntu-24.04
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: humint_test
+          POSTGRES_PASSWORD: Test-password-123
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U humint_test"
+          --health-interval 5s --health-timeout 5s --health-retries 20
+    env:
+      POSTGRES_HOST: 127.0.0.1
+      POSTGRES_PORT: "5432"
+      POSTGRES_USER: humint_test
+      POSTGRES_PASSWORD: Test-password-123
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: dependencies
+        run: |
+          # What Qt needs to run off-screen, and poppler for documents.
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq poppler-utils fonts-dejavu-core \
+            libegl1 libgl1 libxkbcommon0 libfontconfig1 libdbus-1-3 >/dev/null
+          python -m pip install -q -r api/requirements.txt -r worker/requirements.txt -r native/requirements.txt
+      - name: tests
+        run: tests/run.sh native
 
   docker:
     runs-on: ubuntu-24.04
