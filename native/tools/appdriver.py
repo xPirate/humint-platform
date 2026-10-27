@@ -72,11 +72,14 @@ class AppDriver:
         return any(needle in t for t in self.texts())
 
     def button(self, label):
+        """The topmost visible, enabled button with this text (a dialog's
+        button over the page's, as a person would see it)."""
+        found = None
         for i in self.items():
             if i.metaObject().indexOfSignal("clicked()") >= 0 and i.property("text") == label and self.visible(i) \
                     and i.property("enabled"):
-                return i
-        return None
+                found = i
+        return found
 
     def tap(self, label, timeout=5):
         self.until(lambda: self.button(label) is not None, timeout, f"button {label!r}")

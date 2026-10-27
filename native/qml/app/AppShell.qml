@@ -48,10 +48,10 @@ Item {
         map:       { file: "MapPage.qml", label: "Map" },
         documents: { file: "Documents.qml", label: "Documents" },
         document:  { file: "DocumentDetail.qml", parent: "documents" },
-        bolo:      { file: "Bolo.qml", label: "BOLO" },
-        priorities:{ file: "Priorities.qml", label: "Priorities" },
+        bolo:      { file: "Bolo.qml", label: "BOLO", board: "bolo" },
+        priorities:{ file: "Priorities.qml", label: "Priorities", board: "priorities" },
         feeds:     { file: "Feeds.qml", label: "Feeds" },
-        roster:    { file: "Roster.qml", label: "Roster" },
+        roster:    { file: "Roster.qml", label: "Roster", board: "roster" },
         analyst:   { file: "Analyst.qml", parent: "roster" },
         debrief:   { file: "Debrief.qml", parent: "reports" },
         assistant: { file: "Assistant.qml", label: "Assistant", noViewer: true },
@@ -62,8 +62,14 @@ Item {
     readonly property var navOrder: ["dashboard", "review", "reports", "entities", "map", "documents", "bolo",
                                      "priorities", "feeds", "roster", "assistant", "audit", "admin"]
 
+    // Which boards an admin has switched on, and what they are called.
+    property var boards: ({})
+    function loadBoards() {
+        Net.get("/api/boards").then(function(r) { shell.boards = r.boards || {} }).catch(function() {})
+    }
     Connections {
         target: Net
+        function onMeChanged() { if (Net.me) shell.loadBoards() }
         function onSignedOut() { shell.boxOpen = false; shell.section = "dashboard"; shell.history = [] }
     }
 
@@ -105,10 +111,12 @@ Item {
                     Repeater {
                         model: shell.navOrder.filter(function(k) {
                             var p = shell.pages[k]
+                            if (p.board && !(shell.boards[p.board] && shell.boards[p.board].enabled)) return false
                             return !(p.adminOnly && !shell.admin) && !(p.noViewer && shell.viewer)
                         })
                         delegate: AbstractButton {
-                            text: shell.pages[modelData].label
+                            text: shell.pages[modelData].board && shell.boards[shell.pages[modelData].board]
+                                  ? shell.boards[shell.pages[modelData].board].label : shell.pages[modelData].label
                             width: navCol.width
                             height: 42 * Theme.s
                             readonly property bool current: shell.section === modelData
