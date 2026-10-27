@@ -38,6 +38,7 @@ Rectangle {
                 Layout.fillWidth: true
                 title: Net.me ? Net.me.username : ""
                 subtitle: Net.me ? "Role: " + Net.me.role : ""
+                Btn { compact: true; text: "Your profile"; onClicked: shell.go("analyst", Net.me ? Net.me.username : null) }
                 Btn { compact: true; text: "Sign out"
                       // Signed out here whether or not the console answers. (No Promise.finally in Qt's JavaScript.)
                       onClicked: {

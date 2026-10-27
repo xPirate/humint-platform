@@ -11,10 +11,17 @@ Rectangle {
     id: page
     color: Theme.bg
     property var report: null
+    property string author: ""      // the report has the author's id; the name is looked up
     property string error: ""
 
     function load() {
-        Net.get("/api/reports/" + shell.arg).then(function(r) { page.report = r; page.error = "" })
+        Net.get("/api/reports/" + shell.arg).then(function(r) {
+            page.report = r; page.error = ""
+            if (r.author_id) Net.get("/api/analysts").then(function(d) {
+                var u = (d.items || []).filter(function(x) { return x.id === r.author_id })[0]
+                page.author = u ? u.username : ""
+            }).catch(function() {})
+        })
             .catch(function(e) { page.error = e.message })
     }
     Component.onCompleted: load()
@@ -54,10 +61,13 @@ Rectangle {
                       text: page.report && page.report.credibility_rating
                             ? "Credibility " + page.report.credibility_rating + " — " + Fmt.CREDIBILITY[page.report.credibility_rating] : "" }
                 Txt { kind: "muted"; visible: !!page.report
-                      text: page.report ? "Written " + Fmt.exactTime(page.report.created_at)
-                                          + (page.report.author_username ? " by " + page.report.author_username : "")
-                                          + (page.report.updated_at && page.report.updated_at !== page.report.created_at
-                                             ? " · edited " + Fmt.relativeTime(page.report.updated_at) : "") : "" }
+                      text: page.report ? "Written " + Fmt.exactTime(page.report.created_at) + (page.author ? " by" : "") : "" }
+                // The author: everything they have entered is a tap away.
+                Btn { compact: true; kind: "ghost"; visible: page.author !== ""
+                      text: page.author
+                      onClicked: shell.go("analyst", page.author) }
+                Txt { kind: "muted"; visible: !!(page.report && page.report.updated_at && page.report.updated_at !== page.report.created_at)
+                      text: page.report && page.report.updated_at ? "· edited " + Fmt.relativeTime(page.report.updated_at) : "" }
             }
 
             // The body, as a document.

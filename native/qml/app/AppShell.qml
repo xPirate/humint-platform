@@ -52,7 +52,7 @@ Item {
         priorities:{ file: "Priorities.qml", label: "Priorities", board: "priorities" },
         feeds:     { file: "Feeds.qml", label: "Feeds" },
         roster:    { file: "Roster.qml", label: "Roster", board: "roster" },
-        analyst:   { file: "Analyst.qml", parent: "roster" },
+        analyst:   { file: "Analyst.qml", label: "Team" },
         debrief:   { file: "Debrief.qml", parent: "reports" },
         assistant: { file: "Assistant.qml", label: "Assistant", noViewer: true },
         audit:     { file: "Audit.qml", label: "Audit log", adminOnly: true },
@@ -60,7 +60,7 @@ Item {
         account:   { file: "Account.qml", label: "Account" }
     })
     readonly property var navOrder: ["dashboard", "review", "reports", "entities", "map", "documents", "bolo",
-                                     "priorities", "feeds", "roster", "assistant", "audit", "admin"]
+                                     "priorities", "feeds", "roster", "analyst", "assistant", "audit", "admin"]
 
     // Which boards an admin has switched on, and what they are called.
     property var boards: ({})
