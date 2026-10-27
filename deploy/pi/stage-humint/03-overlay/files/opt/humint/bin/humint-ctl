@@ -105,11 +105,26 @@ cmd_net() {
     case "$mode" in
         hotspot) sed -i 's/^NET_MODE=.*/NET_MODE=hotspot/' "$HUMINT_ENV" ;;
         client)
+            # The password may also come on stdin (HUMINT_PSK_STDIN=1), so it
+            # is not on a command line for `ps` to show.
             local ssid="${1:-}" psk="${2:-}"
-            [ -n "$ssid" ] || die "net client needs an SSID"
-            sed -i 's/^NET_MODE=.*/NET_MODE=client/' "$HUMINT_ENV"
-            sed -i "s/^CLIENT_SSID=.*/CLIENT_SSID=$ssid/" "$HUMINT_ENV"
-            sed -i "s/^CLIENT_PSK=.*/CLIENT_PSK=$psk/" "$HUMINT_ENV"
+            [ "${HUMINT_PSK_STDIN:-}" = 1 ] && IFS= read -r psk || true
+            [ -n "$ssid" ] || die "net client needs the Wi-Fi's name"
+            # A Wi-Fi name is 1-32 bytes; a WPA password 8-63 characters (or
+            # 64 hex digits), or none for an open network. No control
+            # characters in either: they are written into the settings file.
+            [ "$(printf %s "$ssid" | LC_ALL=C wc -c)" -le 32 ] || die "That Wi-Fi name is too long (32 bytes at most)"
+            # (A pattern, not grep: grep reads by line and never sees a line break.)
+            if [[ "$ssid$psk" == *[[:cntrl:]]* ]]; then
+                die "The Wi-Fi name and password cannot contain control characters"
+            fi
+            if [ -n "$psk" ] && ! { [ ${#psk} -ge 8 ] && [ ${#psk} -le 63 ]; } \
+                    && ! printf %s "$psk" | grep -Eqx '[0-9A-Fa-f]{64}'; then
+                die "A Wi-Fi password is 8 to 63 characters"
+            fi
+            set_env_value "$HUMINT_ENV" NET_MODE client
+            set_env_quoted "$HUMINT_ENV" CLIENT_SSID "$ssid"
+            set_env_quoted "$HUMINT_ENV" CLIENT_PSK "$psk"
             ;;
         wired)   sed -i 's/^NET_MODE=.*/NET_MODE=wired/' "$HUMINT_ENV" ;;
         *) die "net needs: hotspot | client SSID [PSK] | wired" ;;

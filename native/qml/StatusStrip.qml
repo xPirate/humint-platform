@@ -38,7 +38,9 @@ Rectangle {
             text: strip.st.net_mode === "hotspot"
                   ? "Hotspot " + (strip.st.ssid || "") + (strip.st.clients !== null && strip.st.clients !== undefined
                                                           ? " · " + strip.st.clients + " joined" : "")
-                  : strip.st.net_mode === "wired" ? "Wired " + (strip.st.ip || "") : (strip.st.ip || "")
+                  : strip.st.net_mode === "wired" ? "Wired " + (strip.st.ip || "")
+                  : strip.st.net_mode === "client" ? "Wi-Fi " + (strip.st.ssid || "") + " " + (strip.st.ip || "")
+                  : (strip.st.ip || "")
         }
         // Battery: percent and whether the charger is in.
         Row {

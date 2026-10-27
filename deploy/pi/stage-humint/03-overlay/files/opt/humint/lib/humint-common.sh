@@ -325,5 +325,25 @@ set_env_value() {
         $0 ~ "^"ENVIRON["K"]"=" { print ENVIRON["K"] "=\"" ENVIRON["V"] "\""; done=1; next }
         { print }
         END { if (!done) print ENVIRON["K"] "=\"" ENVIRON["V"] "\"" }' "$file" >"$file.tmp"
+    # Keep the file's mode: env is 600 (it holds the Wi-Fi passwords).
+    chmod --reference="$file" "$file.tmp" 2>/dev/null || true
+    mv "$file.tmp" "$file"
+}
+
+# set_env_quoted FILE KEY VALUE — the same, for a value typed by a person (a
+# Wi-Fi name or password: spaces, quotes, $ and backslashes all possible).
+# Written single-quoted, a ' as '\'' — the file is sourced by root, so it
+# must come back as exactly the text typed and never run as anything. The
+# Python readers undo the same quoting (shlex). No line breaks or other
+# control characters: the caller refuses those.
+set_env_quoted() {
+    local file="$1" key="$2" value="$3" q
+    q="'${value//\'/\'\\\'\'}'"
+    touch "$file"
+    K="$key" V="$q" awk '
+        $0 ~ "^"ENVIRON["K"]"=" { print ENVIRON["K"] "=" ENVIRON["V"]; done=1; next }
+        { print }
+        END { if (!done) print ENVIRON["K"] "=" ENVIRON["V"] }' "$file" >"$file.tmp"
+    chmod --reference="$file" "$file.tmp" 2>/dev/null || true
     mv "$file.tmp" "$file"
 }

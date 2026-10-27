@@ -12,6 +12,7 @@ STATUS_BUTTON_GPIO) advances the page on a tap and shuts the box down safely
 on a long press. Without a button the pages auto-rotate.
 """
 import os
+import shlex
 import shutil
 import socket
 import subprocess
@@ -24,6 +25,19 @@ PORT = int(os.environ.get("HUMINT_OLED_I2C", "1"))
 DATA = "/srv/humint-data"
 
 
+def _env_value(v: str) -> str:
+    """A settings value: shell-quoted (a Wi-Fi name a person typed, by
+    set_env_quoted), or plain / "double-quoted" like the rest."""
+    v = v.strip()
+    try:
+        parts = shlex.split(v)
+        if len(parts) == 1:
+            return parts[0]
+    except ValueError:
+        pass
+    return v.strip('"').strip("'")
+
+
 def cfg():
     out = {}
     try:
@@ -31,7 +45,7 @@ def cfg():
             line = line.strip()
             if "=" in line and not line.startswith("#"):
                 k, v = line.split("=", 1)
-                out[k] = v.strip().strip('"')
+                out[k] = _env_value(v)
     except OSError:
         pass
     return out

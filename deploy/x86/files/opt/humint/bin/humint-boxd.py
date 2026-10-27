@@ -12,6 +12,8 @@ what the Pi's touch panel does as root — and nothing else:
   setup_pin_cancel
   ctl ACTION        lock, restart, reboot, shutdown, net, update usb, wipe,
                     duress set, login-password — through humint-ctl
+  wifi_scan         the Wi-Fi networks in range (to join one)
+  wifi_join SSID PSK  join one — humint-ctl net client, the password on stdin
   dismiss_secret    the new login password has been written down
   upload_people     phone upload codes (api/panel.py), with the panel's token,
   upload_code       which the app itself never sees
@@ -28,6 +30,8 @@ import grp
 import json
 import os
 import pwd
+import re
+import shlex
 import shutil
 import socket
 import socketserver
@@ -55,6 +59,9 @@ TRIES = ROOT + "/run/humint/unlock-tries"
 PIN_SETUP_REQ = ROOT + "/run/humint/pin-setup"
 PIN_SETUP_FIFO = ROOT + "/run/humint/pin-setup.fifo"
 FP = ROOT + "/var/lib/humint/ca.fingerprint"
+NET_FALLBACK = ROOT + "/run/humint/net-fallback"
+NMCLI = os.environ.get("HUMINT_NMCLI", "nmcli")
+WIFI_DEV = os.environ.get("WIFI_DEV", "wlan0")
 STORE_IMG = ROOT + "/srv/humint.img"
 DATA = ROOT + "/srv/humint-data"
 READY = ROOT + "/run/humint-data.ready"
@@ -90,7 +97,15 @@ def read_env(path=None) -> dict:
             if not line or line.startswith("#") or "=" not in line:
                 continue
             k, v = line.split("=", 1)
-            out[k.strip()] = v.strip().strip('"').strip("'")
+            v = v.strip()
+            # Values a person typed (the Wi-Fi to join) are shell-quoted
+            # (set_env_quoted); the rest are plain or "double-quoted".
+            try:
+                parts = shlex.split(v)
+                v = parts[0] if len(parts) == 1 else v.strip('"').strip("'")
+            except ValueError:
+                v = v.strip('"').strip("'")
+            out[k.strip()] = v
     except OSError:
         pass
     return out
@@ -192,7 +207,13 @@ def status() -> dict:
     d["local_url"] = ("https://" if d["tls"] else "http://") + f"{d['host']}.local"
     d["trust_url"] = f"http://{d['ip'] or d['host'] + '.local'}/trust"
     d["ssid"] = env.get("AP_SSID") if d["net_mode"] == "hotspot" else env.get("CLIENT_SSID")
-    d["psk"] = env.get("AP_PSK") if d["net_mode"] == "hotspot" else env.get("CLIENT_PSK")
+    # The hotspot's password is for showing to the team; a network this
+    # machine joined is someone else's, and its password stays in the file.
+    d["psk"] = env.get("AP_PSK") if d["net_mode"] == "hotspot" else None
+    try:
+        d["net_fallback"] = open(NET_FALLBACK).read().strip() or None
+    except OSError:
+        d["net_fallback"] = None
     d["hidden"] = env.get("AP_HIDDEN", "false") == "true"
     d["clients"] = slow["clients"]
     d["services"] = slow["services"]
@@ -300,6 +321,97 @@ def op_ctl(req):
     rc = run([CTL, action, *args], timeout=timeout)
     invalidate()
     return {"rc": rc}
+
+
+# ---- joining a Wi-Fi --------------------------------------------------------------
+
+def _terse(line: str) -> list:
+    """nmcli -t fields: ':'-separated, with ':' and '\\' escaped."""
+    fields, cur, i = [], "", 0
+    while i < len(line):
+        c = line[i]
+        if c == "\\" and i + 1 < len(line):
+            cur += line[i + 1]
+            i += 2
+            continue
+        if c == ":":
+            fields.append(cur)
+            cur = ""
+        else:
+            cur += c
+        i += 1
+    return fields + [cur]
+
+
+def check_wifi(ssid: str, psk: str):
+    if not ssid:
+        raise Refused("Choose or type the Wi-Fi's name")
+    if len(ssid.encode()) > 32:
+        raise Refused("That Wi-Fi name is too long (32 bytes at most)")
+    if any(ord(c) < 32 or ord(c) == 127 for c in ssid + psk):
+        raise Refused("The name and password cannot contain control characters")
+    if psk and not (8 <= len(psk) <= 63 or re.fullmatch(r"[0-9A-Fa-f]{64}", psk)):
+        raise Refused("A Wi-Fi password is 8 to 63 characters")
+
+
+def op_wifi_scan(req):
+    devs = out([NMCLI, "-t", "-f", "DEVICE,TYPE", "device"], timeout=10)
+    if f"{WIFI_DEV}:wifi" not in devs.splitlines():
+        return {"wifi": False, "networks": []}
+    # Wired mode turns the radio off; on for the scan, and off again after
+    # unless the machine goes on to join one (which turns it on itself).
+    was_off = out([NMCLI, "radio", "wifi"], timeout=10).strip() == "disabled"
+    if was_off:
+        run([NMCLI, "radio", "wifi", "on"], timeout=15)
+        time.sleep(3)
+    raw = out([NMCLI, "-t", "-f", "IN-USE,SSID,SIGNAL,SECURITY", "device", "wifi", "list",
+               "ifname", WIFI_DEV, "--rescan", "yes"], timeout=40)
+    if was_off:
+        run([NMCLI, "radio", "wifi", "off"], timeout=15)
+    best = {}
+    for line in raw.splitlines():
+        f = _terse(line)
+        if len(f) < 4 or not f[1]:
+            continue           # hidden networks have no name to show
+        try:
+            signal = int(f[2])
+        except ValueError:
+            signal = 0
+        n = {"ssid": f[1], "signal": signal, "secure": f[3] not in ("", "--"), "in_use": f[0] == "*"}
+        if f[1] not in best or signal > best[f[1]]["signal"]:
+            best[f[1]] = n
+    nets = sorted(best.values(), key=lambda n: (-n["in_use"], -n["signal"], n["ssid"].lower()))
+    # In hotspot mode the radio is busy being the access point: often it
+    # sees little or nothing then (the name can still be typed).
+    return {"wifi": True, "networks": nets, "hotspot": read_env().get("NET_MODE") == "hotspot"}
+
+
+def op_wifi_join(req):
+    ssid = str(req.get("ssid") or "")
+    psk = str(req.get("psk") or "")
+    check_wifi(ssid, psk)
+    env = dict(os.environ, HUMINT_PSK_STDIN="1")
+    try:
+        p = subprocess.run([CTL, "net", "client", ssid], input=psk + "\n", text=True, env=env,
+                           capture_output=True, timeout=300)
+        rc, err = p.returncode, p.stderr
+    except subprocess.TimeoutExpired:
+        rc, err = 124, ""
+    except OSError:
+        rc, err = 127, ""
+    invalidate()
+    # Why, in words: what humint-ctl refused, or why the join fell back.
+    reason = None
+    for line in reversed(err.splitlines()):
+        m = re.search(r"ERROR: (.*)", line)
+        if m:
+            reason = m.group(1).strip()
+            break
+    try:
+        fallback = open(NET_FALLBACK).read().strip() or None
+    except OSError:
+        fallback = None
+    return {"rc": rc, "error": reason, "fallback": fallback if rc == 3 else None}
 
 
 def op_dismiss_secret(req):
@@ -441,6 +553,8 @@ OPS = {
     "setup_pin": op_setup_pin,
     "setup_pin_cancel": op_setup_pin_cancel,
     "ctl": op_ctl,
+    "wifi_scan": op_wifi_scan,
+    "wifi_join": op_wifi_join,
     "dismiss_secret": op_dismiss_secret,
     "upload_people": op_upload_people,
     "upload_code": op_upload_code,

@@ -33,6 +33,7 @@ import json
 import mmap
 import os
 import queue
+import shlex
 import shutil
 import subprocess
 import sys
@@ -93,6 +94,19 @@ BLACK = (0, 0, 0)
 # Helpers
 # ---------------------------------------------------------------------------
 
+def _env_value(v: str) -> str:
+    """A settings value: shell-quoted (a Wi-Fi name a person typed, by
+    set_env_quoted), or plain / "double-quoted" like the rest."""
+    v = v.strip()
+    try:
+        parts = shlex.split(v)
+        if len(parts) == 1:
+            return parts[0]
+    except ValueError:
+        pass
+    return v.strip('"').strip("'")
+
+
 def read_env(path=ENV) -> dict:
     out = {}
     try:
@@ -101,7 +115,7 @@ def read_env(path=ENV) -> dict:
             if not line or line.startswith("#") or "=" not in line:
                 continue
             k, v = line.split("=", 1)
-            out[k.strip()] = v.strip().strip('"').strip("'")
+            out[k.strip()] = _env_value(v)
     except OSError:
         pass
     return out
@@ -173,7 +187,8 @@ class Status:
         d["trust_url"] = f"http://{d['ip'] or d['host'] + '.local'}/trust"
         d["net_mode"] = env.get("NET_MODE", "hotspot")
         d["ssid"] = env.get("AP_SSID") if d["net_mode"] == "hotspot" else env.get("CLIENT_SSID")
-        d["psk"] = env.get("AP_PSK") if d["net_mode"] == "hotspot" else env.get("CLIENT_PSK")
+        # A network it joined is someone else's: its password is not shown.
+        d["psk"] = env.get("AP_PSK") if d["net_mode"] == "hotspot" else None
         d["hidden"] = env.get("AP_HIDDEN", "false") == "true"
         d["clients"] = None
         if d["net_mode"] == "hotspot":

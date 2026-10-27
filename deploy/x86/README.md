@@ -127,6 +127,16 @@ fixes the choice.
 | `client` | it joins a Wi-Fi you name and serves on it |
 | `wired` | the Ethernet port only, Wi-Fi off; optionally serving addresses on it (`WIRED_DHCP_SERVER`) |
 
+**Getting it online before deploying** — to download map areas or the
+system's updates — is **Box → Actions → Join Wi-Fi**: the networks in range
+(or type a name, for a hidden one), and its password. A phone's hotspot does
+nicely. The machine then serves the console on that network instead of its
+own; **Box → Actions → Hotspot** puts it back before you go. If it cannot
+join (most often a wrong password), it says why and uses the Ethernet port
+meanwhile. The password is kept in the machine's private settings and never
+shown on the screen again; `sudo humint-ctl net client "Name"` does the same
+from a keyboard (it asks nothing — the password goes after the name).
+
 **When Wi-Fi cannot do it** — no Wi-Fi at all (most mini PCs and desktops),
 one that cannot host a hotspot, or one that will not start — it uses the
 Ethernet port instead and says so on the screen. In that case it takes an

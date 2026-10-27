@@ -33,9 +33,12 @@ Flickable {
             width: parent.width; spacing: 6 * Theme.s
             Txt { width: parent.width; font.pixelSize: 20 * Theme.s; font.weight: Font.DemiBold
                   text: st.net_mode === "hotspot" ? "Hotspot “" + (st.ssid || "") + "”"
+                      : st.net_mode === "client" ? "Wi-Fi “" + (st.ssid || "") + "”"
                       : st.net_mode === "wired" ? "Wired" : (st.net_mode || "") }
             Txt { width: parent.width; kind: "muted"
                   text: st.net_mode === "hotspot" ? (st.clients || 0) + " devices joined" : (st.ip || "") }
+            Txt { width: parent.width; color: Theme.amber; wrapMode: Text.Wrap; visible: !!st.net_fallback
+                  text: "Wi-Fi did not work (" + (st.net_fallback || "") + ")" }
         }
     }
     Card {

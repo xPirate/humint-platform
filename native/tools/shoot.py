@@ -26,7 +26,17 @@ class FakeMachine:
         for d in ("run/humint", "var/lib/humint", "srv/humint-data", "opt/humint-platform"):
             os.makedirs(os.path.join(self.root, d), exist_ok=True)
         self.log = os.path.join(self.root, "calls.log")
-        self.ctl = self._script("ctl", 'echo "ctl $*" >> "%s"; exit 0' % self.log)
+        # A password handed over on stdin (net client) is recorded too.
+        self.ctl = self._script("ctl", 'echo "ctl $*" >> "%s"; '
+                                       'if [ "${HUMINT_PSK_STDIN:-}" = 1 ]; then IFS= read -r p; echo "psk $p" >> "%s"; fi; '
+                                       'case "$*" in *"net client Bad"*) echo "humint: ERROR: nope" >&2; exit 1;; esac; exit 0'
+                                % (self.log, self.log))
+        # nmcli, for the Wi-Fi scan: a Wi-Fi device and three networks.
+        self.nmcli = self._script("nmcli", r"""case "$*" in
+  *"DEVICE,TYPE device"*) printf 'eth0:ethernet\nwlan0:wifi\n';;
+  "radio wifi") echo enabled;;
+  *"wifi list"*) printf ' :Jordan\x27s iPhone:71:WPA2\n :Cafe\\:Guest:40:--\n :Jordan\x27s iPhone:30:WPA2\n :::WPA2\n';;
+esac""")
         self.try_ = self._script("try", 'read -r pin; echo "try $pin" >> "%s"; '
                                         '[ "$pin" = 1234 ] && { touch "%s/run/humint-data.ready"; exit 0; }; '
                                         'n=$(cat "%s/run/humint/unlock-tries" 2>/dev/null || echo 0); '
@@ -63,7 +73,7 @@ class FakeMachine:
 
     def start(self, console_url=""):
         env = dict(os.environ, HUMINT_TEST_ROOT=self.root, HUMINT_BOX_SOCK=self.sock,
-                   HUMINT_CTL=self.ctl, HUMINT_TRY=self.try_, HUMINT_BOX_ALLOW_UID=str(os.getuid()),
+                   HUMINT_CTL=self.ctl, HUMINT_NMCLI=self.nmcli, HUMINT_TRY=self.try_, HUMINT_BOX_ALLOW_UID=str(os.getuid()),
                    HUMINT_CONSOLE_URL=console_url, HUMINT_USB_FAKE=self.usb, PYTHONUNBUFFERED="1")
         self.proc = subprocess.Popen([sys.executable, BOXD], env=env,
                                      stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)

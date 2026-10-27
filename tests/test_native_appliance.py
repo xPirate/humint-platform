@@ -124,6 +124,51 @@ check(d.has_text("This cannot be undone."), "the wipe asks twice")
 d.tap("Cancel")
 check("ctl wipe --yes" not in m.calls(), "and cancelling the second question wipes nothing")
 
+# Joining a Wi-Fi (internet before deploying): from the hotspot, after a
+# question; the networks in range, best signal once each; the password goes
+# to humint-ctl on stdin, never on its command line.
+d.tap("Join Wi-Fi")
+d.tap("Yes")
+d.until(lambda: d.button("Jordan's iPhone") is not None, what="networks in range")
+shot(d, "06b-box-wifi")
+check(d.button("Cafe:Guest") is not None, "names with a colon come through whole")
+nets = [i for i in d.items() if i.property("text") == "Jordan's iPhone" and i.metaObject().indexOfSignal("clicked()") >= 0]
+check(len(nets) == 1 and nets[0].property("sub").endswith("strong"), "each network once, with its best signal")
+d.tap("Jordan's iPhone")
+check(d.field("the Wi-Fi's name, exactly").property("text") == "Jordan's iPhone", "tapping one fills in its name")
+d.set_field("Password", "short")
+d.tap("Join")
+check(d.has_text("8 to 63 characters") and not any(c.startswith("ctl net") for c in m.calls()),
+      "a too-short password is refused on the screen")
+d.set_field("Password", "pa$$ 'word' `x`")
+d.tap("Join")
+d.until(lambda: "ctl net client Jordan's iPhone" in m.calls(), what="join")
+check("psk pa$$ 'word' `x`" in m.calls() and not any("word" in c for c in m.calls() if c.startswith("ctl")),
+      "the password reaches humint-ctl exactly, on stdin and not on the command line")
+d.until(lambda: d.has_text("Joined “Jordan's iPhone”"), what="joined")
+check(True, "it says it joined")
+# What humint-ctl refuses comes back in words.
+d.tap("Join Wi-Fi")
+d.tap("Yes")
+d.type_into("the Wi-Fi's name, exactly", "Bad")
+d.tap("Join")
+d.until(lambda: d.has_text("nope"), what="refusal")
+check(True, "a refusal from humint-ctl is shown in its own words")
+d.tap("Cancel")
+from humint_ui.box import call as _call  # noqa: E402
+os.environ["HUMINT_BOX_SOCK"] = m.sock
+check(not _call("wifi_join", {"ssid": "x\nNET_MODE=evil", "psk": ""})["ok"],
+      "the helper refuses a name with a line break in it")
+check(not _call("wifi_join", {"ssid": "x" * 33, "psk": ""})["ok"], "or one longer than Wi-Fi allows")
+m.write("var/lib/humint/env", open(m.path("var/lib/humint/env")).read().replace("NET_MODE=hotspot", "NET_MODE=client")
+        + "CLIENT_SSID='Jordan'\\''s iPhone'\nCLIENT_PSK='secret pw'\n")
+time.sleep(1.2)   # past the helper's one-second status cache
+st = _call("status")["data"]
+check(st["ssid"] == "Jordan's iPhone" and st["psk"] is None,
+      "joined: the network's name read back exactly, and its password never sent to the screen")
+time.sleep(1.2)
+m.write("var/lib/humint/env", open(m.path("var/lib/humint/env")).read().replace("NET_MODE=client", "NET_MODE=hotspot"))
+
 # Phone upload codes, through the helper and the panel's token.
 d.tap("Phone upload")
 d.until(lambda: d.button("ana") is not None, what="people")

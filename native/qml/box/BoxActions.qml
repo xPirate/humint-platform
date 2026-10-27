@@ -26,6 +26,7 @@ Item {
       Layout.fillWidth: true
       Layout.preferredHeight: 92 * Theme.s
   }
+  WifiDialog { id: wifi }
   GridLayout {
     width: acts.width
     columns: width > 900 * Theme.s ? 4 : 3
@@ -40,6 +41,14 @@ Item {
           onClicked: ui.confirm("Switch network?",
                                 hot ? "Devices on the field Wi-Fi will lose the console." : "This machine becomes the Wi-Fi access point again.",
                                 function() { box.ctl("Switching network", "net", [hot ? "wired" : "hotspot"]) }, false) }
+    Act { text: "Join Wi-Fi"
+          sub: st.net_mode === "client" ? "on “" + (st.ssid || "") + "” · change" : "internet for maps, updates"
+          onClicked: {
+              if (hot) ui.confirm("Leave hotspot mode?",
+                                  "Devices on the field Wi-Fi lose the console while this machine is joined to another network.",
+                                  function() { wifi.open() }, false)
+              else wifi.open()
+          } }
     Act { text: "Update from USB"; sub: "a signed update bundle"
           onClicked: ui.confirm("Update from the USB stick?",
                                 "The console restarts on the new version; if it does not come back, it is put back as it was.",

@@ -38,6 +38,8 @@ set_country() {
     raspi-config nonint do_wifi_country "$WIFI_COUNTRY" >/dev/null 2>&1 \
         || iw reg set "$WIFI_COUNTRY" >/dev/null 2>&1 || true
     rfkill unblock wifi >/dev/null 2>&1 || true
+    # Wired mode turns the radio off in NetworkManager too; back on for Wi-Fi.
+    nmcli radio wifi on >/dev/null 2>&1 || true
 }
 
 mode_hotspot() {
@@ -67,11 +69,27 @@ mode_client() {
     local ssid="$1" psk="$2" name="${3:-humint-client}"
     set_country
     [ -n "$ssid" ] || die "client mode needs an SSID"
-    nm device wifi rescan >/dev/null 2>&1 || true
+    # A radio just switched on (or just out of hotspot mode) has seen
+    # nothing yet: scan until the network shows up, up to ~20 s. One that
+    # never does may be hidden — then ask for it by name.
+    local seen=no _
+    for _ in 1 2 3 4 5 6 7 8 9 10; do
+        nmcli device wifi rescan ifname "$WIFI_DEV" >/dev/null 2>&1 || true
+        sleep 2
+        if nmcli -t -g SSID device wifi list ifname "$WIFI_DEV" 2>/dev/null \
+                | sed 's/\\:/:/g' | grep -qxF -- "$ssid"; then
+            seen=yes; break
+        fi
+    done
+    local how=(ifname "$WIFI_DEV" name "$name")
+    [ "$seen" = yes ] || { how+=(hidden yes); log "'$ssid' not seen in a scan: asking for it as a hidden network"; }
+    # Up to a minute: wpa_supplicant scans again itself before it
+    # associates, and a phone's hotspot can be slow to hand out an address
+    # (in testing, ~18 s from start to connected).
     if [ -n "$psk" ]; then
-        nm device wifi connect "$ssid" password "$psk" ifname "$WIFI_DEV" name "$name" >/dev/null || return 1
+        nmcli --wait 60 device wifi connect "$ssid" password "$psk" "${how[@]}" >/dev/null || return 1
     else
-        nm device wifi connect "$ssid" ifname "$WIFI_DEV" name "$name" >/dev/null || return 1
+        nmcli --wait 60 device wifi connect "$ssid" "${how[@]}" >/dev/null || return 1
     fi
     log "joined Wi-Fi '$ssid' on $WIFI_DEV"
 }
