@@ -106,10 +106,8 @@ Rectangle {
                     Flow {
                         Layout.fillWidth: true; spacing: 8 * Theme.s
                         visible: modelData.status === "new" && !shell.viewer
-                        CheckBox { id: alsoMake; visible: !!modelData.suggests; checked: true
-                                   contentItem: Txt { leftPadding: parent.indicator.width + 6 * Theme.s; verticalAlignment: Text.AlignVCenter
-                                                      text: modelData.suggests ? "also start a " + modelData.suggests.entity_type + " record — "
-                                                                                 + modelData.suggests.name : "" } }
+                        Check { id: alsoMake; visible: !!modelData.suggests; checked: true; text: modelData.suggests ? "also start a " + modelData.suggests.entity_type + " record — "
+                                                                                 + modelData.suggests.name : "" }
                         Btn { compact: true; kind: "primary"; text: "Accept as a draft report"
                               onClicked: Net.post("/api/field/submissions/" + modelData.id + "/accept",
                                                   { create_entity: !!(modelData.suggests && alsoMake.checked) }).then(function(r) {

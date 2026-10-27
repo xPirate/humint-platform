@@ -43,12 +43,8 @@ Rectangle {
                     onTextChanged: searchDelay.restart() }
             Select { id: type; options: [["", "Every kind"]].concat(Fmt.ENTITY_TYPES.map(function(t) { return [t, Fmt.typeLabel(t)] }))
                      onPicked: page.load() }
-            CheckBox { id: archived; text: "Archived too"; onToggled: page.load()
-                       contentItem: Txt { leftPadding: parent.indicator.width + 6 * Theme.s; text: parent.text
-                                          verticalAlignment: Text.AlignVCenter; wrapMode: Text.NoWrap } }
-            CheckBox { id: hideExpired; text: "Hide expired events"; onToggled: page.load()
-                       contentItem: Txt { leftPadding: parent.indicator.width + 6 * Theme.s; text: parent.text
-                                          verticalAlignment: Text.AlignVCenter; wrapMode: Text.NoWrap } }
+            Check { id: archived; text: "Archived too"; onToggled: page.load() }
+            Check { id: hideExpired; text: "Hide expired events"; onToggled: page.load() }
         }
         Txt { visible: page.error !== ""; color: Theme.amber; text: page.error }
         Txt { visible: !page.loading && page.items.length === 0 && page.error === ""; kind: "muted"; text: "No records found." }

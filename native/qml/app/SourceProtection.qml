@@ -91,9 +91,7 @@ Card {
         Txt { width: parent.width
               text: "The record will be known everywhere by a code name instead — search, the network, reports, exports, the assistant. Its true name moves to a protected identity only its handlers can read. You become its first handler." }
         Labeled { label: "Code name"; Field { id: code; width: parent.width; placeholderText: "e.g. KESTREL" } }
-        CheckBox { id: moveDesc
-                   contentItem: Txt { leftPadding: parent.indicator.width + 6 * Theme.s; verticalAlignment: Text.AlignVCenter
-                                      text: "Move the description into the protected identity too" } }
+        Check { id: moveDesc; text: "Move the description into the protected identity too" }
         Txt { width: parent.width; kind: "muted"
               text: "Files attached to this source will be shown to its handlers only. It cannot hide a report whose text names the person, or a link to a Person record of the same individual." }
     }
@@ -119,11 +117,10 @@ Card {
         }
         Repeater {
             model: handlers.users
-            CheckBox {
+            Check {
                 checked: !!handlers.chosen[modelData.id]
                 onToggled: { var c = handlers.chosen; c[modelData.id] = checked; handlers.chosen = c }
-                contentItem: Txt { leftPadding: parent.indicator.width + 6 * Theme.s; verticalAlignment: Text.AlignVCenter
-                                   text: modelData.username + (modelData.display_name ? " — " + modelData.display_name : "") }
+                text: modelData.username + (modelData.display_name ? " — " + modelData.display_name : "")
             }
         }
     }

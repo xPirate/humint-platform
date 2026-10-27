@@ -285,7 +285,8 @@ in_root "$ROOT" "
 "
 # On the installer stick, nothing of the field server runs — only the installer.
 for unit in humint-firstboot.service humint-unlock.service humint-battery.service humint-clock.service \
-            humint-update-inbox.path humint-ssh-hostkeys.service humint-boxd.service humint-ui.service; do
+            humint-update-inbox.path humint-ssh-hostkeys.service humint-boxd.service humint-ui.service \
+            ssh.service ssh.socket; do
     install -d "$ROOT/etc/systemd/system/$unit.d"
     printf '[Unit]\nConditionKernelCommandLine=!humint.install\n' >"$ROOT/etc/systemd/system/$unit.d/x86-installer.conf"
 done

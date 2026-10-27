@@ -32,7 +32,5 @@ FormDialog {
               Field { id: label; width: parent.width } }
     Labeled { label: "Value"; Field { id: value; width: parent.width; mono: true } }
     Labeled { label: "Notes"; Field { id: notes; width: parent.width } }
-    CheckBox { id: preferred
-               contentItem: Txt { leftPadding: parent.indicator.width + 6 * Theme.s; verticalAlignment: Text.AlignVCenter
-                                  text: "Preferred — include this one in exported PDFs" } }
+    Check { id: preferred; text: "Preferred — include this one in exported PDFs" }
 }
