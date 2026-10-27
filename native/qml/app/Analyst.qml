@@ -71,7 +71,7 @@ Rectangle {
 
             RowLayout {
                 Layout.fillWidth: true; spacing: 8 * Theme.s
-                Txt { kind: "label"; text: "Team member" }
+                Txt { kind: "label"; text: "Analyst" }
                 Select {
                     Layout.preferredWidth: 300 * Theme.s
                     value: page.analyst ? page.analyst.username : page.who

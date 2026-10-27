@@ -53,7 +53,7 @@ Item {
         priorities:{ file: "Priorities.qml", label: "Priorities", board: "priorities" },
         feeds:     { file: "Feeds.qml", label: "Feeds" },
         roster:    { file: "Roster.qml", label: "Roster", board: "roster" },
-        analyst:   { file: "Analyst.qml", label: "Team" },
+        analyst:   { file: "Analyst.qml", label: "Analysts" },
         debrief:   { file: "Debrief.qml", parent: "reports" },
         assistant: { file: "Assistant.qml", label: "Assistant", noViewer: true },
         audit:     { file: "Audit.qml", label: "Audit log", adminOnly: true },

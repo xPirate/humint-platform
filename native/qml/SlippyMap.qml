@@ -24,6 +24,44 @@ Item {
     signal zoneClicked(var zone)
     signal routeClicked(var route)
     signal tapped(real lat, real lng)
+    // Off while something is being drawn: every tap is then a point.
+    property bool picking: true
+
+    // What is under a tap: a route (within a finger's width of its line),
+    // else a zone (inside its shape), else nothing.
+    function routeAt(px, py) {
+        var tol = 12 * Theme.s
+        for (var i = routes.length - 1; i >= 0; i--) {
+            var lines = routes[i].lines || []
+            for (var l = 0; l < lines.length; l++) {
+                for (var k = 1; k < lines[l].length; k++) {
+                    var a = toView(lines[l][k - 1][0], lines[l][k - 1][1]), b = toView(lines[l][k][0], lines[l][k][1])
+                    var vx = b.x - a.x, vy = b.y - a.y, len2 = vx * vx + vy * vy
+                    var t = len2 ? Math.max(0, Math.min(1, ((px - a.x) * vx + (py - a.y) * vy) / len2)) : 0
+                    if (Math.hypot(px - (a.x + t * vx), py - (a.y + t * vy)) <= tol) return routes[i]
+                }
+            }
+        }
+        return null
+    }
+    function zoneAt(px, py) {
+        for (var i = zones.length - 1; i >= 0; i--) {
+            var z = zones[i]
+            if (z.center) {
+                var c = toView(z.center[0], z.center[1])
+                var r = z.radius_m / (156543.03392 * Math.cos(z.center[0] * Math.PI / 180) / Math.pow(2, zoom))
+                if (Math.hypot(px - c.x, py - c.y) <= r) return z
+            } else if (z.ring && z.ring.length >= 3) {
+                var inside = false, pts = z.ring.map(function(p) { return toView(p[0], p[1]) })
+                for (var j = 0, k = pts.length - 1; j < pts.length; k = j++) {
+                    if ((pts[j].y > py) !== (pts[k].y > py) &&
+                        px < (pts[k].x - pts[j].x) * (py - pts[j].y) / (pts[k].y - pts[j].y) + pts[j].x) inside = !inside
+                }
+                if (inside) return z
+            }
+        }
+        return null
+    }
 
     // The centre in world pixels at the current zoom.
     readonly property real cx: Geo.lngToX(centerLng, zoom)
@@ -79,6 +117,7 @@ Item {
     Repeater {
         model: map.zones
         Shape {
+            id: zs
             anchors.fill: parent
             opacity: modelData.dim ? 0.45 : 1
             readonly property var pts: (modelData.ring || []).map(function(p) { return map.toView(p[0], p[1]) })
@@ -87,12 +126,13 @@ Item {
             ShapePath {
                 strokeColor: modelData.color; strokeWidth: 2 * Theme.s
                 fillColor: Qt.rgba(Qt.color(modelData.color).r, Qt.color(modelData.color).g, Qt.color(modelData.color).b, 0.18)
-                PathPolyline { path: parent.parent.pts }
+                // A circle zone has no ring: one point draws nothing (an empty path warns).
+                PathPolyline { path: zs.pts.length ? zs.pts : [Qt.point(-1, -1)] }
             }
             ShapePath {
                 strokeColor: modelData.center ? modelData.color : "transparent"; strokeWidth: 2 * Theme.s
                 fillColor: modelData.center ? Qt.rgba(Qt.color(modelData.color).r, Qt.color(modelData.color).g, Qt.color(modelData.color).b, 0.18) : "transparent"
-                PathAngleArc { centerX: parent.parent.c.x; centerY: parent.parent.c.y; radiusX: parent.parent.r; radiusY: parent.parent.r
+                PathAngleArc { centerX: zs.c.x; centerY: zs.c.y; radiusX: zs.r; radiusY: zs.r
                                startAngle: 0; sweepAngle: 360 }
             }
         }
@@ -134,7 +174,16 @@ Item {
         onActiveScaleChanged: map.setZoom(startZoom + Math.round(Math.log(activeScale) / Math.LN2), centroid.position.x, centroid.position.y)
     }
     TapHandler {
-        onTapped: function(ev) { var ll = map.toLatLng(ev.position.x, ev.position.y); map.tapped(ll.lat, ll.lng) }
+        onTapped: function(ev) {
+            var x = ev.position.x, y = ev.position.y
+            if (map.picking) {
+                var r = map.routeAt(x, y)
+                if (r) { map.routeClicked(r); return }
+                var z = map.zoneAt(x, y)
+                if (z) { map.zoneClicked(z); return }
+            }
+            var ll = map.toLatLng(x, y); map.tapped(ll.lat, ll.lng)
+        }
     }
 
     // ---- markers ---------------------------------------------------------------------------
@@ -150,7 +199,7 @@ Item {
                 x: -width / 2; y: -height / 2
                 color: modelData.color || Theme.accent
                 border.color: Theme.light ? "#ffffff" : "#000000"; border.width: 2 * Theme.s
-                TapHandler { onTapped: map.markerClicked(modelData) }
+                TapHandler { enabled: map.picking; onTapped: map.markerClicked(modelData) }
             }
             Txt {
                 visible: map.zoom >= 12 || map.selectedId === modelData.id
