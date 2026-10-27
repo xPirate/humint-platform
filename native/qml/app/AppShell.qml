@@ -45,6 +45,7 @@ Item {
         entities:  { file: "Entities.qml", label: "Records" },
         entity:    { file: "EntityDetail.qml", parent: "entities" },
         entityEdit:{ file: "EntityForm.qml", parent: "entities" },
+        network:   { file: "Network.qml", parent: "entities" },
         map:       { file: "MapPage.qml", label: "Map" },
         documents: { file: "Documents.qml", label: "Documents" },
         document:  { file: "DocumentDetail.qml", parent: "documents" },

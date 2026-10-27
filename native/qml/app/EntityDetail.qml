@@ -44,6 +44,7 @@ Rectangle {
                 Layout.fillWidth: true
                 back: true; onBackClicked: shell.back()
                 title: page.e ? page.e.name : (page.error || "Loading…")
+                Btn { compact: true; text: "Network around this"; visible: !!page.e; onClicked: shell.go("network", { focus: page.e.id }) }
                 Btn { compact: true; text: "Edit"; visible: !!page.e && !shell.viewer; onClicked: shell.go("entityEdit", page.e) }
                 Btn { compact: true; text: "Export ▾"; visible: !!page.e; onClicked: exportMenu.open() }
                 Btn { compact: true; text: page.e && page.e.is_active ? "Archive" : "Reactivate"; visible: !!page.e && !shell.viewer

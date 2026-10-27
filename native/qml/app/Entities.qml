@@ -33,6 +33,7 @@ Rectangle {
             Layout.fillWidth: true
             title: "Records"
             subtitle: page.loading ? "" : page.items.length + (page.items.length === 200 ? "+" : "") + " shown"
+            Btn { compact: true; text: "Network"; onClicked: shell.go("network", null) }
             Btn { compact: true; kind: "primary"; text: "+ New record"; visible: !shell.viewer
                   onClicked: shell.go("entityEdit", null) }
         }
