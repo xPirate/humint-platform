@@ -49,6 +49,7 @@ MESSAGE = ROOT + "/run/humint/message.json"
 BATTERY = ROOT + "/run/humint/battery.json"
 CLOCK = ROOT + "/run/humint/clock.json"
 LOGIN_SECRET = ROOT + "/run/humint/login-password.json"
+UPDATE_STATUS = ROOT + "/run/humint/update.json"
 PANEL_TOKEN = ROOT + "/srv/humint-data/panel.token"
 TRIES = ROOT + "/run/humint/unlock-tries"
 PIN_SETUP_REQ = ROOT + "/run/humint/pin-setup"
@@ -74,6 +75,7 @@ CTL_ALLOWED = {
     "shutdown": [[]],
     "net": [["wired"], ["hotspot"]],
     "update": [["usb"]],
+    "os-update": [[]],
     "wipe": [["--yes"]],
     "duress": [["set", "--panel"], ["clear"]],
     "login-password": [[]],
@@ -197,6 +199,8 @@ def status() -> dict:
     d["battery"] = read_json(BATTERY, {}) or {}
     d["clock"] = read_json(CLOCK, {}) or {}
     d["login_secret"] = read_json(LOGIN_SECRET, None)
+    # The last update's progress or outcome (bundle or system), for the screen.
+    d["update"] = read_json(UPDATE_STATUS, None)
     d["duress_set"] = os.path.exists(DURESS)
     try:
         u = shutil.disk_usage(DATA if d["unlocked"] else "/")
@@ -292,7 +296,7 @@ def op_ctl(req):
     args = [str(a) for a in (req.get("args") or [])]
     if action not in CTL_ALLOWED or args not in CTL_ALLOWED[action]:
         raise Refused(f"Not allowed: {action} {' '.join(args)}".strip())
-    timeout = 1800 if action == "update" else 900 if action == "duress" else 300
+    timeout = 3600 if action in ("update", "os-update") else 900 if action == "duress" else 300
     rc = run([CTL, action, *args], timeout=timeout)
     invalidate()
     return {"rc": rc}

@@ -9,20 +9,29 @@
 #   humint-update.sh rollback           go back to before the last update (code AND database)
 #   humint-update.sh status
 #
-# Applying, in order — and on any failure from step 4 on, everything is put
+# Applying, in order — and on any failure from step 5 on, everything is put
 # back the way it was:
 #   1. the signature must check against the key this image was built with
-#      (/opt/humint/update-signing.pub), and the payload against the manifest;
+#      (/opt/humint/update-signing.pub), the payload against the manifest, and
+#      the bundle must be for this kind of machine (a Pi, or an x86 machine:
+#      both are signed with the same key);
 #   2. it must be newer than what is installed (--force to reinstall/downgrade);
 #   3. the case file must be open (migrations need the database);
-#   4. the database is dumped (into the encrypted store), the console stopped;
-#   5. the code is swapped in, the appliance's scripts and units refreshed, new
-#      Python wheels installed if the requirements changed;
-#   6. migrations this box has not had are run, oldest first;
-#   7. the console is started and must answer within 90 seconds.
+#   4. the database is dumped (into the encrypted store);
+#   5. x86 bundles may carry Ubuntu's updated packages (security fixes): they
+#      are installed first, so new code always finds what it needs. A failure
+#      here stops the update before anything else changes. These cannot be
+#      rolled back; a new kernel takes effect at the next restart;
+#   6. the console is stopped; the code is swapped in, the appliance's scripts
+#      and units refreshed (and on x86 the native app), new Python wheels
+#      installed if the requirements changed;
+#   7. migrations this box has not had are run, oldest first;
+#   8. the console is started and must answer within 90 seconds.
 #
 # Exit codes: 0 done, 2 usage, 3 bad signature or damaged, 4 not newer,
-# 5 needs wheels it does not carry, 6 case file locked, 7 failed and rolled back.
+# 5 needs wheels it does not carry, 6 case file locked, 7 failed and rolled
+# back, 8 made for the other kind of machine, 9 the system packages failed
+# (nothing else was changed).
 set -euo pipefail
 
 # Runs from a copy: step 5 replaces this very file, and bash reads a script
@@ -50,6 +59,8 @@ APPLIED="$R/var/lib/humint/migrations-applied"
 LOGFILE="$R/var/lib/humint/update.log"
 STATUS="$R/run/humint/update.json"
 INBOX="$HUMINT_DATA/updates/incoming.tar"
+# What this box is: the x86 build writes "x86"; a Pi image has no such file.
+PLATFORM="$(cat "$HOME_DIR/platform" 2>/dev/null || echo pi)"
 DB_NAME=humint_platform
 HEALTH_TIMEOUT=90
 
@@ -67,6 +78,7 @@ PY
 json_get() { python3 -c 'import json,sys; v=json.load(open(sys.argv[1])).get(sys.argv[2]); print("" if v is None else v)' "$1" "$2"; }
 installed_build() { [ -f "$BUILD_FILE" ] && json_get "$BUILD_FILE" build || echo 0; }
 installed_req() { [ -f "$BUILD_FILE" ] && json_get "$BUILD_FILE" requirements_sha256 || echo; }
+native_req() { [ -f "$HOME_DIR/native/requirements.txt" ] && sha256sum "$HOME_DIR/native/requirements.txt" | cut -d' ' -f1 || echo; }
 
 WORK=""
 cleanup() { if [ -n "$WORK" ]; then rm -rf "$WORK"; fi; }
@@ -78,9 +90,10 @@ unpack_and_verify() {
     [ -f "$file" ] || { echo "no such file: $file" >&2; exit 2; }
     [ -f "$PUBKEY" ] || { echo "this box has no update key ($PUBKEY): it was built before updates existed — re-image it once" >&2; exit 3; }
     WORK="$(mktemp -d "${TMPDIR:-/var/tmp}/humint-update.XXXXXX")"
-    # Only the three names a bundle has: nothing else is extracted.
+    # Only the names a bundle has: nothing else is extracted.
     tar -xf "$file" -C "$WORK" manifest.json manifest.sig payload.tar.gz 2>/dev/null ||
         { echo "not an update bundle (or damaged)" >&2; exit 3; }
+    tar -xf "$file" -C "$WORK" os-packages.tar 2>/dev/null || true
     openssl pkeyutl -verify -pubin -inkey "$PUBKEY" -rawin -in "$WORK/manifest.json" \
         -sigfile "$WORK/manifest.sig" >/dev/null 2>&1 ||
         { echo "SIGNATURE DOES NOT MATCH — not made by this box's builder, or altered. Not applied." >&2; exit 3; }
@@ -88,6 +101,16 @@ unpack_and_verify() {
         { echo "unknown bundle format" >&2; exit 3; }
     [ "$(sha256sum "$WORK/payload.tar.gz" | cut -d' ' -f1)" = "$(json_get "$WORK/manifest.json" payload_sha256)" ] ||
         { echo "payload does not match its signed manifest — damaged copy. Not applied." >&2; exit 3; }
+    local os_sha; os_sha="$(json_get "$WORK/manifest.json" os_sha256)"
+    if [ -n "$os_sha" ]; then
+        [ -f "$WORK/os-packages.tar" ] && [ "$(sha256sum "$WORK/os-packages.tar" | cut -d' ' -f1)" = "$os_sha" ] ||
+            { echo "the system packages do not match the signed manifest — damaged copy. Not applied." >&2; exit 3; }
+    else
+        rm -f "$WORK/os-packages.tar"      # unsigned: never used
+    fi
+    local made_for; made_for="$(json_get "$WORK/manifest.json" platform)"
+    [ "${made_for:-pi}" = "$PLATFORM" ] ||
+        { echo "This bundle is for ${made_for:-pi} machines; this one is $PLATFORM. Not applied." >&2; exit 8; }
     NEW_BUILD="$(json_get "$WORK/manifest.json" build)"
 }
 
@@ -102,7 +125,7 @@ cmd_verify() {
 snapshot() {   # what "put it back" needs
     rm -rf "$APP_DIR.prev"
     cp -a "$APP_DIR" "$APP_DIR.prev"
-    tar -C "$HOME_DIR" --exclude=./venv -czf "$HOME_DIR.prev-overlay.tgz" .
+    tar -C "$HOME_DIR" --exclude=./venv --exclude=./ui-venv -czf "$HOME_DIR.prev-overlay.tgz" .
     tar -C "$ETC_DIR" -czf "$HOME_DIR.prev-etc.tgz" systemd/system NetworkManager/dispatcher.d 2>/dev/null || true
     cp -f "$APPLIED" "$APPLIED.prev" 2>/dev/null || : >"$APPLIED.prev"
 }
@@ -148,6 +171,27 @@ fail_and_roll_back() {   # fail_and_roll_back MESSAGE DUMP
     exit 7
 }
 
+# ---- Ubuntu's own packages (x86) --------------------------------------------------
+
+# The bundle's packages as a repository of their own, and nothing else: apt
+# upgrades what it has newer versions of and leaves the rest. Trusted because
+# the archive's hash is in the signed manifest, checked above.
+apply_os_packages() {
+    local repo="$WORK/os" lists="$WORK/os-lists"
+    mkdir -p "$repo" "$lists/partial"
+    tar -xf "$WORK/os-packages.tar" -C "$repo" || return 1
+    printf 'deb [trusted=yes] file:%s ./\n' "$repo" >"$WORK/os.list"
+    local apt=(apt-get -q -o "Dir::Etc::SourceList=$WORK/os.list" -o Dir::Etc::SourceParts=/dev/null
+               -o "Dir::State::Lists=$lists" -o APT::Get::List-Cleanup=0)
+    "${apt[@]}" update >>"$LOGFILE" 2>&1 || return 1
+    DEBIAN_FRONTEND=noninteractive "${apt[@]}" -y -o Dpkg::Options::=--force-confdef \
+        -o Dpkg::Options::=--force-confold dist-upgrade >>"$LOGFILE" 2>&1 || {
+        dpkg --configure -a >>"$LOGFILE" 2>&1 || true
+        return 1
+    }
+    return 0
+}
+
 # ---- apply ----------------------------------------------------------------------
 
 cmd_apply() {
@@ -162,6 +206,11 @@ cmd_apply() {
     local wheels; wheels="$(json_get "$WORK/manifest.json" wheels)"
     if [ "$new_req" != "$(installed_req)" ] && [ "$wheels" != True ]; then
         echo "This update changes the Python packages but carries none (it was not built on the builder Pi). Not applied." >&2
+        exit 5
+    fi
+    local new_native_req; new_native_req="$(json_get "$WORK/manifest.json" native_requirements_sha256)"
+    if [ -n "$new_native_req" ] && [ "$new_native_req" != "$(native_req)" ] && [ "$(json_get "$WORK/manifest.json" native_wheels)" != True ]; then
+        echo "This update changes the screen's Python packages but carries none. Not applied." >&2
         exit 5
     fi
     data_ready || { echo "Unlock the case file first: migrations need the database." >&2; exit 6; }
@@ -179,6 +228,18 @@ cmd_apply() {
     chmod 600 "$dump"
     ln -sf "$(basename "$dump")" "$HUMINT_DATA/backups/pre-update-latest.dump"
 
+    if [ -f "$WORK/os-packages.tar" ]; then
+        note "installing Ubuntu's updated packages from the bundle"
+        status applying "system packages (security updates) — a few minutes"
+        apply_os_packages || {
+            note "FAILED: the system packages; nothing else changed"
+            status failed "the system packages did not install (see /var/lib/humint/update.log); nothing else was changed"
+            echo "The system packages did not install; nothing else was changed. Details: $LOGFILE" >&2
+            start_console 2>/dev/null || true
+            exit 9
+        }
+    fi
+
     snapshot
     systemctl stop humint-api.service humint-worker.service humint-http.service 2>/dev/null || true
 
@@ -188,6 +249,16 @@ cmd_apply() {
     rsync -a "$WORK/p/overlay/opt/humint/" "$HOME_DIR/" || fail_and_roll_back "copying the appliance scripts" "$dump"
     rsync -a "$WORK/p/overlay/etc/" "$ETC_DIR/" || fail_and_roll_back "copying the units" "$dump"
     chmod 0755 "$HOME_DIR"/bin/* 2>/dev/null || true
+    # x86: the machine's own screen
+    if [ -d "$WORK/p/native" ]; then
+        local old_native_req; old_native_req="$(native_req)"
+        rsync -a --delete --exclude __pycache__ "$WORK/p/native/" "$HOME_DIR/native/" || fail_and_roll_back "copying the screen's app" "$dump"
+        if [ "$(native_req)" != "$old_native_req" ]; then
+            note "installing the screen's Python packages from the bundle's wheels"
+            "$HOME_DIR/ui-venv/bin/pip" install -q --no-index --find-links "$WORK/p/native-wheels" \
+                -r "$HOME_DIR/native/requirements.txt" || fail_and_roll_back "installing the screen's Python packages" "$dump"
+        fi
+    fi
     systemctl daemon-reload 2>/dev/null || true
 
     if [ "$new_req" != "$(installed_req)" ]; then
@@ -220,11 +291,17 @@ PY
     healthy || fail_and_roll_back "the console did not come back" "$dump"
     # The appliance's own services, on their new scripts.
     systemctl try-restart humint-panel.service humint-status.service humint-clock.service \
-        humint-battery.service 2>/dev/null || true
-    note "now at build $NEW_BUILD"
-    status "done" "now at build $NEW_BUILD"
+        humint-battery.service humint-boxd.service 2>/dev/null || true
+    local done_msg="now at build $NEW_BUILD"
+    [ -f /run/reboot-required ] && done_msg="$done_msg — restart the machine to finish (a new kernel or system library)"
+    note "$done_msg"
+    status "done" "$done_msg"
     oled "Updated" "build $NEW_BUILD" ""
     echo "Updated to build $NEW_BUILD. (Before: build $cur. Undo with: humint-ctl update rollback)"
+    [ -f /run/reboot-required ] && echo "Restart the machine to finish: the update included a new kernel or system library."
+    # Last: the screen restarts on its new code (on x86 this is the app
+    # showing the update's progress, so after the status is written).
+    systemctl try-restart humint-ui.service 2>/dev/null || true
 }
 
 cmd_rollback() {
@@ -245,8 +322,11 @@ cmd_usb() {
     local mnt=/run/humint/usb dev f b best="" best_build=-1 pick
     pick="$(mktemp -d)"
     mkdir -p "$mnt"
+    # Not the disk this machine runs from, whatever it is called.
+    local own; own="$(lsblk -rpno PKNAME "$(findmnt -no SOURCE /)" 2>/dev/null | head -1)"
     for dev in $(lsblk -rpno NAME,TYPE | awk '$2=="part"{print $1}'); do
         case "$dev" in /dev/mmcblk*|/dev/nvme0n1p1|/dev/nvme0n1p2) continue ;; esac
+        [ -n "$own" ] && [ "$(lsblk -rpno PKNAME "$dev" 2>/dev/null | head -1)" = "$own" ] && continue
         mount -o ro "$dev" "$mnt" 2>/dev/null || continue
         while IFS= read -r f; do
             b="$(basename "$f" | sed -n 's/^humint-update-\([0-9][0-9]*\)-.*\.tar$/\1/p')"
@@ -279,6 +359,7 @@ cmd_inbox() {
         4) status failed "not newer than what is installed" ;;
         5) status failed "needs Python packages it does not carry — build it on the builder Pi" ;;
         6) status failed "unlock the case file first" ;;
+        8) status failed "made for the other kind of machine (Pi / x86)" ;;
     esac
     rm -f "$f"
     return 0

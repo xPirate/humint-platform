@@ -87,6 +87,11 @@ ApplicationWindow {
             spacing: Theme.gap * 1.5
             Txt { anchors.horizontalCenter: parent.horizontalCenter; kind: "title"; text: ui.busyText }
             Spinner { anchors.horizontalCenter: parent.horizontalCenter }
+            // An update in progress says what it is doing.
+            Txt { anchors.horizontalCenter: parent.horizontalCenter; kind: "muted"
+                  readonly property var u: (Box.state || {}).update || null
+                  visible: !!u && u.state === "applying"
+                  text: u && u.message ? u.message : "" }
         }
     }
 

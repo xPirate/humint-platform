@@ -252,6 +252,8 @@ rsync -a --delete --exclude '__pycache__' --exclude 'tools' "$REPO/native/" "$RO
     /opt/humint/ui-venv/bin/python -m compileall -q /opt/humint/native || true
 " || die "installing the native app failed"
 date +%s >"$ROOT/opt/humint/build-epoch"
+# Which kind of machine: update bundles are made for one or the other.
+echo x86 >"$ROOT/opt/humint/platform"
 install -d -m 755 "$ROOT/var/lib/humint"
 ( cd "$REPO/db" && ls migrate-v*.sql 2>/dev/null | sort -V ) >"$ROOT/var/lib/humint/migrations-applied"
 
@@ -314,6 +316,9 @@ unmount_all
 # ---- 3. the installer stick ---------------------------------------------------------
 say "Packing the system image"
 mkdir -p "$OUT"
+# The image's package versions: give this to make-update.sh --os-since, once
+# every machine has at least this image, to carry only what is newer.
+dpkg-query --admindir="$ROOT/var/lib/dpkg" -W -f '${Package} ${Version}\n' >"$OUT/humint-x86-packages.txt"
 rm -f "$OUT/rootfs.squashfs"
 mksquashfs "$ROOT" "$OUT/rootfs.squashfs" -comp zstd -Xcompression-level 15 -noappend -quiet \
     -wildcards -e 'proc/*' 'sys/*' 'dev/*' 'run/*' 'tmp/*' >/dev/null

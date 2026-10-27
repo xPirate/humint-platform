@@ -150,6 +150,105 @@ r = update("rollback")
 check(r.returncode == 0 and installed() == 1 and "pg_restore" in calls(),
       "rollback returns code and database to before the update")
 
+# ---- x86: its own bundles, the native app, Ubuntu's packages -------------------------------
+import io  # noqa: E402
+out86 = os.path.join(tmp, "out86")
+os.makedirs(out86)
+r = run([os.path.join(ROOT, "deploy/x86/make-update.sh"), "--key", key, "--out", out86, "--no-os", "--no-wheels"])
+check(r.returncode == 0, f"the x86 make-update.sh builds a code-only bundle ({r.stderr[-300:]})")
+b86 = os.path.join(out86, [f for f in os.listdir(out86) if f.endswith(".tar")][0])
+m86 = json.loads(tarfile.open(b86).extractfile("manifest.json").read())
+check(m86["platform"] == "x86" and b86.endswith("-x86.tar"), "it is marked as an x86 bundle")
+
+make_box()
+check(update("apply", b86).returncode == 8 and installed() == 1, "a Pi refuses an x86 bundle (they share a signing key)")
+
+
+def make_x86_box(native_req=None):
+    make_box()
+    open(os.path.join(R, "opt/humint/platform"), "w").write("x86\n")
+    os.makedirs(os.path.join(R, "opt/humint/native"), exist_ok=True)
+    os.makedirs(os.path.join(R, "opt/humint/ui-venv/bin"), exist_ok=True)
+    nr = native_req if native_req is not None else open(os.path.join(ROOT, "native/requirements.txt")).read()
+    open(os.path.join(R, "opt/humint/native/requirements.txt"), "w").write(nr)
+    open(os.path.join(R, "opt/humint/native/OLD_SCREEN_MARKER"), "w").write("v1")
+    p = os.path.join(R, "opt/humint/ui-venv/bin/pip")
+    open(p, "w").write("#!/bin/sh\nexit 0\n")
+    os.chmod(p, 0o755)
+
+
+make_x86_box()
+check(update("apply", bundle).returncode == 8, "and an x86 machine refuses a Pi bundle")
+r = update("apply", b86)
+check(r.returncode == 0 and installed() == m86["build"], f"an x86 machine applies an x86 bundle ({r.stderr[-300:]})")
+check(os.path.exists(os.path.join(R, "opt/humint/native/humint_ui/__main__.py")) and
+      os.path.exists(os.path.join(R, "opt/humint/native/fonts/IBMPlexMono-Regular.ttf")) and
+      not os.path.exists(os.path.join(R, "opt/humint/native/OLD_SCREEN_MARKER")), "the screen's app is swapped in")
+units = os.listdir(os.path.join(R, "etc/systemd/system"))
+check("humint-ui.service" in units and "humint-boxd.service" in units and "humint-panel.service" not in units,
+      "with the x86 units, not the Pi's screen units")
+check(os.path.exists(os.path.join(R, "opt/humint/bin/humint-ui-launch")), "and the x86 scripts")
+check("systemctl try-restart humint-ui.service" in calls(), "the screen restarts on its new code")
+
+make_x86_box(native_req="PySide6-Essentials==0.0.1\n")
+check(update("apply", b86).returncode == 5, "a bundle that changes the screen's packages but carries none is refused")
+
+
+# A bundle with Ubuntu's packages: the same bundle, plus the archive, re-signed.
+def with_os(debs_tar_bytes, sha=None):
+    path = os.path.join(tmp, "os-bundle.tar")
+    with tarfile.open(b86) as src:
+        man = json.loads(src.extractfile("manifest.json").read())
+        payload = src.extractfile("payload.tar.gz").read()
+    import hashlib
+    man["os_sha256"] = sha or hashlib.sha256(debs_tar_bytes).hexdigest()
+    man["os_packages"] = 1
+    mj = os.path.join(tmp, "m.json")
+    json.dump(man, open(mj, "w"))
+    sig = os.path.join(tmp, "m.sig")
+    run(["openssl", "pkeyutl", "-sign", "-inkey", key, "-rawin", "-in", mj, "-out", sig], check=True)
+    with tarfile.open(path, "w") as dst:
+        for name, data in (("manifest.json", open(mj, "rb").read()), ("manifest.sig", open(sig, "rb").read()),
+                           ("payload.tar.gz", payload), ("os-packages.tar", debs_tar_bytes)):
+            ti = tarfile.TarInfo(name)
+            ti.size = len(data)
+            dst.addfile(ti, io.BytesIO(data))
+    return path
+
+
+buf = io.BytesIO()
+with tarfile.open(fileobj=buf, mode="w") as t:
+    for name, data in (("openssl_3.0.13-0ubuntu3.9_amd64.deb", b"!<arch>\nfake"), ("Packages.gz", b"")):
+        ti = tarfile.TarInfo(name)
+        ti.size = len(data)
+        t.addfile(ti, io.BytesIO(data))
+debs = buf.getvalue()
+apt_stub = os.path.join(stubs, "apt-get")
+open(apt_stub, "w").write(f'#!/bin/bash\necho "apt-get $*" >> {LOG}\n'
+                          f'[ -f {tmp}/fail-apt ] && [[ "$*" == *dist-upgrade* ]] && exit 100\nexit 0\n')
+os.chmod(apt_stub, 0o755)
+dpkg_stub = os.path.join(stubs, "dpkg")
+open(dpkg_stub, "w").write(f'#!/bin/bash\necho "dpkg $*" >> {LOG}\nexit 0\n')
+os.chmod(dpkg_stub, 0o755)
+
+make_x86_box()
+check(update("verify", with_os(debs, sha="0" * 64)).returncode == 3, "a system-package archive that is not the signed one is refused")
+make_x86_box()
+r = update("apply", with_os(debs))
+c = calls()
+check(r.returncode == 0 and "dist-upgrade" in c, f"Ubuntu's packages from the bundle are installed ({r.stderr[-300:]})")
+check(c.index("pg_dump") < c.index("dist-upgrade") < c.index("systemctl stop"),
+      "after the database backup, and before the console stops for the new code")
+check("Dir::Etc::SourceParts=/dev/null" in c and "Dir::State::Lists=" in c,
+      "from the bundle alone, not the machine's usual package sources")
+make_x86_box()
+open(os.path.join(tmp, "fail-apt"), "w").close()
+r = update("apply", with_os(debs))
+os.unlink(os.path.join(tmp, "fail-apt"))
+check(r.returncode == 9 and installed() == 1 and os.path.exists(os.path.join(R, "opt/humint/native/OLD_SCREEN_MARKER")),
+      "if they fail, the update stops there: nothing else is changed")
+check("dpkg --configure -a" in calls(), "and the package manager is left consistent")
+
 # ---- uploading one through the console -----------------------------------------------
 inbox = os.path.join(tmp, "inbox", "incoming.tar")
 con = Console("update", env={"UPDATE_INBOX": inbox, "UPDATE_STATUS_FILE": os.path.join(tmp, "st.json"),

@@ -38,6 +38,8 @@ humint-ctl — HUMINT field server
   wipe                   erase the case file for good; back to first-time setup
   update FILE            apply a signed update bundle (deploy/pi/make-update.sh)
   update usb             find the newest bundle on a USB stick and apply it
+  os-update              with internet: install the operating system's
+                         updates (security fixes) straight from its servers
   update rollback        undo the last update (code and database)
   update status          installed build, and how the last update went
   login-password         give the operator login a new random password
@@ -118,6 +120,59 @@ cmd_net() {
         exit 3
     fi
     echo "Network switched to $mode."
+}
+
+# The operating system's own updates, fetched from its servers — for a machine
+# that has internet now and then. (Offline, they come in a signed bundle:
+# deploy/x86/make-update.sh.) Progress and outcome go where the update
+# bundles' do, so the screens show them the same way.
+cmd_os_update() {
+    need_root
+    local st=/run/humint/update.json log=/var/lib/humint/update.log
+    mkdir -p /run/humint
+    os_status() {
+        python3 - "$st" "$1" "$2" <<'PY'
+import json, sys, time
+json.dump({"state": sys.argv[2], "message": sys.argv[3], "time": int(time.time()), "kind": "os"}, open(sys.argv[1], "w"))
+PY
+        chmod 644 "$st"
+    }
+    local apt=(apt-get -q -o DPkg::Lock::Timeout=120)
+    os_status applying "checking for system updates"
+    printf '%s os-update: start\n' "$(date -Is)" >>"$log"
+    local out rc=0
+    out="$("${apt[@]}" update 2>&1)" || rc=$?
+    printf '%s\n' "$out" >>"$log"
+    if [ "$rc" -ne 0 ] || grep -q '^W: Failed to fetch\|^E: ' <<<"$out"; then
+        os_status failed "the package servers could not be reached — is there internet?"
+        echo "Could not reach the package servers. Is this machine on the internet?" >&2
+        exit 10
+    fi
+    local n
+    n="$("${apt[@]}" -s full-upgrade 2>/dev/null | grep -c '^Inst ' || true)"
+    if [ "${n:-0}" -eq 0 ]; then
+        os_status "done" "the system is up to date"
+        echo "Nothing to update: the system is up to date."
+        return 0
+    fi
+    os_status applying "installing $n system updates — a few minutes"
+    echo "Installing $n updates…"
+    if ! DEBIAN_FRONTEND=noninteractive "${apt[@]}" -y -o Dpkg::Options::=--force-confdef \
+            -o Dpkg::Options::=--force-confold full-upgrade >>"$log" 2>&1; then
+        dpkg --configure -a >>"$log" 2>&1 || true
+        os_status failed "the system updates did not all install (see $log)"
+        echo "The updates did not all install; details in $log" >&2
+        exit 11
+    fi
+    "${apt[@]}" -y autoremove --purge >>"$log" 2>&1 || true
+    "${apt[@]}" clean >>"$log" 2>&1 || true
+    if [ -f /run/reboot-required ]; then
+        os_status "done" "$n system updates installed — restart the machine to finish"
+        echo "Installed $n updates. Restart the machine to finish (a new kernel or system library)."
+    else
+        os_status "done" "$n system updates installed"
+        echo "Installed $n updates."
+    fi
 }
 
 cmd_pin() {
@@ -273,6 +328,10 @@ main() {
                         "$( [ -f "${1:-}" ] && readlink -f "$1" || true)" "${2:-}" ;;
             esac ;;
         wipe)     cmd_wipe "$@" ;;
+        # Its own transient unit, as for update: it may restart the screen.
+        os-update) exec systemd-run --quiet --collect --wait --pipe --unit "humint-os-update-$$" \
+                        -p TimeoutStartSec=3600 /opt/humint/bin/humint-ctl os-update-run ;;
+        os-update-run) cmd_os_update ;;
         login-password)
                   pw="$(new_login_password)"
                   printf 'Login %s, new password: %s\n' "$(login_user)" "$pw" ;;

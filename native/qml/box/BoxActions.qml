@@ -9,6 +9,19 @@ Item {
   id: acts
   readonly property var st: Box.state || ({})
   readonly property bool hot: st.net_mode === "hotspot"
+  // An update (a bundle, or the system's own): the outcome in words, from the
+  // status the update writes, rather than an exit code.
+  function runUpdate(label, action, args) {
+      ui.busy(label + "…")
+      Net.box("ctl", { action: action, args: args }).then(function(r) {
+          return Net.box("status", {}).then(function(s) {
+              ui.busy("")
+              var u = (s && s.update) || {}
+              var msg = u.message ? u.message.charAt(0).toUpperCase() + u.message.slice(1) : null
+              ui.toast(msg || (r.rc === 0 ? label + ": done" : label + ": failed (" + r.rc + ")"), r.rc !== 0 || u.state === "failed")
+          })
+      }).catch(function(e) { ui.busy(""); ui.toast(e.message, true) })
+  }
   component Act: Btn {
       Layout.fillWidth: true
       Layout.preferredHeight: 92 * Theme.s
@@ -30,7 +43,11 @@ Item {
     Act { text: "Update from USB"; sub: "a signed update bundle"
           onClicked: ui.confirm("Update from the USB stick?",
                                 "The console restarts on the new version; if it does not come back, it is put back as it was.",
-                                function() { box.ctl("Updating", "update", ["usb"], "Updated") }, false) }
+                                function() { acts.runUpdate("Updating", "update", ["usb"]) }, false) }
+    Act { text: "Update the system"; sub: "security fixes · needs internet"
+          onClicked: ui.confirm("Install the system's updates?",
+                                "Fetched from the internet now — a few minutes. The case file stays open; a restart may be needed after.",
+                                function() { acts.runUpdate("Updating the system", "os-update", []) }, false) }
     Act { text: "Duress PIN"; sub: st.duress_set ? "set · change it" : "erases if typed at unlock"
           onClicked: {
               // humint-ctl asks for it on this screen (the set-PIN screen takes over).
