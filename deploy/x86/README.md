@@ -217,7 +217,7 @@ Log in on the text console or over SSH with the machine's login.
 ## What has been tested, and what needs real hardware
 
 Tested in QEMU with Secure Boot (OVMF, Microsoft keys): building the stick,
-an unattended install, the installed system's first boot with the PIN chosen
+the install with its questions (disk, ERASE, progress) and unattended, the installed system's first boot with the PIN chosen
 on the screen through the keyboard, the credentials screen, the console and
 the native app, the wired fallback with no Wi-Fi, the clock, the software
 drawing fallback, and update bundles (also covered by the automated tests,
