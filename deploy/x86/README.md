@@ -20,7 +20,7 @@ browser has.
 | | |
 |---|---|
 | **Machine** | Any 64-bit x86 (Intel or AMD) computer that boots UEFI: a laptop, tablet or mini PC from roughly 2015 on. **Secure Boot can stay on** — the stick and the installed system boot through Microsoft-signed shim, as Ubuntu does. 4 GB of memory (8 better). |
-| **Disk** | 32 GB or more, an SSD. **The whole disk is erased.** The case file takes 70% of what is free after the system (`DATA_SIZE`). |
+| **Disk** | 32 GB or more, an SSD. **The whole disk is erased.** The case file takes 70% of what is free after the system (`DATA_SIZE`), and can be made larger later (**Admin → Storage**). |
 | **Screen** | Its own, or any HDMI screen. Touch works; with no keyboard attached, an on-screen keyboard appears. |
 | **Wi-Fi** | For the hotspot, a Wi-Fi chip that can be an access point — most Intel and Atheros ones can. Without one (or no Wi-Fi at all) it uses the Ethernet port instead, by itself (see [Networking](#networking)). |
 | **Battery** | A laptop's own battery is read automatically: charge, time left, and a clean lock-and-power-off before it runs out. |
@@ -201,6 +201,15 @@ fetches and installs Ubuntu's updates directly. Code updates still come as
 bundles.
 
 ---
+
+## Storage
+
+Everything in the case lives in one encrypted file. **Admin → Storage** on
+the screen shows its size and how much is in use, and makes it larger: choose
+the size, enter the PIN, and it grows in place, open and in use — nothing is
+copied, nobody is signed out. 4 GB of the disk always stays free for updates
+and logs. It cannot be made smaller. From a keyboard: `sudo humint-ctl store`
+and `sudo humint-ctl store grow 64G` (or `max`).
 
 ## Operating it
 

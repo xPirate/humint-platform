@@ -19,7 +19,7 @@ from typing import Optional
 import bcrypt
 import psycopg2
 from fastapi import APIRouter, Cookie, Depends, HTTPException, Response
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 import audit
 from db import db_cursor
@@ -48,6 +48,14 @@ VALID_ROLES = ("admin", "analyst", "viewer")
 
 class RegisterRequest(BaseModel):
     username: str = Field(min_length=3, max_length=64)
+
+    @field_validator("username")
+    @classmethod
+    def _trim(cls, v):
+        v = v.strip()
+        if len(v) < 3:
+            raise ValueError("at least 3 characters")
+        return v
     password: str = Field(min_length=MIN_PASSWORD_LENGTH, max_length=256)
     role: str = Field(default="analyst")
 
@@ -142,7 +150,7 @@ def get_session_user(
 def require_user_or_enrolling(user: Optional[dict] = Depends(get_session_user)) -> dict:
     """Signed in — including a session that can only set up two-factor
     sign-in (an admin requires it and this person has not got it yet). For
-    /me and the enrolment endpoints, nothing else."""
+    /me and the enrollment endpoints, nothing else."""
     if user is None:
         raise HTTPException(status_code=401, detail="Not authenticated")
     return user
@@ -191,9 +199,12 @@ def register(
     role = "admin" if bootstrap else payload.role
 
     with db_cursor() as cur:
-        cur.execute("SELECT 1 FROM users WHERE username = %s", (payload.username,))
-        if cur.fetchone() is not None:
-            raise HTTPException(status_code=409, detail="Username already taken")
+        # Usernames ignore case: "TPain" and "tpain" are one person (and the
+        # database's unique index on lower(username) says so too).
+        cur.execute("SELECT username FROM users WHERE lower(username) = lower(%s)", (payload.username,))
+        taken = cur.fetchone()
+        if taken is not None:
+            raise HTTPException(status_code=409, detail=f"Username already taken (as “{taken[0]}”)")
 
     password_hash = _hash_password(payload.password)
     try:
@@ -237,15 +248,16 @@ def login(payload: LoginRequest, response: Response):
     error_detail = None
     authed_user_id = None
     authed_role = None
+    authed_name = None
     needs_setup = False
     second = "none"
 
     with db_cursor(commit=True) as cur:
         cur.execute(
             "SELECT id, password_hash, role, is_active, failed_login_attempts, locked_until, "
-            "totp_enabled_at IS NOT NULL "
-            "FROM users WHERE username = %s",
-            (payload.username,),
+            "totp_enabled_at IS NOT NULL, username "
+            "FROM users WHERE lower(username) = lower(%s)",
+            (payload.username.strip(),),
         )
         row = cur.fetchone()
 
@@ -256,7 +268,7 @@ def login(payload: LoginRequest, response: Response):
             _hash_password(payload.password)
             error_status, error_detail = 401, "Invalid username or password"
         else:
-            user_id, password_hash, role, is_active, failed_attempts, locked_until, has_2fa = row
+            user_id, password_hash, role, is_active, failed_attempts, locked_until, has_2fa, account_name = row
 
             if locked_until is not None and locked_until > datetime.now(timezone.utc):
                 error_status = 423
@@ -307,6 +319,9 @@ def login(payload: LoginRequest, response: Response):
                         (user_id,),
                     )
                     authed_user_id, authed_role = user_id, role
+                    # The account's own spelling ("Thomas"), whatever case
+                    # was typed ("thomas"): usernames ignore case.
+                    authed_name = account_name
                     needs_setup = not has_2fa and twofactor.required_for_everyone(cur)
 
     if isinstance(error_detail, dict):
@@ -327,13 +342,13 @@ def login(payload: LoginRequest, response: Response):
         raise HTTPException(status_code=error_status, detail=error_detail)
 
     _start_session(authed_user_id, response, needs_2fa_setup=needs_setup)
-    user = {"id": authed_user_id, "username": payload.username, "role": authed_role}
+    user = {"id": authed_user_id, "username": authed_name, "role": authed_role}
     audit.record("auth.login", user=user, object_type="user",
-                 object_id=authed_user_id, object_label=payload.username,
+                 object_id=authed_user_id, object_label=authed_name,
                  detail={"second_factor": second} if second != "none" else None)
     if second == "recovery":
         audit.record("auth.recovery_code_used", user=user, object_type="user",
-                     object_id=authed_user_id, object_label=payload.username)
+                     object_id=authed_user_id, object_label=authed_name)
     if needs_setup:
         user["needs_2fa_setup"] = True
     return user

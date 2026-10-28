@@ -152,7 +152,10 @@ Rectangle {
         if (page.offline) return "image://api/api/map/tiles/" + page.source.id + "/" + z + "/" + x + "/" + y
         var subs = page.source.subdomains || ""
         var s = subs.length ? subs.charAt((x + y) % subs.length) : ""
-        return page.source.url_template.replace("{z}", z).replace("{x}", x).replace("{y}", y).replace("{s}", s).replace("{r}", "")
+        // Live from the tile server, through the app's tile loader (its own
+        // User-Agent, as tile servers require, and a cache).
+        return "image://tile/" + encodeURIComponent(page.source.url_template.replace("{z}", z).replace("{x}", x)
+                   .replace("{y}", y).replace("{s}", s).replace("{r}", ""))
     }
 
     RowLayout {

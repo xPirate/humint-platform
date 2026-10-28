@@ -17,7 +17,8 @@ SlippyMap {
         if (pm.offline) return "image://api/api/map/tiles/" + pm.source.id + "/" + z + "/" + x + "/" + y
         var subs = pm.source.subdomains || ""
         var s = subs.length ? subs.charAt((x + y) % subs.length) : ""
-        return pm.source.url_template.replace("{z}", z).replace("{x}", x).replace("{y}", y).replace("{s}", s).replace("{r}", "")
+        return "image://tile/" + encodeURIComponent(pm.source.url_template.replace("{z}", z).replace("{x}", x)
+                   .replace("{y}", y).replace("{s}", s).replace("{r}", ""))
     }
     markers: pm.place ? [{ id: "place", lat: pm.place.lat, lng: pm.place.lng, color: Theme.accent, label: "" }] : []
     onTapped: function(lat, lng) { pm.place = { lat: lat, lng: lng }; pm.placed(lat, lng) }

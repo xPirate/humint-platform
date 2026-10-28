@@ -177,7 +177,7 @@ def status(user: dict = Depends(auth.require_user_or_enrolling)):
 
 @router.post("/setup")
 def setup(user: dict = Depends(auth.require_user_or_enrolling)):
-    """Start (or restart) enrolment: a new secret, not active until a code
+    """Start (or restart) enrollment: a new secret, not active until a code
     from it has been typed back."""
     secret = new_secret()
     with db_cursor(commit=True) as cur:

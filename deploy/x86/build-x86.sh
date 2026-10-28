@@ -309,7 +309,9 @@ in_root "$ROOT" "
 rm -f "$ROOT"/etc/ssh/ssh_host_* "$ROOT/usr/sbin/policy-rc.d"
 : >"$ROOT/etc/machine-id"
 rm -f "$ROOT/var/lib/dbus/machine-id"
-printf 'nameserver 127.0.0.53\n' >"$ROOT/etc/resolv.conf"
+# NetworkManager writes it from the network in use (see its conf.d/90-humint-dns.conf).
+rm -f "$ROOT/etc/resolv.conf"
+printf '# Written by NetworkManager.\n' >"$ROOT/etc/resolv.conf"
 rm -rf "$ROOT"/var/cache/apt/archives/*.deb "$ROOT"/var/lib/apt/lists/* "$ROOT"/tmp/* "$ROOT"/root/.cache
 unmount_all
 

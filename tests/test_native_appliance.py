@@ -169,6 +169,33 @@ check(st["ssid"] == "Jordan's iPhone" and st["psk"] is None,
 time.sleep(1.2)
 m.write("var/lib/humint/env", open(m.path("var/lib/humint/env")).read().replace("NET_MODE=client", "NET_MODE=hotspot"))
 
+# ---- Admin → Storage: growing the case file ----------------------------------------
+# A 16 GB case file (sparse here); the disk's free space decides the most.
+with open(m.path("srv/humint.img"), "wb") as f:
+    f.truncate(16 * 2**30)
+d.tap("← Done")
+d.tap("Admin")
+d.tap("Storage")
+d.until(lambda: d.has_text("16 GB"), what="storage page")
+shot(d, "08-admin-storage")
+check(d.has_text("It can grow to"), "it shows the size, and how far it can grow")
+d.set_field("New size, GB", "17")
+d.set_field("Unlock PIN", "9999")
+d.tap("Grow to 17 GB")
+d.until(lambda: d.has_text("Wrong PIN"), what="wrong PIN")
+check("ctl store grow 17G" in m.calls() and "pin 9999" in m.calls() and not any("9999" in c for c in m.calls() if c.startswith("ctl")),
+      "the size goes to humint-ctl store grow, the PIN on stdin only; a refusal comes back in words")
+d.set_field("Unlock PIN", "1234")
+d.tap("Grow to 17 GB")
+d.until(lambda: d.has_text("The case file is now 17 GB"), what="grown")
+check(True, "and with the right PIN it says it grew")
+from humint_ui.box import call as _c2  # noqa: E402
+os.environ["HUMINT_BOX_SOCK"] = m.sock
+check(not _c2("store_grow", {"size_gb": "lots", "pin": "1234"})["ok"], "the helper refuses a size that is not a number")
+d.tap("Box")
+d.until(lambda: d.has_text("Team address"), what="box again")
+d.tap("Actions")
+
 # Phone upload codes, through the helper and the panel's token.
 d.tap("Phone upload")
 d.until(lambda: d.button("ana") is not None, what="people")

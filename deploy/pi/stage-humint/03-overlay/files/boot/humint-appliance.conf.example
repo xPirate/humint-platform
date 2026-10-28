@@ -77,8 +77,9 @@ WIRED_DHCP_SERVER=true
 # ---- the case file's encrypted store -------------------------------------
 # All case data (the database, its settings, uploaded files, map packs)
 # lives in one
-# encrypted volume this large. It is created once, at setup, and cannot be
-# grown later without rebuilding, so size it for the deployment. Suffix with
+# encrypted volume this large, made at setup. It can be made larger later,
+# in place (Admin → Storage on the screen, or humint-ctl store grow), but
+# never smaller. Suffix with
 # G for gigabytes. Leave room on the card for the OS (about 4 GB) beside it.
 DATA_SIZE=16G
 

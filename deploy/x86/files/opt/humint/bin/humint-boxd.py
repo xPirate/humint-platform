@@ -12,6 +12,7 @@ what the Pi's touch panel does as root — and nothing else:
   setup_pin_cancel
   ctl ACTION        lock, restart, reboot, shutdown, net, update usb, wipe,
                     duress set, login-password — through humint-ctl
+  store_grow GB PIN  make the case file larger (humint-ctl store grow, PIN on stdin)
   wifi_scan         the Wi-Fi networks in range (to join one)
   wifi_join SSID PSK  join one — humint-ctl net client, the password on stdin
   dismiss_secret    the new login password has been written down
@@ -73,6 +74,7 @@ TRY = os.environ.get("HUMINT_TRY", "/opt/humint/bin/humint-unlock-try")
 SERVICES = (("Database", "postgresql@16-main"), ("Console", "humint-api"),
             ("Worker", "humint-worker"), ("HTTPS", "humint-http"))
 PIN_MIN_LENGTH = 4
+STORE_RESERVE = 4096 * 2**20      # as humint-ctl's STORE_RESERVE_MB
 
 # What the app may ask humint-ctl to do: action → allowed argument lists.
 CTL_ALLOWED = {
@@ -228,6 +230,14 @@ def status() -> dict:
         d["disk"] = [round(u.free / 1e9, 1), round(u.total / 1e9, 1)]
     except OSError:
         d["disk"] = None
+    # The case file's size, and how far it could grow: the disk's free space
+    # less what humint-ctl keeps free (STORE_RESERVE_MB there).
+    try:
+        size = os.path.getsize(STORE_IMG)
+        free = shutil.disk_usage(os.path.dirname(STORE_IMG) or "/").free
+        d["store"] = {"size_gb": size // 2**30, "max_gb": (size + max(0, free - STORE_RESERVE)) // 2**30}
+    except OSError:
+        d["store"] = None
     temps = []
     for zone in sorted(os.listdir("/sys/class/thermal")) if os.path.isdir("/sys/class/thermal") else []:
         try:
@@ -364,15 +374,37 @@ def op_wifi_scan(req):
     if was_off:
         run([NMCLI, "radio", "wifi", "on"], timeout=15)
         time.sleep(3)
-    raw = out([NMCLI, "-t", "-f", "IN-USE,SSID,SIGNAL,SECURITY", "device", "wifi", "list",
-               "ifname", WIFI_DEV, "--rescan", "yes"], timeout=40)
-    if was_off:
-        run([NMCLI, "radio", "wifi", "off"], timeout=15)
+    # A radio busy being the hotspot sees next to nothing but itself: the
+    # hotspot pauses for the scan (a few seconds — the screen has already
+    # said the hotspot stops to join another network), and comes back after,
+    # so cancelling leaves things as they were.
+    env = read_env()
+    active = out([NMCLI, "-t", "-f", "NAME", "connection", "show", "--active"], timeout=10).split()
+    paused = "humint-ap" in active
+    if paused:
+        run([NMCLI, "connection", "down", "humint-ap"], timeout=30)
+        time.sleep(2)
+    try:
+        raw = ""
+        for _ in range(2):      # the first scan after the radio frees up can come back short
+            raw = out([NMCLI, "-t", "-f", "IN-USE,SSID,SIGNAL,SECURITY", "device", "wifi", "list",
+                       "ifname", WIFI_DEV, "--rescan", "yes"], timeout=40)
+            if any(_terse(l)[1:2] not in ([""], [env.get("AP_SSID", "")]) for l in raw.splitlines()):
+                break
+            time.sleep(3)
+    finally:
+        if paused:
+            run([NMCLI, "connection", "up", "humint-ap"], timeout=60)
+        if was_off:
+            run([NMCLI, "radio", "wifi", "off"], timeout=15)
+        invalidate()
     best = {}
     for line in raw.splitlines():
         f = _terse(line)
         if len(f) < 4 or not f[1]:
             continue           # hidden networks have no name to show
+        if paused and f[1] == env.get("AP_SSID"):
+            continue           # this machine's own hotspot
         try:
             signal = int(f[2])
         except ValueError:
@@ -381,9 +413,7 @@ def op_wifi_scan(req):
         if f[1] not in best or signal > best[f[1]]["signal"]:
             best[f[1]] = n
     nets = sorted(best.values(), key=lambda n: (-n["in_use"], -n["signal"], n["ssid"].lower()))
-    # In hotspot mode the radio is busy being the access point: often it
-    # sees little or nothing then (the name can still be typed).
-    return {"wifi": True, "networks": nets, "hotspot": read_env().get("NET_MODE") == "hotspot"}
+    return {"wifi": True, "networks": nets, "hotspot": env.get("NET_MODE") == "hotspot"}
 
 
 def op_wifi_join(req):
@@ -412,6 +442,35 @@ def op_wifi_join(req):
     except OSError:
         fallback = None
     return {"rc": rc, "error": reason, "fallback": fallback if rc == 3 else None}
+
+
+def op_store_grow(req):
+    try:
+        gb = int(req.get("size_gb"))
+    except (TypeError, ValueError):
+        raise Refused("Choose the new size in GB")
+    pin = str(req.get("pin") or "")
+    if not pin or "\n" in pin or "\0" in pin:
+        raise Refused("Enter the PIN")
+    if not 1 <= gb <= 100000:
+        raise Refused("Choose the new size in GB")
+    env = dict(os.environ, HUMINT_PIN_STDIN="1")
+    try:
+        p = subprocess.run([CTL, "store", "grow", f"{gb}G"], input=pin + "\n", text=True, env=env,
+                           capture_output=True, timeout=1800)
+        rc, err = p.returncode, p.stderr
+    except subprocess.TimeoutExpired:
+        rc, err = 124, ""
+    except OSError:
+        rc, err = 127, ""
+    invalidate()
+    reason = None
+    for line in reversed(err.splitlines()):
+        m = re.search(r"ERROR: (.*)", line)
+        if m:
+            reason = m.group(1).strip()
+            break
+    return {"rc": rc, "error": reason}
 
 
 def op_dismiss_secret(req):
@@ -553,6 +612,7 @@ OPS = {
     "setup_pin": op_setup_pin,
     "setup_pin_cancel": op_setup_pin_cancel,
     "ctl": op_ctl,
+    "store_grow": op_store_grow,
     "wifi_scan": op_wifi_scan,
     "wifi_join": op_wifi_join,
     "dismiss_secret": op_dismiss_secret,

@@ -52,6 +52,9 @@ CREATE TABLE IF NOT EXISTS users (
     preferences JSONB NOT NULL DEFAULT '{}'::jsonb,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+-- Usernames ignore case: "TPain" and "tpain" are one account (v1.14). Shown as
+-- typed; signing in and taken-checks compare lower(username).
+CREATE UNIQUE INDEX IF NOT EXISTS users_username_lower_key ON users (lower(username));
 
 -- ----------------------------------------------------------------------------
 -- Analyst profiles (v1.8)

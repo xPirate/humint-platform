@@ -64,8 +64,8 @@ Rectangle {
                 tileSource: function(z, x, y) {
                     if (!page.source) return ""
                     var subs = page.source.subdomains || ""
-                    return page.source.url_template.replace("{z}", z).replace("{x}", x).replace("{y}", y)
-                               .replace("{s}", subs.length ? subs.charAt((x + y) % subs.length) : "").replace("{r}", "")
+                    return "image://tile/" + encodeURIComponent(page.source.url_template.replace("{z}", z).replace("{x}", x).replace("{y}", y)
+                               .replace("{s}", subs.length ? subs.charAt((x + y) % subs.length) : "").replace("{r}", ""))
                 }
                 onCenterLatChanged: estDelay.restart()
                 onZoomChanged: estDelay.restart()

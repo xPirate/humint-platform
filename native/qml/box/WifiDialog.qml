@@ -74,9 +74,10 @@ FormDialog {
                   onClicked: wd.scan() }
         }
         Txt { width: parent.width; kind: "muted"; wrapMode: Text.Wrap
-              visible: !wd.scanning && wd.networks.length === 0
-              text: wd.fromHotspot
-                    ? "None seen — while this machine is the hotspot its Wi-Fi sees little else. Type the network's name below."
+              visible: wd.scanning || wd.networks.length === 0
+              text: wd.scanning
+                    ? (Box.state && Box.state.net_mode === "hotspot"
+                       ? "Looking — the hotspot pauses for a few seconds to listen, then comes back." : "Looking…")
                     : "None seen. Type the network's name below (a hidden one too)." }
         Repeater {
             model: wd.networks.slice(0, 10)

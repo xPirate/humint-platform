@@ -1033,7 +1033,7 @@ async function init() {
 
   try {
     state.user = await api("/api/auth/me");
-    if (state.user.needs_2fa_setup) { showTwoFactorEnrolment(); return; }
+    if (state.user.needs_2fa_setup) { showTwoFactorEnrollment(); return; }
     showApp();
   } catch (e) {
     showAuthScreen("login");
@@ -1451,7 +1451,7 @@ document.getElementById("login-form").addEventListener("submit", async (e) => {
   if (res.ok) {
     state.user = data;
     errEl.textContent = "";
-    if (data.needs_2fa_setup) { showTwoFactorEnrolment(); return; }
+    if (data.needs_2fa_setup) { showTwoFactorEnrollment(); return; }
     showApp();
     return;
   }
@@ -1512,26 +1512,26 @@ function recoveryCodesHtml(codes) {
 
 // An admin requires two-factor and this person has not set it up: nothing
 // else works until they do, so this is all the app shows.
-function showTwoFactorEnrolment() {
+function showTwoFactorEnrollment() {
   document.getElementById("auth-screen").hidden = false;
   document.getElementById("app").hidden = true;
   document.getElementById("bootstrap-form").hidden = true;
   document.getElementById("login-form").hidden = true;
-  let box = document.getElementById("tfa-enrol");
+  let box = document.getElementById("tfa-enroll");
   if (!box) {
     box = document.createElement("div");
-    box.id = "tfa-enrol";
-    box.className = "auth-form tfa-enrol";
+    box.id = "tfa-enroll";
+    box.className = "auth-form tfa-enroll";
     document.getElementById("login-form").after(box);
   }
   box.hidden = false;
   box.innerHTML = `<h2>Set up two-factor sign-in</h2>
     <p class="view-hint">This console requires a code from your phone as well as your password.</p>
-    <div id="tfa-enrol-body"></div>`;
-  twoFactorSetupHtml(box.querySelector("#tfa-enrol-body"), (codes) => {
+    <div id="tfa-enroll-body"></div>`;
+  twoFactorSetupHtml(box.querySelector("#tfa-enroll-body"), (codes) => {
     box.innerHTML = `<h2>Two-factor sign-in is on</h2>${recoveryCodesHtml(codes)}
-      <button type="button" class="btn-primary" id="tfa-enrol-continue">I've saved them — continue</button>`;
-    box.querySelector("#tfa-enrol-continue").addEventListener("click", async () => {
+      <button type="button" class="btn-primary" id="tfa-enroll-continue">I've saved them — continue</button>`;
+    box.querySelector("#tfa-enroll-continue").addEventListener("click", async () => {
       box.hidden = true;
       state.user = await api("/api/auth/me");
       showApp();

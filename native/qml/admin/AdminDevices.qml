@@ -5,7 +5,7 @@ import Humint
 import ".."
 import "../lib/fmt.js" as Fmt
 
-// Phones that may send field reports: enrol one (its code is shown once, to
+// Phones that may send field reports: enroll one (its code is shown once, to
 // scan), show a phone's code again (a new one — the old stops working),
 // revoke, delete. The touch panel's codes (Box → Phone upload) can be
 // switched off here.
@@ -32,7 +32,7 @@ Rectangle {
             Layout.fillWidth: true
             title: "Field devices"
             subtitle: "Phones that may send field reports, which land in the review inbox."
-            Btn { compact: true; kind: "primary"; text: "+ Enrol a phone"; onClicked: enrol.open() }
+            Btn { compact: true; kind: "primary"; text: "+ Enroll a phone"; onClicked: enroll.open() }
         }
         Check { text: "Let the machine's own screen issue phone codes (Box → Phone upload)"; checked: page.panelCodes
                 onToggled: Net.patch("/api/admin/panel-settings", { panel_upload_codes: checked }).catch(function(e) { ui.toast(e.message, true); page.load() }) }
@@ -90,8 +90,8 @@ Rectangle {
     }
 
     FormDialog {
-        id: enrol
-        title: "Enrol a phone"
+        id: enroll
+        title: "Enroll a phone"
         okText: "Make its code"
         onOpened: { label.text = ""; who.value = Net.me ? String(Net.me.id) : "" }
         onAccepted: {

@@ -29,8 +29,10 @@ class FakeMachine:
         # A password handed over on stdin (net client) is recorded too.
         self.ctl = self._script("ctl", 'echo "ctl $*" >> "%s"; '
                                        'if [ "${HUMINT_PSK_STDIN:-}" = 1 ]; then IFS= read -r p; echo "psk $p" >> "%s"; fi; '
+                                       'if [ "${HUMINT_PIN_STDIN:-}" = 1 ]; then IFS= read -r p; echo "pin $p" >> "%s"; '
+                                       '  [ "$p" = 1234 ] || { echo "humint: ERROR: Wrong PIN" >&2; exit 1; }; fi; '
                                        'case "$*" in *"net client Bad"*) echo "humint: ERROR: nope" >&2; exit 1;; esac; exit 0'
-                                % (self.log, self.log))
+                                % (self.log, self.log, self.log))
         # nmcli, for the Wi-Fi scan: a Wi-Fi device and three networks.
         self.nmcli = self._script("nmcli", r"""case "$*" in
   *"DEVICE,TYPE device"*) printf 'eth0:ethernet\nwlan0:wifi\n';;

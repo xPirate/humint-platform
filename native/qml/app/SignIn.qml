@@ -6,16 +6,16 @@ import ".."
 
 // Signing in to the case file on this machine: the same accounts as the web
 // console and the phones. On a brand-new case file, it creates the first
-// admin account instead. Two-factor codes, and enrolment when an admin
+// admin account instead. Two-factor codes, and enrollment when an admin
 // requires it, as in the console.
 Rectangle {
     id: root
     color: Theme.bg
     signal openBox()
-    property string step: "loading"     // loading | bootstrap | login | otp | enrol | codes
+    property string step: "loading"     // loading | bootstrap | login | otp | enroll | codes
     property string note: ""
     property bool busy: false
-    property var enrolData: null
+    property var enrollData: null
     property var recoveryCodes: []
     property var pendingUser: null
 
@@ -48,7 +48,7 @@ Rectangle {
         Net.post("/api/auth/login", body).then(function(u) {
             root.busy = false
             pass.text = ""; otp.text = ""
-            if (u.needs_2fa_setup) { root.pendingUser = u; startEnrol(); return }
+            if (u.needs_2fa_setup) { root.pendingUser = u; startEnroll(); return }
             finish(u)
         }).catch(function(e) {
             root.busy = false
@@ -69,15 +69,15 @@ Rectangle {
         }).catch(function(e) { root.busy = false; root.note = e.message })
     }
 
-    function startEnrol() {
+    function startEnroll() {
         Net.post("/api/auth/2fa/setup", {}).then(function(r) {
-            root.enrolData = r; root.step = "enrol"; root.note = ""
+            root.enrollData = r; root.step = "enroll"; root.note = ""
         }).catch(function(e) { root.note = e.message })
     }
-    function finishEnrol() {
+    function finishEnroll() {
         root.busy = true
-        Net.post("/api/auth/2fa/enable", { code: enrolCode.text.replace(/\s+/g, "") }).then(function(r) {
-            root.busy = false; enrolCode.text = ""
+        Net.post("/api/auth/2fa/enable", { code: enrollCode.text.replace(/\s+/g, "") }).then(function(r) {
+            root.busy = false; enrollCode.text = ""
             root.recoveryCodes = r.recovery_codes || []
             root.step = "codes"
         }).catch(function(e) { root.busy = false; root.note = e.message })
@@ -108,7 +108,7 @@ Rectangle {
                 Layout.fillWidth: true; horizontalAlignment: Text.AlignHCenter; kind: "muted"
                 text: root.step === "bootstrap" ? "A new case file. Create the first admin account."
                     : root.step === "otp" ? "Two-factor sign-in"
-                    : root.step === "enrol" ? "Your admin requires two-factor sign-in. Scan this with an authenticator app, then type the code it shows."
+                    : root.step === "enroll" ? "Your admin requires two-factor sign-in. Scan this with an authenticator app, then type the code it shows."
                     : root.step === "codes" ? "Recovery codes — each signs you in once if the phone is lost. Write them down now; they are not shown again."
                     : root.step === "loading" ? "Waiting for the console…"
                     : "Sign in to the case file"
@@ -133,22 +133,22 @@ Rectangle {
                     inputMethodHints: Qt.ImhNoPredictiveText | Qt.ImhNoAutoUppercase
                     onAccepted: root.signIn() }
 
-            // Enrolment: the QR code and the secret to type by hand.
+            // Enrollment: the QR code and the secret to type by hand.
             Rectangle {
-                visible: root.step === "enrol"
+                visible: root.step === "enroll"
                 Layout.alignment: Qt.AlignHCenter
                 width: 240 * Theme.s; height: width; color: "white"; radius: Theme.radius
                 Image {
                     anchors.fill: parent; anchors.margins: 8 * Theme.s
-                    source: root.enrolData ? "image://qr/" + encodeURIComponent(root.enrolData.uri) : ""
+                    source: root.enrollData ? "image://qr/" + encodeURIComponent(root.enrollData.uri) : ""
                     smooth: false; fillMode: Image.PreserveAspectFit
                 }
             }
-            Txt { visible: root.step === "enrol"; Layout.fillWidth: true; kind: "mono"
+            Txt { visible: root.step === "enroll"; Layout.fillWidth: true; kind: "mono"
                   horizontalAlignment: Text.AlignHCenter
-                  text: root.enrolData ? root.enrolData.secret.replace(/(.{4})/g, "$1 ").trim() : "" }
-            Field { id: enrolCode; Layout.fillWidth: true; visible: root.step === "enrol"; mono: true
-                    placeholderText: "Code from the app"; onAccepted: root.finishEnrol() }
+                  text: root.enrollData ? root.enrollData.secret.replace(/(.{4})/g, "$1 ").trim() : "" }
+            Field { id: enrollCode; Layout.fillWidth: true; visible: root.step === "enroll"; mono: true
+                    placeholderText: "Code from the app"; onAccepted: root.finishEnroll() }
 
             GridLayout {
                 visible: root.step === "codes"
@@ -168,12 +168,12 @@ Rectangle {
                 enabled: !root.busy
                 text: root.busy ? "Working…"
                     : root.step === "bootstrap" ? "Create admin account"
-                    : root.step === "enrol" ? "Turn on two-factor"
+                    : root.step === "enroll" ? "Turn on two-factor"
                     : root.step === "codes" ? "I've written them down"
                     : "Sign in"
                 onClicked: {
                     if (root.step === "bootstrap") root.createFirstAdmin()
-                    else if (root.step === "enrol") root.finishEnrol()
+                    else if (root.step === "enroll") root.finishEnroll()
                     else if (root.step === "codes") root.finish(root.pendingUser)
                     else root.signIn()
                 }

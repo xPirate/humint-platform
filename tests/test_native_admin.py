@@ -34,7 +34,7 @@ d.login("ana", PASSWORD)
 
 d.tap("Admin")
 d.until(lambda: d.has_text("There must always be one active admin."), what="users")
-sections = ["Field devices", "Boards", "Maps", "Backup & restore", "RSS feeds", "Model", "Appearance",
+sections = ["Field devices", "Boards", "Maps", "Backup & restore", "Storage", "RSS feeds", "Model", "Appearance",
             "Link signals", "Retention", "Field sync", "Users"]
 for s in sections:
     d.tap(s)

@@ -283,6 +283,10 @@ cmd_apply() {
         fi
     fi
     systemctl daemon-reload 2>/dev/null || true
+    # NetworkManager's settings may have changed too (x86: DNS written to
+    # /etc/resolv.conf by NetworkManager itself): read again, and resolv.conf
+    # rewritten — without dropping any connection.
+    nmcli general reload conf,dns-rc >/dev/null 2>&1 || true
 
     if [ "$new_req" != "$(installed_req)" ]; then
         note "installing Python packages from the bundle's wheels"

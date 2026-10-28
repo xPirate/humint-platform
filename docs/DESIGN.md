@@ -844,7 +844,7 @@ docker compose exec -T db psql -U <POSTGRES_USER> -d <POSTGRES_DB> \
 
 The column is `field_devices.base_url`, so that showing a device's code again
 does not mean recalling a LAN address. The relabel changes existing
-`field.device.enrol` audit rows to `field.device.enroll`, matching the
+`field.device.enroll` audit rows to `field.device.enroll`, matching the
 spelling used everywhere else. Rewriting an audit row deserves a reason, so
 the file states one and can have that statement removed if you would rather
 keep the original strings; nothing depends on it.

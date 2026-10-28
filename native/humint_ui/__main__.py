@@ -53,6 +53,7 @@ def build(argv=None):
     from PySide6.QtQml import QQmlApplicationEngine, qmlRegisterSingletonInstance
 
     from .api import Api, ApiImages
+    from .tiles import WebTiles
     from .box import Box
     from .pdf import Pdf, PdfPages
     from .qr import QrImages
@@ -93,6 +94,7 @@ def build(argv=None):
     engine.addImportPath(QML)
     engine.addImageProvider("qr", QrImages())
     engine.addImageProvider("api", ApiImages(api))
+    engine.addImageProvider("tile", WebTiles())
     engine.addImageProvider("pdf", PdfPages())
     engine.load(QUrl.fromLocalFile(os.path.join(QML, "Main.qml")))
     return app, engine, {"box": box, "api": api, "util": util, "pdf": pdf}

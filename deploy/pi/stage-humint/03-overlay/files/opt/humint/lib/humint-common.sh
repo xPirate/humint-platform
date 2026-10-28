@@ -68,6 +68,8 @@ load_config() {
     CLIENT_SSID="" ; CLIENT_PSK=""
     WIRED_DHCP_SERVER=true
     DATA_SIZE=16G
+    # A laptop or mini PC: most of its (usually much larger) disk.
+    [ "$(cat /opt/humint/platform 2>/dev/null)" = x86 ] && DATA_SIZE=auto
     API_PORT=80
     TLS=on
     SCREEN=auto ; OLED=auto ; STATUS_ROTATE_SECONDS=6 ; SCREEN_SLEEP_MINUTES=5

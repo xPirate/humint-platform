@@ -32,6 +32,9 @@ humint-ctl — HUMINT field server
   net client SSID [PSK]  join an existing Wi-Fi and serve on it
   net wired              Ethernet only, Wi-Fi off
   pin                    change the unlock PIN
+  store                  the case file's size, and how far it can grow
+  store grow SIZE | max  make the case file larger (SIZE in GB: 64G), while
+                         it is open; asks for the PIN. It cannot shrink.
   duress set | clear     a second PIN that, typed at unlock, erases the case
                          file and opens an empty one as if nothing were wrong
   duress                 whether one is set
@@ -198,6 +201,75 @@ cmd_pin() {
     echo "PIN changed."
 }
 
+# ---- the case file's size -------------------------------------------------------
+# It grows in place: the file is made larger, then the encryption and the
+# filesystem inside are extended to fill it — all while it is open and in use.
+# Some of the disk always stays free for updates (which unpack inside the store
+# but download beside it), logs and the system's own growth.
+STORE_RESERVE_MB=4096
+
+store_sizes() {   # → "current_mb room_mb"
+    local cur free room
+    cur=$(( $(stat -c %s "$HUMINT_IMG") / 1048576 ))
+    free="$(df -Pm "$(dirname "$HUMINT_IMG")" | awk 'NR==2 {print $4}')"
+    room=$(( free - STORE_RESERVE_MB )); [ "$room" -gt 0 ] || room=0
+    echo "$cur $room"
+}
+
+cmd_store() {
+    need_root "$@"
+    [ -f "$HUMINT_IMG" ] || die "there is no case file yet (first-time setup makes it)"
+    local cur room
+    read -r cur room < <(store_sizes)
+    case "${1:-}" in
+        ""|status)
+            echo "Case file : $(( cur / 1024 )) GB ($HUMINT_IMG)"
+            if data_ready; then
+                df -Ph "$HUMINT_DATA" | awk 'NR==2 {print "In use    : " $3 " of " $2 " (" $5 ")"}'
+            fi
+            echo "Can grow  : by up to $(( room / 1024 )) GB (keeping $(( STORE_RESERVE_MB / 1024 )) GB of the disk free)"
+            ;;
+        grow) shift; store_grow "$cur" "$room" "${1:-}" ;;
+        *) die "store needs: (nothing) | grow SIZE | grow max" ;;
+    esac
+}
+
+store_grow() {
+    local cur="$1" room="$2" want="$3" new pin loop
+    data_ready || die "Unlock the case file first: it grows while open"
+    case "$want" in
+        max) new=$(( (cur + room) / 1024 * 1024 )) ;;
+        [0-9]*[Gg]) [[ "${want%[Gg]}" =~ ^[0-9]+$ ]] || die "Size: a number of GB, like 64G, or max"
+                    new=$(( 10#${want%[Gg]} * 1024 )) ;;
+        *) die "Size: a number of GB, like 64G, or max" ;;
+    esac
+    [ "$new" -gt "$cur" ] || die "It is already $(( cur / 1024 )) GB: choose a larger size (a case file cannot be made smaller)"
+    [ $(( new - cur )) -le "$room" ] || die "Not enough free disk: it can grow to $(( (cur + room) / 1024 )) GB at most"
+    # The PIN: cryptsetup needs it to extend the encryption. From stdin
+    # (HUMINT_PIN_STDIN=1 — the screen), or asked for here.
+    if [ "${HUMINT_PIN_STDIN:-}" = 1 ]; then
+        IFS= read -r pin || true
+    else
+        IFS= read -rs -p "PIN: " pin </dev/tty; echo >/dev/tty
+    fi
+    [ -n "$pin" ] || die "Enter the PIN"
+    # Checked before anything changes.
+    printf '%s' "$pin" | cryptsetup open --test-passphrase --key-file=- "$HUMINT_IMG" 2>/dev/null \
+        || die "Wrong PIN"
+    log "growing the case file from $(( cur / 1024 )) to $(( new / 1024 )) GB"
+    # Real allocation, as at setup: never a store that runs out of disk later.
+    fallocate -l "${new}M" "$HUMINT_IMG" || die "Could not make the file larger (disk full?)"
+    loop="$(cryptsetup status "$HUMINT_MAP" | awk '$1 == "device:" {print $2}')"
+    case "$loop" in /dev/loop*) losetup -c "$loop" || die "Could not resize $loop" ;; esac
+    printf '%s' "$pin" | cryptsetup resize --key-file=- "$HUMINT_MAP" \
+        || die "Could not extend the encryption (the file is larger; try again)"
+    unset pin
+    resize2fs "/dev/mapper/$HUMINT_MAP" >/dev/null 2>&1 \
+        || die "Could not extend the filesystem (try again; nothing is lost)"
+    set_env_value "$HUMINT_ENV" DATA_SIZE "$(( new / 1024 ))G"
+    echo "The case file is now $(( new / 1024 )) GB."
+}
+
 read_secret_twice() {   # read_secret_twice "Prompt" -> stdout
     local a b
     IFS= read -rs -p "$1: " a </dev/tty; echo >/dev/tty
@@ -331,6 +403,7 @@ main() {
         lock)     cmd_lock "$@" ;;
         net)      cmd_net "$@" ;;
         pin)      cmd_pin "$@" ;;
+        store)    cmd_store "$@" ;;
         duress)   cmd_duress "$@" ;;
         update)
             case "${1:-status}" in

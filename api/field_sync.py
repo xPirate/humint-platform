@@ -599,7 +599,7 @@ def _insert_submission(cur, values: dict, files: list[tuple]) -> bool:
 def _hq_user(cur, username):
     if not username:
         return None
-    cur.execute("SELECT id FROM users WHERE username = %s", (username,))
+    cur.execute("SELECT id FROM users WHERE lower(username) = lower(%s)", (username,))
     row = cur.fetchone()
     return row[0] if row else None
 

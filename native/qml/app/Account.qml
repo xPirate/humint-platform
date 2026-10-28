@@ -13,7 +13,7 @@ Rectangle {
     id: page
     color: Theme.bg
     property var tfa: null
-    property var enrol: null
+    property var enroll: null
     property var codes: []
 
     function load() { Net.get("/api/auth/2fa").then(function(r) { page.tfa = r }).catch(function() {}) }
@@ -87,22 +87,22 @@ Rectangle {
                                 : page.tfa.enabled ? "On since " + Fmt.exactDate(page.tfa.enabled_at) + ". " + page.tfa.recovery_codes_left + " recovery codes left."
                                 : "Off. Signing in takes only your password." + (page.tfa.required ? " Your admin requires it." : "") }
                     // Turning it on
-                    Btn { compact: true; visible: !!page.tfa && !page.tfa.enabled && !page.enrol; text: "Turn it on"
-                          onClicked: Net.post("/api/auth/2fa/setup", {}).then(function(r) { page.enrol = r }).catch(function(e) { ui.toast(e.message, true) }) }
+                    Btn { compact: true; visible: !!page.tfa && !page.tfa.enabled && !page.enroll; text: "Turn it on"
+                          onClicked: Net.post("/api/auth/2fa/setup", {}).then(function(r) { page.enroll = r }).catch(function(e) { ui.toast(e.message, true) }) }
                     Row {
-                        visible: !!page.enrol
+                        visible: !!page.enroll
                         spacing: Theme.gap
                         Rectangle { width: 200 * Theme.s; height: width; color: "white"; radius: Theme.radius
                             Image { anchors.fill: parent; anchors.margins: 8 * Theme.s; smooth: false; fillMode: Image.PreserveAspectFit
-                                    source: page.enrol ? "image://qr/" + encodeURIComponent(page.enrol.uri) : "" } }
+                                    source: page.enroll ? "image://qr/" + encodeURIComponent(page.enroll.uri) : "" } }
                         Column {
                             width: tfaCol.width - 200 * Theme.s - Theme.gap; spacing: 8 * Theme.s
                             Txt { width: parent.width; text: "Scan this with an authenticator app, then type the code it shows." }
-                            Txt { width: parent.width; kind: "mono"; text: page.enrol ? page.enrol.secret.replace(/(.{4})/g, "$1 ").trim() : "" }
+                            Txt { width: parent.width; kind: "mono"; text: page.enroll ? page.enroll.secret.replace(/(.{4})/g, "$1 ").trim() : "" }
                             Field { id: code; width: parent.width; placeholderText: "Code from the app"; mono: true }
                             Btn { compact: true; kind: "primary"; text: "Turn on two-factor"
                                   onClicked: Net.post("/api/auth/2fa/enable", { code: code.text.replace(/\s+/g, "") }).then(function(r) {
-                                      page.enrol = null; page.codes = r.recovery_codes || []; code.text = ""; page.load()
+                                      page.enroll = null; page.codes = r.recovery_codes || []; code.text = ""; page.load()
                                   }).catch(function(e) { ui.toast(e.message, true) }) }
                         }
                     }

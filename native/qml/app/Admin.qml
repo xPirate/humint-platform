@@ -15,6 +15,7 @@ Rectangle {
         ["boards", "Boards", "AdminBoards.qml"],
         ["maps", "Maps", "AdminMaps.qml"],
         ["backup", "Backup & restore", "AdminBackup.qml"],
+        ["storage", "Storage", "AdminStorage.qml"],
         ["feeds", "RSS feeds", "AdminFeeds.qml"],
         ["model", "Model", "AdminModel.qml"],
         ["brand", "Appearance", "AdminBrand.qml"],
