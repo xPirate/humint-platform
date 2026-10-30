@@ -164,9 +164,20 @@ Item {
     }
 
     // ---- the machine itself -------------------------------------------------------------
+    property string boxTab: "status"
     Loader {
         anchors.fill: parent
         active: shell.boxOpen
         source: "../box/BoxPanel.qml"
+        onLoaded: item.tab = shell.boxTab
+    }
+    // The quick settings' "Network…": the machine panel, at that tab.
+    Connections {
+        target: ui
+        function onBoxRequested(tab) {
+            shell.boxTab = tab
+            if (shell.boxOpen) { shell.boxOpen = false }
+            shell.boxOpen = true
+        }
     }
 }

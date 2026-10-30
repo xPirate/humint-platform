@@ -254,6 +254,11 @@ rsync -a --delete --exclude '__pycache__' --exclude 'tools' "$REPO/native/" "$RO
 date +%s >"$ROOT/opt/humint/build-epoch"
 # Which kind of machine: update bundles are made for one or the other.
 echo x86 >"$ROOT/opt/humint/platform"
+# The packages this image is made of, and those added after the first images
+# (humint-ctl os-update installs any a machine lacks).
+grep -v '^\s*#' "$HERE/packages" | awk 'NF {print $1}' | sort -u >"$ROOT/opt/humint/os-packages.txt"
+sed -n '/^# ---- added after the first images/,$p' "$HERE/packages" | grep -v '^\s*#' | awk 'NF {print $1}' \
+    >"$ROOT/opt/humint/os-added.txt"
 install -d -m 755 "$ROOT/var/lib/humint"
 ( cd "$REPO/db" && ls migrate-v*.sql 2>/dev/null | sort -V ) >"$ROOT/var/lib/humint/migrations-applied"
 

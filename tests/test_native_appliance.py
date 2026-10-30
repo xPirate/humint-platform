@@ -213,6 +213,94 @@ os.environ["HUMINT_BOX_SOCK"] = m.sock
 check(not call("ctl", {"action": "net", "args": ["client", "evil"]})["ok"], "the helper refuses commands it does not know")
 check(not call("ctl", {"action": "logs", "args": []})["ok"], "including real humint-ctl commands not offered to the app")
 
+# ---- the quick settings: tap the status at the top right ---------------------------------
+from PySide6.QtCore import QPointF, Qt  # noqa: E402
+from PySide6.QtTest import QTest  # noqa: E402
+
+
+def item(name):
+    for i in d.items():
+        if i.objectName() == name and d.visible(i):
+            return i
+    return None
+
+
+def click(it):
+    p = it.mapToScene(QPointF(it.width() / 2, it.height() / 2)).toPoint()
+    QTest.mouseClick(d.win, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, p)
+    d.pump(0.3)
+
+
+BL = "sys/class/backlight/intel_backlight/"
+d.until(lambda: item("statusButton") is not None, what="status button")
+click(item("statusButton"))
+d.until(lambda: d.has_text("Screen sleeps after"), what="quick settings")
+shot(d, "09-quick-settings")
+check(d.has_text("Brightness") and d.has_text("Volume") and d.has_text("40%"),
+      "tapping the status opens the machine's controls, with the volume as it is")
+sl = item("brightness")
+sl.setProperty("value", 30)
+sl.metaObject().invokeMethod(sl, "moved")
+d.until(lambda: open(m.path(BL + "brightness")).read().strip() == "300", what="brightness")
+check(True, "the brightness slider sets the backlight")
+vl = item("volume")
+vl.setProperty("value", 65)
+vl.metaObject().invokeMethod(vl, "moved")
+d.until(lambda: open(m.mixer_state).read().split()[0] == "65", what="volume")
+check(any(c.startswith("alsactl store") for c in m.calls()), "the volume slider sets the sound card, and it is kept for the next start")
+d.tap("Mute")
+d.until(lambda: open(m.mixer_state).read().split()[1] == "off", what="mute")
+d.until(lambda: d.button("Unmute") is not None, what="unmute button")
+d.tap("Unmute")
+d.until(lambda: open(m.mixer_state).read().split()[1] == "on", what="unmute")
+check(True, "mute and unmute")
+d.tap("2 m")
+d.until(lambda: "SCREEN_SLEEP_MINUTES=2" in open(m.path("var/lib/humint/env")).read(), what="sleep setting")
+d.until(lambda: d.objs["idle"].property("minutes") == 2, what="idle minutes")
+check(True, "choosing when the screen sleeps saves it, and the app follows it")
+
+# Sleep now: the panel off and black over everything; a tap wakes it and only wakes it.
+d.tap("Sleep now")
+d.until(lambda: d.objs["idle"].property("asleep"), what="asleep")
+d.until(lambda: open(m.path(BL + "bl_power")).read().strip() == "4", what="panel off")
+check(item("sleepCover") is not None and not d.has_text("Screen sleeps after"),
+      "sleeping switches the panel off and covers the screen")
+d.pump(0.8)
+before = len(m.calls())
+click(item("statusButton") or d.win.contentItem())
+d.until(lambda: not d.objs["idle"].property("asleep"), what="awake")
+d.until(lambda: open(m.path(BL + "bl_power")).read().strip() == "0", what="panel on")
+check(not d.has_text("Screen sleeps after"), "a tap wakes it, and does not also press what was under it")
+
+# Untouched for the chosen time, it sleeps by itself.
+idle = d.objs["idle"]
+import time as _t  # noqa: E402
+idle._last = _t.monotonic() - 2 * 60 - 1
+d.until(lambda: idle.property("asleep"), timeout=6, what="sleeps by itself")
+check(True, "left untouched for its minutes, the screen sleeps by itself")
+idle.wake()
+d.pump(0.9)
+
+# The keyboard's own keys.
+QTest.keyClick(d.win, Qt.Key.Key_VolumeUp)
+d.until(lambda: open(m.mixer_state).read().split()[0] == "70", what="volume key")
+QTest.keyClick(d.win, Qt.Key.Key_MonBrightnessDown)
+d.until(lambda: open(m.path(BL + "brightness")).read().strip() == "200", what="brightness key")
+check(True, "the volume and brightness keys work, in steps")
+
+# Signing out when it sleeps, if chosen.
+click(item("statusButton"))
+d.until(lambda: d.has_text("Screen sleeps after"), what="quick settings again")
+d.tap("Sign out of the console when it sleeps")
+d.until(lambda: "SCREEN_SLEEP_SIGNOUT=true" in open(m.path("var/lib/humint/env")).read(), what="signout setting")
+d.pump(1.5)
+d.tap("Sleep now")
+d.until(lambda: idle.property("asleep"), what="asleep again")
+d.pump(0.8)
+idle.wake()
+d.until(lambda: d.button("Box") is None or d.has_text("Sign in"), what="signed out")
+check(not d.has_text("Dashboard") or d.has_text("Sign in"), "with sign-out chosen, sleeping signs the console out")
+
 # Locking from elsewhere signs the app out.
 m.remove("run/humint-data.ready")
 d.until(lambda: d.has_text("Unlock the case file"), what="locked again")

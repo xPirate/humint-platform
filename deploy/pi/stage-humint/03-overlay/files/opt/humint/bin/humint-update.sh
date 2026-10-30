@@ -212,6 +212,21 @@ apply_os_packages() {
         dpkg --configure -a >>"$LOGFILE" 2>&1 || true
         return 1
     }
+    # Packages added to the image after this machine was installed (the
+    # bundle carries them): installed if missing.
+    local p missing=()
+    for p in $(json_get "$WORK/manifest.json" os_added); do
+        [[ "$p" =~ ^[a-z0-9][a-z0-9.+-]*$ ]] || continue
+        dpkg-query -W -f '${Status}' "$p" 2>/dev/null | grep -q 'install ok installed' || missing+=("$p")
+    done
+    if [ ${#missing[@]} -gt 0 ]; then
+        note "adding packages new to this machine: ${missing[*]}"
+        DEBIAN_FRONTEND=noninteractive "${apt[@]}" -y --no-install-recommends -o Dpkg::Options::=--force-confdef \
+            -o Dpkg::Options::=--force-confold install "${missing[@]}" >>"$LOGFILE" 2>&1 || {
+            dpkg --configure -a >>"$LOGFILE" 2>&1 || true
+            return 1
+        }
+    fi
     return 0
 }
 

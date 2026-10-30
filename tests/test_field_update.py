@@ -195,7 +195,7 @@ check(update("apply", b86).returncode == 5, "a bundle that changes the screen's 
 
 
 # A bundle with Ubuntu's packages: the same bundle, plus the archive, re-signed.
-def with_os(debs_tar_bytes, sha=None):
+def with_os(debs_tar_bytes, sha=None, added=None):
     path = os.path.join(tmp, "os-bundle.tar")
     with tarfile.open(b86) as src:
         man = json.loads(src.extractfile("manifest.json").read())
@@ -203,6 +203,8 @@ def with_os(debs_tar_bytes, sha=None):
     import hashlib
     man["os_sha256"] = sha or hashlib.sha256(debs_tar_bytes).hexdigest()
     man["os_packages"] = 1
+    if added is not None:
+        man["os_added"] = added
     mj = os.path.join(tmp, "m.json")
     json.dump(man, open(mj, "w"))
     sig = os.path.join(tmp, "m.sig")
@@ -227,6 +229,10 @@ apt_stub = os.path.join(stubs, "apt-get")
 open(apt_stub, "w").write(f'#!/bin/bash\necho "apt-get $*" >> {LOG}\n'
                           f'[ -f {tmp}/fail-apt ] && [[ "$*" == *dist-upgrade* ]] && exit 100\nexit 0\n')
 os.chmod(apt_stub, 0o755)
+# dpkg-query: everything installed but alsa-utils (added to the image later).
+dq = os.path.join(stubs, "dpkg-query")
+open(dq, "w").write('#!/bin/bash\nfor a; do p="$a"; done\n[ "$p" = alsa-utils ] && exit 1\nprintf "install ok installed"\n')
+os.chmod(dq, 0o755)
 dpkg_stub = os.path.join(stubs, "dpkg")
 open(dpkg_stub, "w").write(f'#!/bin/bash\necho "dpkg $*" >> {LOG}\nexit 0\n')
 os.chmod(dpkg_stub, 0o755)
@@ -244,6 +250,15 @@ check("Dir::Etc::SourceParts=/dev/null" in c and "Dir::State::Lists=" in c,
 stage = os.path.join(R, "srv/humint-data/updates/stage")
 check(os.path.isdir(stage) and oct(os.stat(stage).st_mode & 0o777) == "0o700" and not os.listdir(stage),
       "unpacked in a root-only folder inside the encrypted store, and nothing left there after")
+# Packages added to the image after this machine was installed: the missing
+# ones are installed from the bundle; a name that is not a package name, never.
+make_x86_box()
+r = update("apply", with_os(debs, added="alsa-utils firmware-sof-signed x;touch${IFS}/tmp/PWN"))
+c = calls()
+inst = [l for l in c.splitlines() if l.startswith("apt-get") and " install " in l]
+check(r.returncode == 0 and len(inst) == 1 and inst[0].endswith("install alsa-utils"),
+      f"a package added since this machine was installed is installed from the bundle, and only the missing one ({inst})")
+check(c.index("dist-upgrade") < c.index(" install alsa-utils"), "after the upgrade of what it has")
 make_x86_box()
 open(os.path.join(tmp, "fail-apt"), "w").close()
 r = update("apply", with_os(debs))

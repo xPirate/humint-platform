@@ -109,6 +109,10 @@ rsync -a --exclude __pycache__ "$HERE/files/opt/" "$P/overlay/opt/"
 rsync -a "$HERE/files/etc/" "$P/overlay/etc/"
 rm -f "$P/overlay/etc/systemd/system/"humint-{status,display,panel}.service
 rm -f "$P/overlay/opt/humint/update-signing.pub"
+# The image's package lists (as build-x86.sh writes them), for os-update.
+grep -v '^\s*#' "$HERE/packages" | awk 'NF {print $1}' | sort -u >"$P/overlay/opt/humint/os-packages.txt"
+sed -n '/^# ---- added after the first images/,$p' "$HERE/packages" | grep -v '^\s*#' | awk 'NF {print $1}' \
+    >"$P/overlay/opt/humint/os-added.txt"
 # The machine's own screen.
 rsync -a --exclude __pycache__ --exclude tools "$REPO/native/" "$P/native/"
 
@@ -164,6 +168,10 @@ os_sha="" os_count=0
 if [ "$WITH_OS" = 1 ]; then
     say "Ubuntu's updated packages (the security fixes)"
     [ -n "$OS_SINCE" ] && cp "$OS_SINCE" "$B/since.txt"
+    # Packages added after the first images: carried whole (with what they
+    # need), so a machine installed before gets them — see deploy/x86/packages.
+    sed -n '/^# ---- added after the first images/,$p' "$HERE/packages" | grep -v '^\s*#' | awk 'NF {print $1}' \
+        >"$B/added.txt"
     # Apt's lists and downloads kept apart from the image tree's own, so the
     # next image build is not changed by this.
     # shellcheck disable=SC2016  # expanded inside the chroot
@@ -186,6 +194,19 @@ if [ "$WITH_OS" = 1 ]; then
             if [ ${#since[@]} -gt 0 ] && grep -qx "$p $cand" "${since[0]}"; then continue; fi
             echo "$p=$cand" >>$B/pick.txt
         done
+        # The added packages, and everything they depend on that is not part
+        # of every Ubuntu system (priority required/important).
+        if [ -s $B/added.txt ]; then
+            apt-cache -o Dir::State::Lists=$B/lists depends --recurse --no-recommends --no-suggests \
+                --no-conflicts --no-breaks --no-replaces --no-enhances $(cat $B/added.txt) 2>/dev/null |
+                awk "/^[a-z0-9]/ {print \$1}" | sort -u | while read -r p; do
+                    prio="$(apt-cache -o Dir::State::Lists=$B/lists show --no-all-versions "$p" 2>/dev/null |
+                            awk "/^Priority:/ {print \$2; exit}")"
+                    [ -n "$prio" ] || continue                  # virtual
+                    case "$prio" in required|important) continue ;; esac
+                    grep -q "^$p=" $B/pick.txt || grep -qx "$p" $B/pick.txt || echo "$p" >>$B/pick.txt
+                done
+        fi
         # And anything those now depend on that the image lacks.
         if [ -s $B/pick.txt ]; then
             "${apt[@]}" -s install --no-install-recommends $(cat $B/pick.txt) 2>/dev/null |
@@ -217,7 +238,7 @@ say "Packing"
 tar -C "$P" -czf "$STAGE/payload.tar.gz" .
 sha="$(sha256sum "$STAGE/payload.tar.gz" | cut -d' ' -f1)"
 python3 - "$STAGE/manifest.json" <<PY
-import json, sys, time
+import json, os, sys, time
 m = {
     "format": "humint-field-update", "format_version": 1,
     "platform": "x86",
@@ -231,7 +252,8 @@ m = {
     "migrations": $migrations,
 }
 if "$os_sha":
-    m.update(os_sha256="$os_sha", os_packages=$os_count)
+    m.update(os_sha256="$os_sha", os_packages=$os_count,
+             os_added=" ".join(open("${B:-}/added.txt").read().split()) if os.path.exists("${B:-}/added.txt") else "")
 json.dump(m, open(sys.argv[1], "w"), indent=1)
 PY
 openssl pkeyutl -sign -inkey "$KEY" -rawin -in "$STAGE/manifest.json" -out "$STAGE/manifest.sig"

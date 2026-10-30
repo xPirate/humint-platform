@@ -47,6 +47,27 @@ ApplicationWindow {
     // ---- what every screen can use ------------------------------------------
     QtObject {
         id: ui
+        signal boxRequested(string tab)
+        function openBox(tab) { boxRequested(tab || "status") }
+        function quickSettings() { if (quick.opened) quick.close(); else quick.open() }
+        // The keyboard's own keys (volume, brightness): a step, and a word on screen.
+        function stepVolume(d) {
+            var a = (Box.state || {}).audio || {}
+            if (!a.present) return
+            var v = Math.max(0, Math.min(100, (a.volume || 0) + d))
+            Net.box("audio_set", { volume: v, muted: false }).then(function() { ui.toast("Volume " + v + "%") })
+        }
+        function toggleMute() {
+            var a = (Box.state || {}).audio || {}
+            if (!a.present) return
+            Net.box("audio_set", { muted: !a.muted }).then(function(r) { ui.toast(r.muted ? "Sound off" : "Sound on") })
+        }
+        function stepBrightness(d) {
+            var dp = (Box.state || {}).display || {}
+            if (!dp.backlight) return
+            var b = Math.max(5, Math.min(100, (dp.brightness || 100) + d))
+            Net.box("display_set", { brightness: b }).then(function(r) { ui.toast("Brightness " + r.brightness + "%") })
+        }
         property string busyText: ""
         property string toastText: ""
         property bool toastError: false
@@ -92,6 +113,32 @@ ApplicationWindow {
                   readonly property var u: (Box.state || {}).update || null
                   visible: !!u && u.state === "applying"
                   text: u && u.message ? u.message : "" }
+        }
+    }
+
+    QuickSettings { id: quick }
+    // (By name: Qt's Shortcut does not take these keys as numbers.)
+    Shortcut { sequence: "Volume Up"; context: Qt.ApplicationShortcut; onActivated: ui.stepVolume(5) }
+    Shortcut { sequence: "Volume Down"; context: Qt.ApplicationShortcut; onActivated: ui.stepVolume(-5) }
+    Shortcut { sequence: "Volume Mute"; context: Qt.ApplicationShortcut; onActivated: ui.toggleMute() }
+    Shortcut { sequence: "Monitor Brightness Up"; context: Qt.ApplicationShortcut; onActivated: ui.stepBrightness(10) }
+    Shortcut { sequence: "Monitor Brightness Down"; context: Qt.ApplicationShortcut; onActivated: ui.stepBrightness(-10) }
+
+    // The screen's sleep: after the chosen minutes untouched (Idle, in
+    // humint_ui/idle.py) the panel switches off and this covers everything.
+    // Signing out when it sleeps is a choice in the quick settings.
+    // (Not while something is in progress: an update's progress stays lit.)
+    Binding { target: Idle; property: "minutes"
+              value: { if (ui.busyText !== "") return 0
+                       var d = (Box.state || {}).display; return d && d.sleep_minutes !== undefined ? d.sleep_minutes : 10 } }
+    Connections {
+        target: Idle
+        function onChanged() {
+            if (Idle.asleep) {
+                quick.close()
+                var d = (Box.state || {}).display || {}
+                if (d.sleep_signout && Net.me) { Net.me = null; Api.signOut() }
+            }
         }
     }
 
@@ -161,5 +208,17 @@ ApplicationWindow {
         id: keyboard
         anchors.left: parent.left; anchors.right: parent.right; anchors.bottom: parent.bottom
         source: Util.env("QT_IM_MODULE") === "qtvirtualkeyboard" ? "Keyboard.qml" : ""
+    }
+
+    // Asleep: black over everything, dialogs included. The touch that wakes
+    // it never reaches what is underneath (Idle swallows it).
+    Rectangle {
+        objectName: "sleepCover"
+        parent: Overlay.overlay
+        anchors.fill: parent
+        z: 1000000
+        visible: Idle.asleep
+        color: "black"
+        MouseArea { anchors.fill: parent; hoverEnabled: true }
     }
 }

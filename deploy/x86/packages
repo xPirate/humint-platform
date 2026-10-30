@@ -81,3 +81,16 @@ libdbus-1-3
 libnss3
 fonts-noto-core
 fonts-noto-mono
+
+# ---- added after the first images ---------------------------------------------------
+# Everything from here on is ALSO carried by an update bundle (with what it
+# needs) and installed by it, so a machine installed before a package was added
+# gets it too; "Update the system" (online) installs it as well. Keep this
+# heading line as it is: make-update.sh and the build find the list by it.
+#
+# Sound: ALSA's tools (the volume in the quick settings; alsa-restore keeps it
+# across restarts), its mixer profiles, and the firmware the sound of most
+# Intel laptops and tablets since about 2020 needs (Sound Open Firmware).
+alsa-utils
+alsa-ucm-conf
+firmware-sof-signed

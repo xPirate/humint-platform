@@ -166,9 +166,27 @@ PY
         echo "Could not reach the package servers. Is this machine on the internet?" >&2
         exit 10
     fi
+    # Packages added to the image since this machine was installed (x86:
+    # /opt/humint/os-added.txt, from deploy/x86/packages): installed if missing.
+    local p added=()
+    if [ -f /opt/humint/os-added.txt ]; then
+        while read -r p; do
+            [[ "$p" =~ ^[a-z0-9][a-z0-9.+-]*$ ]] || continue
+            dpkg-query -W -f '${Status}' "$p" 2>/dev/null | grep -q 'install ok installed' || added+=("$p")
+        done </opt/humint/os-added.txt
+    fi
+    if [ ${#added[@]} -gt 0 ]; then
+        os_status applying "adding ${added[*]}"
+        echo "Adding: ${added[*]}"
+        DEBIAN_FRONTEND=noninteractive "${apt[@]}" -y --no-install-recommends install "${added[@]}" >>"$log" 2>&1 || {
+            os_status failed "could not add ${added[*]} (see $log)"
+            echo "Could not add ${added[*]}; details in $log" >&2
+            exit 11
+        }
+    fi
     local n
     n="$("${apt[@]}" -s full-upgrade 2>/dev/null | grep -c '^Inst ' || true)"
-    if [ "${n:-0}" -eq 0 ]; then
+    if [ "${n:-0}" -eq 0 ] && [ ${#added[@]} -eq 0 ]; then
         os_status "done" "the system is up to date"
         echo "Nothing to update: the system is up to date."
         return 0

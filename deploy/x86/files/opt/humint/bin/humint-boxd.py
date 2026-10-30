@@ -13,6 +13,11 @@ what the Pi's touch panel does as root — and nothing else:
   ctl ACTION        lock, restart, reboot, shutdown, net, update usb, wipe,
                     duress set, login-password — through humint-ctl
   store_grow GB PIN  make the case file larger (humint-ctl store grow, PIN on stdin)
+  display_set PCT   the screen's brightness (its backlight), 5-100
+  screen_power ON   the panel on or off (the screen sleeping; brightness kept)
+  audio_set         the volume (0-100) and/or mute
+  screen_settings   minutes until the screen sleeps (0 = never), and whether
+                    sleeping signs the console out
   wifi_scan         the Wi-Fi networks in range (to join one)
   wifi_join SSID PSK  join one — humint-ctl net client, the password on stdin
   dismiss_secret    the new login password has been written down
@@ -61,6 +66,11 @@ PIN_SETUP_REQ = ROOT + "/run/humint/pin-setup"
 PIN_SETUP_FIFO = ROOT + "/run/humint/pin-setup.fifo"
 FP = ROOT + "/var/lib/humint/ca.fingerprint"
 NET_FALLBACK = ROOT + "/run/humint/net-fallback"
+BACKLIGHT = ROOT + "/sys/class/backlight"
+ASOUND_CARDS = ROOT + "/proc/asound/cards"
+AMIXER = os.environ.get("HUMINT_AMIXER", "amixer")
+ALSACTL = os.environ.get("HUMINT_ALSACTL", "alsactl")
+SLEEP_CHOICES = (0, 1, 2, 5, 10, 15, 30, 60)
 NMCLI = os.environ.get("HUMINT_NMCLI", "nmcli")
 WIFI_DEV = os.environ.get("WIFI_DEV", "wlan0")
 STORE_IMG = ROOT + "/srv/humint.img"
@@ -164,6 +174,7 @@ def slow_facts(tls: bool, hotspot: bool) -> dict:
     # One systemctl for all of them: a line per unit, in order.
     states = out(["systemctl", "is-active"] + [u for _, u in units]).split()
     f["services"] = [[label, states[i] if i < len(states) else "unknown"] for i, (label, _) in enumerate(units)]
+    f["audio"] = audio_facts()
     with _cache_lock:
         _slow.update(at=time.time(), key=key, data=f)
     return f
@@ -224,6 +235,8 @@ def status() -> dict:
     d["login_secret"] = read_json(LOGIN_SECRET, None)
     # The last update's progress or outcome (bundle or system), for the screen.
     d["update"] = read_json(UPDATE_STATUS, None)
+    d["display"] = display_facts(env)
+    d["audio"] = slow["audio"]
     d["duress_set"] = os.path.exists(DURESS)
     try:
         u = shutil.disk_usage(DATA if d["unlocked"] else "/")
@@ -259,6 +272,197 @@ def status() -> dict:
     with _cache_lock:
         _cache.update(at=time.time(), data=d)
     return d
+
+
+# ---- the screen and the sound ---------------------------------------------------
+# What a laptop's own controls do: the backlight (brightness, and switched off
+# while the screen sleeps — the panel itself goes dark, not just black pixels)
+# and the sound card's volume (ALSA; there is no sound server). Both are
+# remembered across restarts by the system itself: systemd-backlight and
+# alsa-restore.
+
+def backlight_dev():
+    """The backlight to drive: the firmware's interface first, then the
+    platform's, then the raw one (as desktops choose) — the one that
+    tracks the brightness keys."""
+    try:
+        names = sorted(os.listdir(BACKLIGHT))
+    except OSError:
+        return None
+    rank = {"firmware": 0, "platform": 1, "raw": 2}
+    best = None
+    for n in names:
+        try:
+            kind = open(f"{BACKLIGHT}/{n}/type").read().strip()
+            mx = int(open(f"{BACKLIGHT}/{n}/max_brightness").read())
+        except (OSError, ValueError):
+            continue
+        if mx <= 0:
+            continue
+        key = (rank.get(kind, 3), -mx)
+        if best is None or key < best[0]:
+            best = (key, n, mx)
+    return (f"{BACKLIGHT}/{best[1]}", best[2]) if best else None
+
+
+def display_facts(env) -> dict:
+    try:
+        minutes = int(env.get("SCREEN_SLEEP_MINUTES", "10"))
+    except ValueError:
+        minutes = 10
+    d = {"backlight": False, "brightness": None, "sleep_minutes": minutes,
+         "sleep_signout": env.get("SCREEN_SLEEP_SIGNOUT", "false") == "true"}
+    b = backlight_dev()
+    if b:
+        path, mx = b
+        try:
+            d["brightness"] = max(0, min(100, round(int(open(path + "/brightness").read()) * 100 / mx)))
+            d["backlight"] = True
+        except (OSError, ValueError):
+            pass
+    return d
+
+
+def op_display_set(req):
+    try:
+        pct = int(req.get("brightness"))
+    except (TypeError, ValueError):
+        raise Refused("Brightness: a percentage")
+    b = backlight_dev()
+    if not b:
+        raise Refused("This screen's brightness cannot be set from here (no backlight control)")
+    path, mx = b
+    # Never all the way off by a slider: a black screen nobody can find the
+    # slider on. (Sleeping switches the panel off instead — screen_power.)
+    pct = max(5, min(100, pct))
+    with open(path + "/brightness", "w") as f:
+        f.write(str(max(1, round(mx * pct / 100))))
+    invalidate()
+    return {"brightness": pct}
+
+
+def op_screen_power(req):
+    on = bool(req.get("on"))
+    b = backlight_dev()
+    if b:
+        try:
+            with open(b[0] + "/bl_power", "w") as f:
+                f.write("0" if on else "4")     # FB_BLANK_UNBLANK / FB_BLANK_POWERDOWN
+        except OSError:
+            pass                                # the app's black cover still sleeps it
+    return {"on": on, "backlight": bool(b)}
+
+
+_mixer = {"at": 0.0, "where": None}
+
+
+def mixer():
+    """(card, control) to drive: the first sound card with a playback volume,
+    preferring Master. Looked up again now and then (a USB headset)."""
+    if time.time() - _mixer["at"] < 60:
+        return _mixer["where"]
+    found = None
+    try:
+        cards = [l.split()[0] for l in open(ASOUND_CARDS) if l[:3].strip().isdigit()]
+    except OSError:
+        cards = []
+    for card in cards:
+        controls = re.findall(r"Simple mixer control '([^']+)',0", out([AMIXER, "-c", card, "scontrols"]))
+        for want in ("Master", "Speaker", "PCM", "Headphone"):
+            if want in controls:
+                found = (card, want)
+                break
+        if found:
+            break
+    _mixer.update(at=time.time(), where=found)
+    return found
+
+
+def audio_facts() -> dict:
+    where = mixer()
+    if not where:
+        return {"present": False}
+    text = out([AMIXER, "-M", "-c", where[0], "sget", where[1]])
+    vols = [int(v) for v in re.findall(r"\[(\d+)%\]", text)]
+    switches = re.findall(r"\[(on|off)\]", text)
+    if not vols:
+        return {"present": False}
+    return {"present": True, "volume": round(sum(vols) / len(vols)),
+            "muted": bool(switches) and all(sw == "off" for sw in switches), "control": where[1]}
+
+
+def op_audio_set(req):
+    where = mixer()
+    if not where:
+        raise Refused("No sound card")
+    card, ctl = where
+    args = []
+    if req.get("volume") is not None:
+        try:
+            vol = max(0, min(100, int(req.get("volume"))))
+        except (TypeError, ValueError):
+            raise Refused("Volume: a percentage")
+        args.append(f"{vol}%")
+    if req.get("muted") is not None:
+        args.append("mute" if req.get("muted") else "unmute")
+    if not args:
+        raise Refused("Nothing to change")
+    if run([AMIXER, "-q", "-M", "-c", card, "sset", ctl, *args], timeout=10) != 0:
+        # A control with no switch: mute/unmute refused; the volume alone then.
+        if req.get("volume") is None or run([AMIXER, "-q", "-M", "-c", card, "sset", ctl, args[0]], timeout=10) != 0:
+            raise Refused("The sound card did not take it")
+    # Remembered for the next start (alsa-restore reads it), in the background.
+    threading.Thread(target=run, args=([ALSACTL, "store"],), kwargs={"timeout": 20}, daemon=True).start()
+    invalidate()
+    return audio_facts()
+
+
+def write_env_values(values: dict):
+    """Plain values (digits, true/false) into the settings file, keeping
+    its mode (600) and every other line."""
+    lines, seen = [], set()
+    try:
+        old = open(ENV).read().splitlines()
+    except OSError:
+        old = []
+    for line in old:
+        k = line.split("=", 1)[0].strip() if "=" in line and not line.lstrip().startswith("#") else None
+        if k in values:
+            lines.append(f"{k}={values[k]}")
+            seen.add(k)
+        else:
+            lines.append(line)
+    lines += [f"{k}={v}" for k, v in values.items() if k not in seen]
+    tmp = ENV + ".tmp"
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w") as f:
+        f.write("\n".join(lines) + "\n")
+    try:
+        st = os.stat(ENV)
+        os.chmod(tmp, st.st_mode & 0o777)
+        os.chown(tmp, st.st_uid, st.st_gid)
+    except OSError:
+        pass
+    os.replace(tmp, ENV)
+
+
+def op_screen_settings(req):
+    values = {}
+    if req.get("sleep_minutes") is not None:
+        try:
+            m = int(req.get("sleep_minutes"))
+        except (TypeError, ValueError):
+            m = -1
+        if m not in SLEEP_CHOICES:
+            raise Refused("Screen sleep: one of " + ", ".join(map(str, SLEEP_CHOICES)) + " minutes")
+        values["SCREEN_SLEEP_MINUTES"] = str(m)
+    if req.get("sleep_signout") is not None:
+        values["SCREEN_SLEEP_SIGNOUT"] = "true" if req.get("sleep_signout") else "false"
+    if not values:
+        raise Refused("Nothing to change")
+    write_env_values(values)
+    invalidate()
+    return display_facts(read_env())
 
 
 def invalidate():
@@ -613,6 +817,10 @@ OPS = {
     "setup_pin_cancel": op_setup_pin_cancel,
     "ctl": op_ctl,
     "store_grow": op_store_grow,
+    "display_set": op_display_set,
+    "screen_power": op_screen_power,
+    "audio_set": op_audio_set,
+    "screen_settings": op_screen_settings,
     "wifi_scan": op_wifi_scan,
     "wifi_join": op_wifi_join,
     "dismiss_secret": op_dismiss_secret,

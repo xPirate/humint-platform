@@ -55,6 +55,7 @@ def build(argv=None):
     from .api import Api, ApiImages
     from .tiles import WebTiles
     from .box import Box
+    from .idle import Idle
     from .pdf import Pdf, PdfPages
     from .qr import QrImages
     from .util import Util
@@ -89,6 +90,8 @@ def build(argv=None):
     qmlRegisterSingletonInstance(Util, "Humint", 1, 0, "Util", util)
     pdf = Pdf()
     qmlRegisterSingletonInstance(Pdf, "Humint", 1, 0, "Pdf", pdf)
+    idle = Idle()
+    qmlRegisterSingletonInstance(Idle, "Humint", 1, 0, "Idle", idle)
 
     engine = QQmlApplicationEngine()
     engine.addImportPath(QML)
@@ -97,7 +100,9 @@ def build(argv=None):
     engine.addImageProvider("tile", WebTiles())
     engine.addImageProvider("pdf", PdfPages())
     engine.load(QUrl.fromLocalFile(os.path.join(QML, "Main.qml")))
-    return app, engine, {"box": box, "api": api, "util": util, "pdf": pdf}
+    for root in engine.rootObjects():
+        idle.watch(root)        # every touch and key, before any screen sees it
+    return app, engine, {"box": box, "api": api, "util": util, "pdf": pdf, "idle": idle}
 
 
 def main(argv=None) -> int:

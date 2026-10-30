@@ -44,6 +44,24 @@ esac""")
                                         'n=$(cat "%s/run/humint/unlock-tries" 2>/dev/null || echo 0); '
                                         'echo $((n+1)) > "%s/run/humint/unlock-tries"; exit 1'
                                  % (self.log, self.root, self.root, self.root))
+        # A laptop's backlight and sound card.
+        bl = os.path.join(self.root, "sys/class/backlight/intel_backlight")
+        os.makedirs(bl, exist_ok=True)
+        for name, val in (("type", "raw"), ("max_brightness", "1000"), ("brightness", "600"), ("bl_power", "0")):
+            open(os.path.join(bl, name), "w").write(val + "\n")
+        os.makedirs(os.path.join(self.root, "proc/asound"), exist_ok=True)
+        open(os.path.join(self.root, "proc/asound/cards"), "w").write(
+            " 0 [PCH            ]: HDA-Intel - HDA Intel PCH\n                      HDA Intel PCH at 0xf7f10000 irq 32\n")
+        self.mixer_state = os.path.join(self.root, "mixer")
+        open(self.mixer_state, "w").write("40 on\n")
+        self.amixer = self._script("amixer", r"""st=%s; read -r vol sw < "$st"
+case "$*" in
+  *scontrols*) printf "Simple mixer control 'Master',0\nSimple mixer control 'PCM',0\n";;
+  *sget*) printf "Simple mixer control 'Master',0\n  Front Left: Playback 26214 [%%s%%%%] [%%s]\n  Front Right: Playback 26214 [%%s%%%%] [%%s]\n" "$vol" "$sw" "$vol" "$sw";;
+  *sset*) for a in "$@"; do case "$a" in *%%) vol=${a%%\%%};; mute) sw=off;; unmute) sw=on;; esac; done
+          echo "$vol $sw" > "$st";;
+esac""" % self.mixer_state)
+        self.alsactl = self._script("alsactl", 'echo "alsactl $*" >> "%s"' % self.log)
         self.sock = os.path.join(self.root, "box.sock")
         # Folders standing in for USB sticks.
         self.usb = os.path.join(self.root, "usb")
@@ -75,7 +93,7 @@ esac""")
 
     def start(self, console_url=""):
         env = dict(os.environ, HUMINT_TEST_ROOT=self.root, HUMINT_BOX_SOCK=self.sock,
-                   HUMINT_CTL=self.ctl, HUMINT_NMCLI=self.nmcli, HUMINT_TRY=self.try_, HUMINT_BOX_ALLOW_UID=str(os.getuid()),
+                   HUMINT_CTL=self.ctl, HUMINT_NMCLI=self.nmcli, HUMINT_AMIXER=self.amixer, HUMINT_ALSACTL=self.alsactl, HUMINT_TRY=self.try_, HUMINT_BOX_ALLOW_UID=str(os.getuid()),
                    HUMINT_CONSOLE_URL=console_url, HUMINT_USB_FAKE=self.usb, PYTHONUNBUFFERED="1")
         self.proc = subprocess.Popen([sys.executable, BOXD], env=env,
                                      stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)

@@ -113,6 +113,15 @@ It runs on Wayland in the `cage` compositor, as its own unprivileged account;
 a small root helper (`humint-boxd`) does the few things that need root, and
 only those. The text console on Ctrl+Alt+F1 stays available.
 
+**Quick settings.** Tap the status at the top right of any screen (network,
+battery, clock) for the machine's own controls, as on a phone or a desktop:
+brightness, volume and mute, when the screen sleeps (1 minute to an hour, or
+never) and **Sleep now**, whether sleeping also signs the console out, the
+network and the battery at a glance, and Lock / Restart / Shut down. The
+keyboard's volume and brightness keys work too. Sleeping switches the panel's
+backlight off; the next touch or key only wakes it (it never presses what was
+under the finger). Brightness and volume are kept across restarts.
+
 **Graphics.** The app draws with the graphics chip. Some chips crash the
 drivers (and most virtual machines have none): after two crashes at start-up
 it draws in software instead, by itself, until the next restart — a little
