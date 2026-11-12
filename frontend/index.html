@@ -130,6 +130,8 @@
       <button class="tab-btn board-tab" data-view="priorities" data-board="priorities" hidden>Priorities</button>
       <!-- Shown once at least one feed is configured. No feeds, no page. -->
       <button class="tab-btn" id="feeds-tab" data-view="feeds" hidden>Feeds <span class="badge" id="feeds-badge" hidden>0</span></button>
+      <!-- Shown once a zone is marked as an area of responsibility. -->
+      <button class="tab-btn" id="outside-tab" data-view="outside" hidden>Outside events <span class="badge" id="outside-badge" hidden>0</span></button>
       <button class="tab-btn" data-view="map">Map</button>
       <button class="tab-btn" data-view="review">Review <span class="badge" id="review-badge" hidden>0</span></button>
     </nav>
@@ -740,6 +742,47 @@
       </div>
     </section>
 
+    <!-- ---------- Outside events ----------
+         What open sources (GDELT, ACLED) say is happening inside the zones
+         marked as areas of responsibility. Like feed items they stop here:
+         the ones worth keeping are sent to Documents. See
+         api/outside_events.py. -->
+    <section id="view-outside" class="view">
+      <div class="view-toolbar board-toolbar">
+        <div class="board-heading">
+          <h2 class="board-title">Outside events</h2>
+          <p class="view-hint">What open sources say is happening in your areas. Machine-gathered and unverified:
+            send what matters to Documents, dismiss the rest.</p>
+        </div>
+        <input type="search" id="outside-search" placeholder="Search titles, places and notes…">
+        <select id="outside-days">
+          <option value="1">Last day</option>
+          <option value="7" selected>Last week</option>
+          <option value="30">Last month</option>
+          <option value="">Any time</option>
+        </select>
+        <select id="outside-source">
+          <option value="" selected>Every source</option>
+          <option value="gdelt">GDELT</option>
+          <option value="acled">ACLED</option>
+        </select>
+        <select id="outside-status">
+          <option value="open" selected>Open</option>
+          <option value="new">Unread</option>
+          <option value="sent">Sent to Documents</option>
+          <option value="dismissed">Dismissed</option>
+          <option value="all">Everything</option>
+        </select>
+        <button type="button" class="btn-secondary btn-sm" id="outside-dismiss-all">Dismiss all shown</button>
+      </div>
+      <div class="feeds-layout">
+        <aside class="feed-rail" id="outside-rail"></aside>
+        <div class="feed-items" id="outside-items"></div>
+      </div>
+      <p class="field-hint outside-credit" id="outside-credit">Data: <a href="https://www.gdeltproject.org/"
+        target="_blank" rel="noopener noreferrer">GDELT Project</a></p>
+    </section>
+
     <!-- ---------- Roster ----------
          A presentation layer over records that already exist. Every card
          points at an entity; the role and callsign belong to the posting, not
@@ -803,6 +846,10 @@
             <label class="checkbox-row" title="Zones past their review date">
               <input type="checkbox" id="zone-show-expired" checked>
               Show expired
+            </label>
+            <label class="checkbox-row" title="GDELT/ACLED events in the marked areas, last 7 days">
+              <input type="checkbox" id="outside-show" checked>
+              Outside events
             </label>
           </span>
           <span class="map-tool-divider" aria-hidden="true"></span>
@@ -1012,6 +1059,7 @@
         <nav class="admin-nav" id="admin-nav" aria-label="Admin sections">
           <button type="button" class="admin-nav-btn" data-admin-section="users">Users</button>
           <button type="button" class="admin-nav-btn" data-admin-section="feeds">RSS feeds</button>
+          <button type="button" class="admin-nav-btn" data-admin-section="outside">Outside events</button>
           <button type="button" class="admin-nav-btn" data-admin-section="maps">Maps</button>
           <button type="button" class="admin-nav-btn" data-admin-section="brand">Appearance</button>
           <button type="button" class="admin-nav-btn" data-admin-section="model">Model</button>
@@ -1045,6 +1093,16 @@
         <button id="rss-new-feed-btn" class="btn-primary">+ Feed</button>
       </div>
       <div id="rss-feed-list" class="stack"></div>
+        </div>
+
+        <div class="admin-section" data-admin-panel="outside" hidden>
+<div class="section-title">Outside events</div>
+      <div class="view-toolbar">
+        <p class="view-hint">Open-source events inside the zones marked as areas of responsibility, pulled whenever
+          this server has internet. Nothing is fetched until a source is on here and a zone is marked on the map.</p>
+        <button id="outside-pull-now" class="btn-secondary">Pull now</button>
+      </div>
+      <div id="outside-settings"></div>
         </div>
 
         <div class="admin-section" data-admin-panel="maps" hidden>

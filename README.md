@@ -86,6 +86,14 @@ extraction proposes records, you accept them in Review. Nothing from a feed
 becomes part of the case until somebody puts it there. Unread items are cleared
 on a schedule you set per feed.
 
+**What open sources say about your areas.** Mark a zone as an area of
+responsibility and the server pulls the events placed inside it from
+[GDELT](https://www.gdeltproject.org/) (news coded into events, every 15
+minutes, free) and, with a licence, [ACLED](https://acleddata.com/), at the
+rates their terms allow. They land on an Outside events page and the map, and
+like feed items go no further until somebody sends one to Documents.
+[How to](docs/how-to/outside-events.md).
+
 **Reports from the field, on a write-only credential.** Enroll a phone in Admin
 settings and it gets a token that can **send** a field report and nothing
 else — the same token is refused by every read endpoint in the app. What

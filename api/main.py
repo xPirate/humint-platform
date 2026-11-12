@@ -50,6 +50,7 @@ import field as field_module
 import relays as relays_module
 import place_lookup
 import feeds as feeds_module
+import outside_events
 import link_signals_api
 import retention_api
 import propose
@@ -144,6 +145,8 @@ app.include_router(boards_module.router)
 app.include_router(retention_api.router)
 app.include_router(link_signals_api.router)
 app.include_router(feeds_module.router)
+app.include_router(outside_events.router)
+app.include_router(outside_events.admin_router)
 app.include_router(place_lookup.router)
 # Two routers: /api/intake is the write-only device surface, /api/field is
 # the session-authenticated management and queue.

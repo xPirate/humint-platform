@@ -51,6 +51,7 @@ needs to come after.
 | `db/migrate-v1.12-field-sync.sql` | Field sync: each console's own identity, field packages exported and imported, the field→HQ record map, and field-server proposals in the Review queue. Needed on HQ to import a field server's package, and on the field server to export one. |
 | `db/migrate-v1.13-hardening.sql` | Worker crash recovery (heartbeats, claims), two-factor sign-in, source protection (true identities apart, handlers), and the read-only role. |
 | `db/migrate-v1.14-usernames.sql` | Usernames ignore case ("Thomas" = "thomas"). Accounts that already differ only in case: the oldest keeps its name, newer ones become `name-<id>` (printed, and in the audit log). |
+| `db/migrate-v1.15-outside-events.sql` | Outside events: GDELT and ACLED events inside zones marked as areas of responsibility. Off until an admin turns a source on. |
 
 **Run them in version order, oldest you haven't run first.** For example,
 coming from v1.6:
@@ -65,6 +66,7 @@ docker compose exec -T db psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" < db/migrat
 docker compose exec -T db psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" < db/migrate-v1.12-field-sync.sql
 docker compose exec -T db psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" < db/migrate-v1.13-hardening.sql
 docker compose exec -T db psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" < db/migrate-v1.14-usernames.sql
+docker compose exec -T db psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" < db/migrate-v1.15-outside-events.sql
 ```
 
 The `-T` matters — without it, compose swallows the redirected file. List

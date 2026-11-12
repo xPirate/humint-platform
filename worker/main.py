@@ -31,6 +31,9 @@ loop is simpler to reason about:
      at most once an hour, and also does nothing until somebody has set a
      policy on the Admin page and switched it on. It archives; it never
      deletes.
+  8. Outside events (see outside_events.py), on a thread of its own: events
+     from GDELT and ACLED located inside zones marked as areas of
+     responsibility, at the rates their terms allow.
   5. Geocoding (see geocode.py): turns a Location's address into lat/lng
      (and the Maidenhead grid locator that falls out of any coordinates —
      see geo.py) via the public OpenStreetMap Nominatim API by default,
@@ -63,6 +66,7 @@ from audit_prune import (RETENTION_DAYS as AUDIT_RETENTION_DAYS, prune_audit_log
                          prune_ollama_calls)
 from link_signals import run_link_signals
 from map_download import start_download_thread
+from outside_events import start_outside_events_thread
 from correlate import process_one_entity_embedding, process_one_report_embedding
 from db import db_cursor
 from extract import extract_text
@@ -247,6 +251,10 @@ def main():
     recover_orphans()
     recover_every_minute = Every(60, recover_orphans)
     start_download_thread()
+    # Outside events (GDELT, ACLED) for zones marked as areas of
+    # responsibility: on their own thread, since a catch-up is minutes of
+    # requests spaced as GDELT asks (see outside_events.py).
+    start_outside_events_thread()
     print("[worker] geocoding enabled =", GEOCODE_ENABLED, flush=True)
     print("[worker] audit retention =",
           f"{AUDIT_RETENTION_DAYS} days" if AUDIT_RETENTION_DAYS > 0 else "keep forever", flush=True)

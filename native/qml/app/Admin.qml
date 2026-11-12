@@ -17,6 +17,7 @@ Rectangle {
         ["backup", "Backup & restore", "AdminBackup.qml"],
         ["storage", "Storage", "AdminStorage.qml"],
         ["feeds", "RSS feeds", "AdminFeeds.qml"],
+        ["outside", "Outside events", "AdminOutside.qml"],
         ["model", "Model", "AdminModel.qml"],
         ["brand", "Appearance", "AdminBrand.qml"],
         ["signals", "Link signals", "AdminSignals.qml"],

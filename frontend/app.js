@@ -1086,6 +1086,12 @@ function showApp() {
   loadBoardConfig();
   // Also decides whether the Feeds tab exists at all.
   loadFeedRail().catch(() => {});
+  // The Outside events tab and its count (shown once a zone is marked).
+  api("/api/outside-events?limit=1").then((d) => {
+    const tab = document.getElementById("outside-tab"), badge = document.getElementById("outside-badge");
+    if (tab) tab.hidden = !(d.zones || []).length && !d.total;
+    if (badge) { badge.textContent = d.unread_total; badge.hidden = !d.unread_total; }
+  }).catch(() => {});
   // Decides whether the "From the field" queue tab exists at all.
   revealFieldSubtabIfEnrolled();
 
@@ -1735,6 +1741,7 @@ function switchView(view) {
   if (view === "reports") loadReports();
   if (view === "documents") loadDocuments();
   if (view === "feeds") { loadFeedRail(); loadFeedItems(); }
+  if (view === "outside") loadOutside();
   if (view === "roster") loadRoster();
   if (view === "bolo") loadBolo();
   if (view === "priorities") loadPriorities();
@@ -6539,6 +6546,10 @@ function openZoneForm(zone, geometry, onSaved) {
         <p class="field-hint">Creates an Event and links this zone to it. Leave blank if it isn't an event.</p>`}
       <div class="form-row"><label>Notes</label>
         <textarea id="zone-notes" rows="2">${escapeHtml(z.notes || "")}</textarea></div>
+      <label class="inline-check"><input type="checkbox" id="zone-outside" ${z.outside_events ? "checked" : ""}>
+        Pull outside events for this area (GDELT, ACLED)</label>
+      <p class="field-hint">Open-source events placed inside it arrive on the Outside events page and the map whenever
+        the server has internet — once an admin turns a source on.</p>
       <p class="form-error" id="zone-error"></p>
       <div class="modal-actions">
         <button type="button" class="btn-secondary" id="zone-cancel">Cancel</button>
@@ -6560,6 +6571,7 @@ function openZoneForm(zone, geometry, onSaved) {
       valid_from: toIso("zone-from"),
       valid_until: toIso("zone-until"),
       notes: document.getElementById("zone-notes").value.trim() || null,
+      outside_events: document.getElementById("zone-outside").checked,
     };
     if (isEdit) {
       const note = document.getElementById("zone-change-note").value.trim();
@@ -7378,6 +7390,7 @@ async function loadMap() {
     }
     await loadZones();
     await loadRoutes();
+    await loadOutsideLayer();
   } catch (err) {
     showToast("Failed to load map locations: " + err.message, true);
   } finally {
@@ -12037,6 +12050,7 @@ async function loadFieldUpdate() {
 const ADMIN_LOADERS = {
   users: () => loadAdminUsers(),
   feeds: () => loadRssFeeds(),
+  outside: () => loadOutsideSettings(),
   maps: () => loadMapAdmin(),
   brand: () => loadBrandingForm(),
   model: () => { loadOllamaSettings(); loadOllamaUsage(); },
@@ -15057,4 +15071,299 @@ async function revealFieldSubtabIfEnrolled() {
 (function wireFieldQueueControls() {
   const filter = document.getElementById("field-status-filter");
   if (filter) filter.addEventListener("change", loadFieldQueue);
+})();
+
+/* ============================================================================
+ * Outside events
+ *
+ * What open sources say is happening inside the zones marked as areas of
+ * responsibility: GDELT (news coded into events, every 15 minutes) and, with
+ * a licence, ACLED. Pulled by the worker whenever the server has internet
+ * (worker/outside_events.py); read here. Like feed items they stop on this
+ * page: machine-gathered, unverified. The ones that matter go to Documents.
+ * Both sources ask to be credited, with a link — the line under the list.
+ * ========================================================================== */
+
+const outsideState = { zoneId: null, status: "open", days: "7", source: "", q: "", zones: [], layer: null, show: true };
+
+async function loadOutside() {
+  const el = document.getElementById("outside-items");
+  const params = new URLSearchParams({ status: outsideState.status, limit: "100" });
+  if (outsideState.zoneId !== null) params.set("zone_id", outsideState.zoneId);
+  if (outsideState.days) params.set("days", outsideState.days);
+  if (outsideState.source) params.set("source", outsideState.source);
+  if (outsideState.q) params.set("q", outsideState.q);
+  if (el) el.innerHTML = '<p class="empty-state">Loading…</p>';
+  let data;
+  try {
+    data = await api(`/api/outside-events?${params}`);
+  } catch (e) {
+    if (el) el.innerHTML = `<p class="empty-state">${escapeHtml(e.message)}</p>`;
+    return null;
+  }
+  outsideState.zones = data.zones || [];
+  const tab = document.getElementById("outside-tab");
+  const badge = document.getElementById("outside-badge");
+  if (tab) tab.hidden = outsideState.zones.length === 0 && data.total === 0;
+  if (badge) { badge.textContent = data.unread_total; badge.hidden = !data.unread_total; }
+
+  const rail = document.getElementById("outside-rail");
+  if (rail) {
+    rail.innerHTML = `
+      <button type="button" class="feed-rail-item${outsideState.zoneId === null ? " active" : ""}" data-zone-pick="">Every area
+        ${data.unread_total ? `<span class="feed-count">${data.unread_total}</span>` : ""}</button>
+      ${outsideState.zones.map((z) => `
+        <button type="button" class="feed-rail-item${outsideState.zoneId === z.id ? " active" : ""}" data-zone-pick="${z.id}">
+          <span class="feed-rail-label">${escapeHtml(z.name)}</span>
+          ${z.unread ? `<span class="feed-count">${z.unread}</span>` : ""}</button>`).join("")}
+      ${outsideState.zones.length ? "" : `<p class="empty-state">No areas yet. On the map, draw or edit a zone and tick
+        “Pull outside events”. An admin turns the sources on under Admin → Outside events.</p>`}`;
+    rail.querySelectorAll("[data-zone-pick]").forEach((b) => b.addEventListener("click", () => {
+      outsideState.zoneId = b.dataset.zonePick === "" ? null : Number(b.dataset.zonePick);
+      loadOutside();
+    }));
+  }
+  const credit = document.getElementById("outside-credit");
+  if (credit) {
+    const acled = data.items.some((i) => i.source === "acled");
+    credit.innerHTML = `Data: <a href="https://www.gdeltproject.org/" target="_blank" rel="noopener noreferrer">GDELT Project</a>`
+      + (acled ? ` · <a href="https://acleddata.com/" target="_blank" rel="noopener noreferrer">ACLED</a>,
+        Armed Conflict Location &amp; Event Data` : "");
+  }
+  if (!el) return data;
+  if (!data.items.length) {
+    el.innerHTML = `<p class="empty-state">${outsideState.zones.length ? "Nothing here." : "No area is set to pull outside events yet."}</p>`;
+    return data;
+  }
+  el.innerHTML = `<p class="field-hint feed-count-line">${data.total} event${data.total === 1 ? "" : "s"}${
+      data.total > data.items.length ? `, showing ${data.items.length}` : ""}</p>
+    ${data.items.map(outsideItemHtml).join("")}`;
+  wireOutsideItems(el);
+  return data;
+}
+
+function outsideItemHtml(e) {
+  const src = e.source === "acled" ? "ACLED" : "GDELT";
+  const meta = [e.place, e.precision ? `placed at ${e.precision} level` : null,
+                e.num_sources ? `${e.num_sources} source${e.num_sources === 1 ? "" : "s"}` : null,
+                e.fatalities ? `${e.fatalities} killed` : null, e.sources_named].filter(Boolean).join(" · ");
+  return `
+    <div class="feed-item feed-item-${escapeHtml(e.status)}" data-item="${e.id}">
+      <div class="feed-item-head">
+        <span class="status-pill outside-src-${escapeHtml(e.source)}">${src}</span>
+        <span class="feed-item-source">${escapeHtml(e.category || "")}</span>
+        ${e.occurred_on ? `<span class="card-meta">${escapeHtml(e.occurred_on)}</span>` : ""}
+        ${e.status === "sent" ? '<span class="status-pill feed-sent-pill">in Documents</span>' : ""}
+        ${e.status === "dismissed" ? '<span class="status-pill">dismissed</span>' : ""}
+      </div>
+      <h3 class="feed-item-title">${escapeHtml(e.title)}</h3>
+      ${meta ? `<p class="field-hint">${escapeHtml(meta)}</p>` : ""}
+      ${e.notes ? `<p class="feed-item-summary">${escapeHtml(truncate(e.notes, 400))}</p>` : ""}
+      <div class="feed-item-actions">
+        ${e.url ? `<a class="btn-link btn-sm" href="${escapeHtml(e.url)}" target="_blank" rel="noopener noreferrer">The article ↗</a>` : ""}
+        <button type="button" class="btn-link btn-sm" data-oe-map="${e.id}" data-lat="${e.lat}" data-lon="${e.lon}">On the map</button>
+        ${e.status === "sent"
+          ? `<button type="button" class="btn-link btn-sm" data-open-doc="${e.attachment_id}">See the document</button>`
+          : `<button type="button" class="btn-primary btn-sm" data-oe-send="${e.id}">Send to Documents</button>
+             ${e.status === "dismissed"
+               ? `<button type="button" class="btn-link btn-sm" data-oe-status="new" data-id="${e.id}">Put back</button>`
+               : `<button type="button" class="btn-link btn-sm" data-oe-status="dismissed" data-id="${e.id}">Dismiss</button>
+                  ${e.status === "new" ? `<button type="button" class="btn-link btn-sm" data-oe-status="read" data-id="${e.id}">Mark read</button>` : ""}`}`}
+      </div>
+    </div>`;
+}
+
+function wireOutsideItems(el) {
+  el.querySelectorAll("[data-oe-status]").forEach((b) => b.addEventListener("click", async () => {
+    try {
+      await api(`/api/outside-events/${b.dataset.id}/status`, { method: "POST", body: { status: b.dataset.oeStatus } });
+      loadOutside();
+    } catch (e) { showToast(e.message, true); }
+  }));
+  el.querySelectorAll("[data-oe-send]").forEach((b) => b.addEventListener("click", () => openSendOutsideForm(Number(b.dataset.oeSend))));
+  el.querySelectorAll("[data-oe-map]").forEach((b) => b.addEventListener("click", async () => {
+    switchView("map");
+    setTimeout(() => { if (leafletMap) leafletMap.setView([Number(b.dataset.lat), Number(b.dataset.lon)], 15); }, 300);
+  }));
+  el.querySelectorAll("[data-open-doc]").forEach((b) => b.addEventListener("click", () => {
+    switchView("documents");
+    openDocument(Number(b.dataset.openDoc));
+  }));
+}
+
+function openSendOutsideForm(id) {
+  openModal(`
+    <h2>Send to Documents</h2>
+    <p class="field-hint">It becomes a document like any other — marked as an outside event, with its source written
+      at the top — and extraction proposes records for Review. Nothing reaches the case file until you accept them.</p>
+    <form id="send-oe-form">
+      <label class="inline-check"><input type="checkbox" id="oe-fetch" checked> Fetch the article it came from</label>
+      <div class="form-row"><label for="oe-note">Where it came from</label>
+        <input type="text" id="oe-note" placeholder="leave blank for the source's name"></div>
+      <p class="form-error" id="send-oe-error"></p>
+      <div class="modal-actions">
+        <button type="button" class="btn-secondary" id="send-oe-cancel">Cancel</button>
+        <button type="submit" class="btn-primary" id="send-oe-submit">Send</button>
+      </div>
+    </form>`);
+  document.getElementById("send-oe-cancel").addEventListener("click", requestModalClose);
+  document.getElementById("send-oe-form").addEventListener("submit", async (ev) => {
+    ev.preventDefault();
+    const btn = document.getElementById("send-oe-submit");
+    btn.disabled = true; btn.textContent = "Fetching…";
+    try {
+      const r = await api(`/api/outside-events/${id}/to-document`, { method: "POST", body: {
+        fetch_article: document.getElementById("oe-fetch").checked,
+        source_note: document.getElementById("oe-note").value.trim() || null } });
+      closeModal();
+      showToast(r.fetch_error ? "Sent, without the article — " + r.fetch_error : "Sent to Documents", Boolean(r.fetch_error));
+      loadOutside(); refreshQueueBadges();
+    } catch (e) {
+      document.getElementById("send-oe-error").textContent = e.message;
+      btn.disabled = false; btn.textContent = "Send";
+    }
+  });
+}
+
+/* The map layer: the last week's events in the marked areas, small violet
+ * dots — not a record's colour, because they are not records. */
+const OUTSIDE_COLOUR = "#8b5cf6";
+async function loadOutsideLayer() {
+  if (!leafletMap || typeof L === "undefined") return;
+  if (!outsideState.layer) outsideState.layer = L.layerGroup().addTo(leafletMap);
+  outsideState.layer.clearLayers();
+  if (!outsideState.show) return;
+  let data;
+  try { data = await api("/api/outside-events/map?days=7"); } catch (e) { return; }
+  (data.items || []).forEach((p) => {
+    const m = L.circleMarker([p.lat, p.lon], { radius: 5, color: "#ffffff", weight: 1.5,
+                                              fillColor: OUTSIDE_COLOUR, fillOpacity: 0.9, className: "outside-pin" });
+    m.bindTooltip(`${escapeHtml(p.title)}<br><small>${p.source === "acled" ? "ACLED" : "GDELT"} · ${escapeHtml(p.occurred_on || "")}
+      · unverified open source</small>`);
+    m.on("click", (e) => { L.DomEvent.stopPropagation(e); switchView("outside"); });
+    m.addTo(outsideState.layer);
+  });
+}
+
+async function loadOutsideSettings() {
+  const el = document.getElementById("outside-settings");
+  if (!el) return;
+  let s;
+  try { s = await api("/api/admin/outside-events/settings"); } catch (e) {
+    el.innerHTML = `<p class="empty-state">${escapeHtml(e.message)}</p>`; return;
+  }
+  const L_ = (k) => s.limits[k];
+  const when = (iso) => iso ? relativeTime(iso) : "never";
+  const num = (id, k, v, label, hint, step) => `
+    <div class="form-row"><label for="${id}">${label}</label>
+      <input type="number" id="${id}" value="${v}" min="${L_(k).min}" max="${L_(k).max}" step="${step || 1}"></div>
+    <p class="field-hint">${hint}</p>`;
+  el.innerHTML = `
+    <div class="card"><h3>Areas</h3>
+      ${s.zones.length ? `<ul>${s.zones.map((z) => `<li>${escapeHtml(z.name)}${z.expired ? " (expired: not pulled)" : ""}</li>`).join("")}</ul>`
+        : '<p class="empty-state">None yet. On the map, draw or edit a zone and tick “Pull outside events for this area”.</p>'}</div>
+    <form id="outside-form">
+      <div class="card"><h3>GDELT</h3>
+        <p class="field-hint">The world's news coded into events, published every 15 minutes. Free, no account. Its terms:
+          any use, citing GDELT and linking to <a href="https://www.gdeltproject.org/" target="_blank" rel="noopener noreferrer">gdeltproject.org</a>
+          (the Outside events page does).</p>
+        <label class="inline-check"><input type="checkbox" id="oe-g-on" ${s.gdelt_enabled ? "checked" : ""}> Pull events from GDELT</label>
+        ${num("oe-g-int", "gdelt_interval_minutes", s.gdelt_interval_minutes, "Check every (minutes)",
+              `At least ${L_("gdelt_interval_minutes").min}: GDELT publishes every 15 minutes, so more often finds nothing new.`)}
+        ${num("oe-g-sp", "gdelt_request_spacing_seconds", s.gdelt_request_spacing_seconds, "Between requests (seconds)",
+              `At least ${L_("gdelt_request_spacing_seconds").min}: GDELT's limit is one request every 5 seconds.`, "0.5")}
+        ${num("oe-g-back", "gdelt_backfill_hours", s.gdelt_backfill_hours, "Fill in after time offline (hours)",
+              `Up to ${L_("gdelt_backfill_hours").max}. A day is 96 small files (8 minutes at 5 s apart).`)}
+        <div class="form-row"><label>Event types kept</label>
+          <div class="oe-codes">${s.root_code_choices.map((c) => `<label class="inline-check">
+            <input type="checkbox" class="oe-code" value="${c.code}" ${s.gdelt_root_codes.includes(c.code) ? "checked" : ""}>
+            ${c.code} ${escapeHtml(c.label)}</label>`).join("")}</div></div>
+        ${num("oe-g-min", "gdelt_min_sources", s.gdelt_min_sources, "Reported by at least (sources)",
+              "Higher cuts noise, and misses the first reports.")}
+        <label class="inline-check"><input type="checkbox" id="oe-g-city" ${s.gdelt_city_only ? "checked" : ""}>
+          Only events placed at a city or finer (a state- or country-level place is that area's centre)</label>
+        <p class="field-hint">Last checked ${escapeHtml(when(s.gdelt_last_poll_at))} · ${(s.counts.gdelt || {}).total || 0} kept</p>
+        ${s.gdelt_last_error ? `<p class="form-error">Last attempt: ${escapeHtml(s.gdelt_last_error)}</p>` : ""}
+      </div>
+      <div class="card"><h3>ACLED</h3>
+        <p class="field-hint">Hand-coded political violence and protest. Needs a myACLED account whose access level includes
+          the API (Research and up; a personal email gets Open, which has none). Its licence decides what may be kept —
+          turning it on confirms yours allows it. ACLED updates weekly.</p>
+        <label class="inline-check"><input type="checkbox" id="oe-a-on" ${s.acled_enabled ? "checked" : ""}> Pull events from ACLED</label>
+        <div class="form-row"><label for="oe-a-user">myACLED email</label>
+          <input type="text" id="oe-a-user" value="${escapeHtml(s.acled_username || "")}" autocomplete="off"></div>
+        <div class="form-row"><label for="oe-a-pass">Password</label>
+          <input type="password" id="oe-a-pass" autocomplete="new-password"
+                 placeholder="${s.acled_password_set ? "set — type a new one to change it" : ""}"></div>
+        <p class="field-hint">Kept on this server and never shown again; left out of backups.</p>
+        ${num("oe-a-int", "acled_interval_minutes", s.acled_interval_minutes, "Check every (minutes)", `At least ${L_("acled_interval_minutes").min}.`)}
+        ${num("oe-a-sp", "acled_request_spacing_seconds", s.acled_request_spacing_seconds, "Between requests (seconds)",
+              `At least ${L_("acled_request_spacing_seconds").min}.`, "0.5")}
+        ${num("oe-a-back", "acled_backfill_days", s.acled_backfill_days, "First pull reaches back (days)", "")}
+        <p class="field-hint">Last checked ${escapeHtml(when(s.acled_last_poll_at))} · ${(s.counts.acled || {}).total || 0} kept</p>
+        ${s.acled_last_error ? `<p class="form-error">Last attempt: ${escapeHtml(s.acled_last_error)}</p>` : ""}
+      </div>
+      <div class="card"><h3>Keeping them</h3>
+        ${num("oe-keep", "retention_days", s.retention_days, "Delete unread and dismissed after (days)",
+              "Ones sent to Documents stay: the document is the record.")}
+      </div>
+      <p class="form-error" id="outside-error"></p>
+      <div class="modal-actions">
+        <button type="button" class="btn-secondary" id="outside-fastest">Fastest the terms allow</button>
+        <button type="submit" class="btn-primary">Save</button>
+      </div>
+    </form>`;
+  const save = async (extra) => {
+    const v = (id) => document.getElementById(id).value;
+    const body = {
+      gdelt_enabled: document.getElementById("oe-g-on").checked,
+      gdelt_interval_minutes: parseInt(v("oe-g-int"), 10), gdelt_request_spacing_seconds: parseFloat(v("oe-g-sp")),
+      gdelt_backfill_hours: parseInt(v("oe-g-back"), 10), gdelt_min_sources: parseInt(v("oe-g-min"), 10),
+      gdelt_city_only: document.getElementById("oe-g-city").checked,
+      gdelt_root_codes: [...document.querySelectorAll(".oe-code:checked")].map((c) => c.value),
+      acled_enabled: document.getElementById("oe-a-on").checked, acled_username: v("oe-a-user").trim(),
+      acled_interval_minutes: parseInt(v("oe-a-int"), 10), acled_request_spacing_seconds: parseFloat(v("oe-a-sp")),
+      acled_backfill_days: parseInt(v("oe-a-back"), 10), retention_days: parseInt(v("oe-keep"), 10),
+      ...(extra || {}),
+    };
+    if (v("oe-a-pass")) body.acled_password = v("oe-a-pass");
+    try {
+      await api("/api/admin/outside-events/settings", { method: "PUT", body });
+      showToast("Saved");
+      loadOutsideSettings();
+    } catch (e) { document.getElementById("outside-error").textContent = e.message; }
+  };
+  document.getElementById("outside-form").addEventListener("submit", (e) => { e.preventDefault(); save(); });
+  document.getElementById("outside-fastest").addEventListener("click", () => save({ fastest: true }));
+}
+
+(function wireOutside() {
+  const search = document.getElementById("outside-search");
+  if (search) {
+    let t = null;
+    search.addEventListener("input", () => { clearTimeout(t); t = setTimeout(() => { outsideState.q = search.value.trim(); loadOutside(); }, 300); });
+  }
+  [["outside-days", "days"], ["outside-source", "source"], ["outside-status", "status"]].forEach(([id, key]) => {
+    const el = document.getElementById(id);
+    if (el) el.addEventListener("change", () => { outsideState[key] = el.value; loadOutside(); });
+  });
+  const all = document.getElementById("outside-dismiss-all");
+  if (all) all.addEventListener("click", async () => {
+    const z = outsideState.zones.find((x) => x.id === outsideState.zoneId);
+    if (!confirm(`Dismiss everything open in ${z ? z.name : "every area"}? They stay findable under Dismissed.`)) return;
+    try {
+      const r = await api("/api/outside-events/dismiss-all", { method: "POST", body: { zone_id: outsideState.zoneId } });
+      showToast(`Dismissed ${r.dismissed}`); loadOutside();
+    } catch (e) { showToast(e.message, true); }
+  });
+  const show = document.getElementById("outside-show");
+  if (show) show.addEventListener("change", () => { outsideState.show = show.checked; loadOutsideLayer(); });
+  const pull = document.getElementById("outside-pull-now");
+  if (pull) pull.addEventListener("click", async () => {
+    try {
+      await api("/api/admin/outside-events/pull-now", { method: "POST" });
+      showToast("Asked for at once — the spacing between requests still applies");
+      loadOutsideSettings();
+    } catch (e) { showToast(e.message, true); }
+  });
 })();

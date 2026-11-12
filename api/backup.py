@@ -100,6 +100,11 @@ EXCLUDED_TABLES = {"sessions"}
 # worker_heartbeats likewise describes running processes; wiping it in a
 # restore would make a live worker's claims look abandoned.
 PRESERVED_TABLES = {"instance_identity", "worker_heartbeats"}
+# Credentials for outside services: written to a backup as empty. A backup
+# file travels (downloaded, carried on a stick, restored elsewhere); a
+# password to somebody else's service should not travel with it. A restored
+# server asks for it again.
+SECRET_COLUMNS = {"outside_event_settings": {"acled_password", "acled_token", "acled_token_expires"}}
 
 # Typed into the restore form to confirm the destructive action. Matched
 # exactly (after stripping surrounding whitespace) — an accidental click can
@@ -280,6 +285,10 @@ def download_backup(user: dict = Depends(auth.require_admin)):
             col_sql = ", ".join(f'"{c}"' for c in columns)
             cur.execute(f'SELECT {col_sql} FROM "{table}"')
             rows = [dict(zip(columns, row)) for row in cur.fetchall()]
+            for row in rows:
+                for c in SECRET_COLUMNS.get(table, ()):
+                    if c in row:
+                        row[c] = None
             table_blocks[table] = {"columns": columns, "rows": rows}
 
     storage_paths = _stored_file_paths(table_blocks)

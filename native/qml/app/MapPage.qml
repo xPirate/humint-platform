@@ -20,6 +20,10 @@ Rectangle {
     property bool showLocations: true
     property bool showZones: true
     property bool showRoutes: true
+    // Outside events (GDELT, ACLED) in the marked areas: the last week.
+    property var outsideItems: []
+    property bool showOutside: true
+    readonly property color outsideColor: Theme.light ? "#6d28d9" : "#b78bff"
     property var selected: null        // {kind, data}
     // Drawing: {kind: "polygon" | "box" | "circle" | "route", points: [[lat, lng]], redraw: routeId?}
     property var draw: null
@@ -136,6 +140,7 @@ Rectangle {
         }).catch(function(e) { ui.toast(e.message, true) })
         Net.get("/api/map/zones").then(function(r) { page.zoneItems = r.items || [] }).catch(function() {})
         Net.get("/api/map/routes").then(function(r) { page.routeItems = r.items || [] }).catch(function() {})
+        Net.get("/api/outside-events/map?days=7").then(function(r) { page.outsideItems = r.items || [] }).catch(function() {})
     }
     function pickSource(s) {
         page.source = s
@@ -169,6 +174,8 @@ Rectangle {
             selectedId: page.selected && page.selected.kind === "location" ? page.selected.data.id : (shell.arg ? shell.arg.focus : null)
             markers: (page.showLocations ? page.locations.map(function(l) {
                 return { id: l.id, lat: l.lat, lng: l.lng, color: page.envColor(l.environment), label: l.name, data: l }
+            }) : []).concat(page.showOutside ? page.outsideItems.map(function(o) {
+                return { id: "oe-" + o.id, lat: o.lat, lng: o.lon, color: page.outsideColor, label: "", data: o, outside: true }
             }) : []).concat(page.draw ? page.draw.points.map(function(p, i) {
                 return { id: "draw-" + i, lat: p[0], lng: p[1], color: Theme.accent, label: "" } }) : [])
             zones: (page.drawZone ? [page.drawZone] : []).concat(page.showZones ? page.zoneItems.map(function(zn) {
@@ -184,7 +191,7 @@ Rectangle {
                 return { id: rt.id, color: rt.environment ? page.envColor(rt.environment) : page.routeColor, data: rt,
                          lines: lines.map(function(line) { return line.map(function(c) { return [c[1], c[0]] }) }) }
             }) : [])
-            onMarkerClicked: function(m) { if (m.data) page.selected = { kind: "location", data: m.data } }
+            onMarkerClicked: function(m) { if (m.data) page.selected = { kind: m.outside ? "outside" : "location", data: m.data } }
             onZoneClicked: function(z) { if (z.data) page.selected = { kind: "zone", data: z.data } }
             onRouteClicked: function(r) { if (r.data) page.selected = { kind: "route", data: r.data } }
             onTapped: function(lat, lng) { if (page.draw) page.addPoint(lat, lng); else page.selected = null }
@@ -242,7 +249,8 @@ Rectangle {
                     Txt { kind: "label"; text: "Show" }
                     Repeater {
                         model: [["showLocations", "Locations (" + page.locations.length + ")"], ["showZones", "Zones (" + page.zoneItems.length + ")"],
-                                ["showRoutes", "Routes (" + page.routeItems.length + ")"]]
+                                ["showRoutes", "Routes (" + page.routeItems.length + ")"],
+                                ["showOutside", "Outside events, last week (" + page.outsideItems.length + ")"]]
                         Check { checked: page[modelData[0]]; onToggled: page[modelData[0]] = checked; text: modelData[1] }
                     }
                     Txt { kind: "label"; text: "Draw"; visible: !shell.viewer }
@@ -261,19 +269,26 @@ Rectangle {
                                           anchors.verticalCenter: parent.verticalCenter }
                               Txt { text: modelData; kind: "muted" } }
                     }
+                    Row { spacing: 8 * Theme.s; visible: page.outsideItems.length > 0
+                          Rectangle { width: 14 * Theme.s; height: width; radius: width / 2; color: page.outsideColor
+                                      anchors.verticalCenter: parent.verticalCenter }
+                          Txt { text: "Outside event (GDELT/ACLED)"; kind: "muted" } }
 
                     // What was tapped
                     Card {
                         width: parent.width
                         visible: !!page.selected
-                        title: page.selected ? ({ location: "Location", zone: "Zone", route: "Route" })[page.selected.kind] : ""
+                        title: page.selected ? ({ location: "Location", zone: "Zone", route: "Route", outside: "Outside event" })[page.selected.kind] : ""
                         implicitHeight: selCol.implicitHeight + 2 * padding + Theme.gap + 20 * Theme.s
                         Column {
                             id: selCol
                             width: parent.width; spacing: 6 * Theme.s
                             readonly property string k: page.selected ? page.selected.kind : ""
                             readonly property var d: page.selected ? page.selected.data : ({})
-                            Txt { width: parent.width; text: selCol.d.name || ""; font.weight: Font.DemiBold }
+                            Txt { width: parent.width; text: selCol.d.name || selCol.d.title || ""; font.weight: Font.DemiBold }
+                            Txt { width: parent.width; visible: selCol.k === "outside"; kind: "muted"
+                                  text: selCol.k !== "outside" ? "" : (selCol.d.source === "acled" ? "ACLED" : "GDELT") + " · " + (selCol.d.occurred_on || "")
+                                        + (selCol.d.place ? " · " + selCol.d.place : "") + " · unverified open source" }
                             Txt { width: parent.width; visible: selCol.k === "location" && !!selCol.d.address; kind: "muted"; text: selCol.d.address || "" }
                             Txt { width: parent.width; visible: !!selCol.d.description; text: selCol.d.description || ""; font.family: Theme.prose }
                             Txt { width: parent.width; visible: selCol.k === "zone" && !!selCol.d.notes; text: selCol.d.notes || ""; font.family: Theme.prose }
@@ -283,13 +298,16 @@ Rectangle {
                             Txt { width: parent.width; kind: "muted"; visible: selCol.k === "zone"
                                   text: selCol.k !== "zone" ? "" : (selCol.d.shape || "") + (selCol.d.expired ? " · expired" : "")
                                         + (selCol.d.valid_until ? " · until " + Fmt.exactTime(selCol.d.valid_until) : " · open-ended")
-                                        + (selCol.d.event_name ? " · part of " + selCol.d.event_name : "") }
+                                        + (selCol.d.event_name ? " · part of " + selCol.d.event_name : "")
+                                        + (selCol.d.outside_events ? " · pulls outside events" : "") }
                             Txt { width: parent.width; kind: "muted"; visible: selCol.k === "route"
                                   text: selCol.k !== "route" ? "" : page.lengthText(selCol.d.length_m || 0) + " · " + (selCol.d.point_count || 0) + " points"
                                         + (selCol.d.travel_mode ? " · " + selCol.d.travel_mode : "") }
                             Flow {
                                 width: parent.width; spacing: 6 * Theme.s
-                                Btn { compact: true; text: "Open the record"; visible: selCol.k !== "zone" || !!selCol.d.entity_id
+                                Btn { compact: true; text: "Outside events"; visible: selCol.k === "outside" || (selCol.k === "zone" && !!selCol.d.outside_events)
+                                      onClicked: shell.go("outside") }
+                                Btn { compact: true; text: "Open the record"; visible: selCol.k !== "outside" && (selCol.k !== "zone" || !!selCol.d.entity_id)
                                       onClicked: shell.go("entity", selCol.k === "zone" ? selCol.d.entity_id : selCol.d.id) }
                                 Btn { compact: true; text: "Edit"; visible: selCol.k === "zone" && !shell.viewer; onClicked: zoneForm.open(selCol.d, null) }
                                 Btn { compact: true; text: "Redraw"; visible: selCol.k === "route" && !shell.viewer; onClicked: page.startDraw("route", selCol.d.id) }
@@ -312,11 +330,13 @@ Rectangle {
             zName.text = z ? z.name : ""; zEnv.value = z ? z.environment : "Semi-permissive"
             zFrom.text = page.localText(z ? z.valid_from : new Date().toISOString()); zUntil.text = page.localText(z ? z.valid_until : null)
             zNotes.text = z ? (z.notes || "") : ""; zEvent.text = ""; zWhy.text = ""
+            zOutside.checked = z ? !!z.outside_events : false
             visible = true
         }
         onAccepted: {
             var body = { name: zName.text.trim(), environment: zEnv.value, valid_from: page.isoFrom(zFrom.text),
-                         valid_until: page.isoFrom(zUntil.text), notes: zNotes.text.trim() || null }
+                         valid_until: page.isoFrom(zUntil.text), notes: zNotes.text.trim() || null,
+                         outside_events: zOutside.checked }
             if (!body.name) { error = "Give the zone a name."; return }
             if (zone) { if (zWhy.text.trim()) body.change_note = zWhy.text.trim() }
             else { body.geometry = geometry; if (zEvent.text.trim()) body.create_event = zEvent.text.trim() }
@@ -340,6 +360,9 @@ Rectangle {
         Labeled { label: "Event"; visible: !zoneForm.zone; hint: "Makes an Event and ties this zone to it. Blank for none."
                   Field { id: zEvent; width: parent.width; placeholderText: "e.g. Riverside protest, 17 Sep" } }
         Labeled { label: "Notes"; Field { id: zNotes; width: parent.width } }
+        Check { id: zOutside; text: "Pull outside events for this area (GDELT, ACLED)" }
+        Txt { width: parent.width; kind: "muted"; visible: zOutside.checked
+              text: "Open-source events placed inside it arrive on the Outside events page and the map, whenever the server has internet — once an admin turns a source on." }
     }
 
     FormDialog {

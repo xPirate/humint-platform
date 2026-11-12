@@ -68,7 +68,7 @@ MAX_RADIUS_M = 500_000.0
 _ZONE_COLS = ["id", "name", "environment", "shape", "geometry", "radius_m",
               "min_lat", "min_lon", "max_lat", "max_lon", "event_id",
               "valid_from", "valid_until", "notes", "created_by",
-              "created_at", "updated_at", "entity_id"]
+              "created_at", "updated_at", "entity_id", "outside_events"]
 
 
 # ---------------------------------------------------------------------------
@@ -230,6 +230,9 @@ class ZoneCreate(BaseModel):
     # saves the analyst leaving the map to say so, and it is what makes the
     # reports written during the zone's life findable afterwards.
     create_event: Optional[str] = Field(default=None, max_length=200)
+    # An area of responsibility: the worker pulls open-source events located
+    # inside it (GDELT, ACLED) — see api/outside_events.py.
+    outside_events: bool = False
 
 
 class ZoneUpdate(BaseModel):
@@ -240,6 +243,7 @@ class ZoneUpdate(BaseModel):
     valid_until: Optional[str] = None
     notes: Optional[str] = Field(default=None, max_length=4000)
     event_id: Optional[str] = None
+    outside_events: Optional[bool] = None
     # Why it changed. Kept against the change, not the zone: "police line
     # moved" explains one transition, not the zone's whole existence.
     change_note: Optional[str] = Field(default=None, max_length=500)
@@ -522,7 +526,7 @@ def get_zone(zone_id: int, user: dict = Depends(auth.require_user)):
 def insert_zone(cur, user: dict, *, name: str, environment: str, shape: str,
                 geojson: dict, radius_m, bounds: tuple, event_id=None,
                 valid_from=None, valid_until=None, notes=None,
-                change_note: str = "Zone created") -> dict:
+                change_note: str = "Zone created", outside_events: bool = False) -> dict:
     """A zone and its record, in the caller's transaction.
 
     Shared by drawing on the map, importing a KML/KMZ/GPX file and accepting an
@@ -534,13 +538,15 @@ def insert_zone(cur, user: dict, *, name: str, environment: str, shape: str,
         f"""
         INSERT INTO map_zones (name, environment, shape, geometry, radius_m,
                                min_lat, min_lon, max_lat, max_lon, event_id,
-                               valid_from, valid_until, notes, created_by, entity_id)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                               valid_from, valid_until, notes, created_by, entity_id,
+                               outside_events)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         RETURNING {', '.join(_ZONE_COLS)}
         """,
         (name, environment, shape, json.dumps(geojson), radius_m,
          bounds[0], bounds[1], bounds[2], bounds[3], event_id,
-         valid_from or None, valid_until or None, notes, user["id"], entity_id))
+         valid_from or None, valid_until or None, notes, user["id"], entity_id,
+         bool(outside_events)))
     zone = _row_to_zone(cur.fetchone())
     # The opening row of the timeline, so the history is complete rather
     # than starting at the first edit.
@@ -565,14 +571,16 @@ def create_zone(payload: ZoneCreate, user: dict = Depends(auth.require_user)):
                            geojson=geojson, radius_m=radius_m, bounds=bounds,
                            event_id=event_id, valid_from=payload.valid_from,
                            valid_until=payload.valid_until,
-                           notes=(payload.notes or "").strip() or None)
+                           notes=(payload.notes or "").strip() or None,
+                           outside_events=payload.outside_events)
         zone["event_name"] = _event_label(cur, event_id)
 
     audit.record("map_zone.create", user=user, object_type="map_zone",
                  object_id=zone["id"], object_label=zone["name"],
                  detail={"environment": payload.environment, "shape": payload.geometry.shape,
                          "event_id": event_id, "event_created": event_created,
-                         "valid_until": payload.valid_until})
+                         "valid_until": payload.valid_until,
+                         "outside_events": payload.outside_events})
     zone["event_created"] = event_created
     return zone
 
@@ -602,6 +610,10 @@ def update_zone(zone_id: int, payload: ZoneUpdate, user: dict = Depends(auth.req
                 sets.append(f"{key} = %s")
                 values.append(value.strip() or None if isinstance(value, str) and key in
                               ("name", "notes") else (value or None))
+
+        if fields.get("outside_events") is not None:
+            sets.append("outside_events = %s")
+            values.append(bool(fields["outside_events"]))
 
         if payload.geometry is not None:
             geojson, radius_m, bounds = _geometry_from(payload.geometry)

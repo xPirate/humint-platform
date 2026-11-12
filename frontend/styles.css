@@ -2673,3 +2673,11 @@ body.role-viewer #propose-btn, body.role-viewer #edit-entity-btn, body.role-view
 body.role-viewer #retention-hold-btn, body.role-viewer #add-rel-btn, body.role-viewer #entity-upload-form,
 body.role-viewer #assistant-tab-btn, body.role-viewer #start-debrief-btn,
 body.role-viewer #doc-drop-zone{display:none !important;}
+
+/* Outside events (Admin settings, the page) */
+#outside-settings .card { margin-bottom: 14px; }
+#outside-settings input[type="number"] { max-width: 180px; }
+#outside-settings input[type="text"], #outside-settings input[type="password"] { max-width: 420px; }
+.oe-codes { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 2px 14px; }
+.outside-credit { margin-top: 10px; }
+.status-pill.outside-src-acled { border-color: #b45309; color: #b45309; }
