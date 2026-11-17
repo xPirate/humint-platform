@@ -41,8 +41,13 @@ import time
 import zipfile
 from datetime import date, datetime, timedelta, timezone
 
+import math
+import re
+from urllib.parse import urlparse
+
 import requests
 
+import reader
 from cameo import CAMEO
 from db import db_cursor
 from zone_geo import zone_contains
@@ -111,7 +116,8 @@ SETTINGS_COLS = (
     "gdelt_root_codes", "gdelt_min_sources", "gdelt_city_only", "gdelt_last_file", "gdelt_last_poll_at",
     "acled_enabled", "acled_username", "acled_password", "acled_interval_minutes",
     "acled_request_spacing_seconds", "acled_backfill_days", "acled_token", "acled_token_expires",
-    "acled_last_poll_at", "retention_days", "pull_requested_at")
+    "acled_last_poll_at", "retention_days", "pull_requested_at", "prefetch_articles",
+    "article_spacing_seconds", "articles_per_pass", "dedupe_rules", "dedupe_model", "dedupe_model_threshold")
 
 
 def load_settings() -> dict | None:
@@ -408,6 +414,217 @@ def pull_acled(settings: dict, zones: list) -> int:
     return added
 
 
+# ---- articles: fetched ahead, kept in reader form ------------------------------------------
+# Each new incident's article is fetched once and kept (api/reader.py's
+# extraction): it then opens at once in the side panel, reads offline on a
+# field server, and gives the headline that duplicates are matched on. Only
+# incidents, not the duplicates folded under them; a gap between two requests
+# to the same news site; a failure is kept and tried once more later.
+
+_site_last = {}
+
+
+def _site_wait(url: str, seconds: float, sleep=time.sleep):
+    host = (urlparse(url).hostname or "").lower()
+    delay = _site_last.get(host, 0) + seconds - time.monotonic()
+    if delay > 0:
+        sleep(delay)
+    _site_last[host] = time.monotonic()
+
+
+def prefetch_articles(settings: dict) -> int:
+    with db_cursor() as cur:
+        cur.execute(
+            "SELECT DISTINCT ON (e.url) e.url FROM outside_events e "
+            "LEFT JOIN outside_articles a ON a.url = e.url "
+            "WHERE e.url IS NOT NULL AND e.dup_of IS NULL AND e.status <> 'dismissed' "
+            "  AND (a.url IS NULL OR (a.body IS NULL AND a.attempts < 2 AND a.fetched_at < now() - interval '1 hour')) "
+            "ORDER BY e.url, e.id DESC LIMIT %s", (int(settings["articles_per_pass"]),))
+        urls = [r[0] for r in cur.fetchall()]
+    done = 0
+    for url in urls:
+        _site_wait(url, float(settings["article_spacing_seconds"]))
+        art, err = reader.fetch(url, session=_session)
+        with db_cursor(commit=True) as cur:
+            if art:
+                cur.execute(
+                    "INSERT INTO outside_articles (url, final_url, title, site, published, body, attempts, fetched_at) "
+                    "VALUES (%s, %s, %s, %s, %s, %s, 1, now()) ON CONFLICT (url) DO UPDATE SET "
+                    "final_url = EXCLUDED.final_url, title = EXCLUDED.title, site = EXCLUDED.site, "
+                    "published = EXCLUDED.published, body = EXCLUDED.body, error = NULL, "
+                    "attempts = outside_articles.attempts + 1, fetched_at = now()",
+                    (url, art["url"], art["title"], art["site"], art["published"], art["text"]))
+                done += 1
+            else:
+                cur.execute(
+                    "INSERT INTO outside_articles (url, error, attempts, fetched_at) VALUES (%s, %s, 1, now()) "
+                    "ON CONFLICT (url) DO UPDATE SET error = EXCLUDED.error, "
+                    "attempts = outside_articles.attempts + 1, fetched_at = now()", (url, err))
+    return done
+
+
+# ---- duplicates ----------------------------------------------------------------------------
+# GDELT codes one article into several events, and one incident is reported by
+# many articles; ACLED and GDELT can report the same one. An event matched to
+# an earlier one points at it (dup_of) and is shown folded under it. Never
+# deleted: a person can separate a wrong match ("Not the same"), and it then
+# stays apart (dedupe_locked).
+#
+# Rules, always (unless turned off):
+#   same_article         the same link (GDELT's several events from one story)
+#   same_place_type_day  the same source, the same kind of event (CAMEO base
+#                        code / ACLED sub-event type), within ~1 km, same day
+#   same_headline        headlines nearly the same, within a day (a wire story
+#                        on several sites) — once the articles are read
+# And, when chosen, the model: the meaning of headline and opening lines
+# compared with the embedding model (Admin → Model), within a day and an
+# area; across GDELT and ACLED too (ACLED's notes stand in for an article).
+
+STOP = set("""a an the and or of to in on at for from by with as is are was were be been has have had it its
+this that these those after before over under into about against amid says said say new news report reports
+update updates live watch video photos police""".split())
+
+
+def headline_words(title: str) -> set:
+    return {w for w in re.findall(r"[a-z0-9]+", (title or "").lower()) if len(w) > 2 and w not in STOP}
+
+
+def headline_same(a: str, b: str) -> bool:
+    wa, wb = headline_words(a), headline_words(b)
+    if len(wa) < 4 or len(wb) < 4:
+        return False
+    return len(wa & wb) / len(wa | wb) >= 0.6
+
+
+def cosine(a, b) -> float:
+    dot = sum(x * y for x, y in zip(a, b))
+    na = math.sqrt(sum(x * x for x in a))
+    nb = math.sqrt(sum(y * y for y in b))
+    return dot / (na * nb) if na and nb else 0.0
+
+
+def fold(cur, member: int, lead: int, reason: str) -> bool:
+    """Fold `member` (and anything folded under it) under `lead`. A status
+    already given to the lead carries over: a story dismissed once does not
+    come back as new when another site reports it."""
+    if member == lead:
+        return False
+    cur.execute("SELECT id, status, dedupe_locked, dup_of FROM outside_events WHERE id IN (%s, %s)", (member, lead))
+    rows = {r[0]: r for r in cur.fetchall()}
+    if member not in rows or lead not in rows or rows[member][2] or rows[member][3] is not None:
+        return False
+    if rows[member][1] == "sent":
+        return False                          # a person has already acted on it
+    lead_status = rows[lead][1]
+    cur.execute("UPDATE outside_events SET dup_of = %s, dup_reason = COALESCE(dup_reason, %s) "
+                "WHERE (id = %s OR dup_of = %s) AND id <> %s",
+                (lead, reason, member, member, lead))
+    if lead_status == "dismissed":
+        cur.execute("UPDATE outside_events SET status = 'dismissed' WHERE dup_of = %s AND status IN ('new', 'read')", (lead,))
+    elif lead_status in ("sent", "read"):
+        cur.execute("UPDATE outside_events SET status = 'read' WHERE dup_of = %s AND status = 'new'", (lead,))
+    return True
+
+
+def dedupe_rules() -> int:
+    """The rules that need no article: same link; same place, kind and day."""
+    folded = 0
+    with db_cursor(commit=True) as cur:
+        cur.execute("SELECT id, source, url, code, occurred_on, lat, lon FROM outside_events "
+                    "WHERE NOT rules_checked AND dup_of IS NULL AND NOT dedupe_locked ORDER BY id LIMIT 2000")
+        for eid, source, url, code, day, lat, lon in cur.fetchall():
+            lead = None
+            if url:
+                cur.execute("SELECT id FROM outside_events WHERE url = %s AND id < %s AND dup_of IS NULL "
+                            "ORDER BY id LIMIT 1", (url, eid))
+                r = cur.fetchone()
+                lead = (r[0], "same_article") if r else None
+            if not lead and code and day:
+                base = code[:3] if source == "gdelt" else code
+                cur.execute(
+                    "SELECT id FROM outside_events WHERE source = %s AND id < %s AND dup_of IS NULL "
+                    "AND occurred_on = %s AND abs(lat - %s) < 0.01 AND abs(lon - %s) < 0.01 "
+                    "AND (CASE WHEN source = 'gdelt' THEN left(code, 3) ELSE code END) = %s "
+                    "ORDER BY id LIMIT 1", (source, eid, day, lat, lon, base))
+                r = cur.fetchone()
+                lead = (r[0], "same_place_type_day") if r else None
+            if lead and fold(cur, eid, lead[0], lead[1]):
+                folded += 1
+            cur.execute("UPDATE outside_events SET rules_checked = TRUE WHERE id = %s", (eid,))
+    return folded
+
+
+def _model_client():
+    from ollama_client import OllamaClient
+    from settings import get_effective_ollama_config
+    try:
+        import ollama_usage
+        on_call = lambda **c: ollama_usage.record("worker", **c)  # noqa: E731
+    except Exception:
+        on_call = None
+    return OllamaClient(**get_effective_ollama_config(), on_call=on_call)
+
+
+def dedupe_headlines(settings: dict, client=None) -> int:
+    """Incidents whose articles have been read (or ACLED's, which have notes),
+    compared with the other incidents in the same area within a day."""
+    use_model = bool(settings.get("dedupe_model"))
+    if use_model and client is None:
+        client = _model_client()
+    if use_model and not (client.enabled and client.embed_model):
+        use_model = False                     # no embedding model: the rules still run
+    threshold = float(settings.get("dedupe_model_threshold") or 0.86)
+    folded = 0
+    with db_cursor(commit=True) as cur:
+        cur.execute(
+            "SELECT e.id, e.source, e.occurred_on, e.zone_ids, a.title, "
+            "       COALESCE(left(a.body, 400), e.notes), a.url "
+            "FROM outside_events e LEFT JOIN outside_articles a ON a.url = e.url "
+            "WHERE NOT e.headline_checked AND e.dup_of IS NULL AND NOT e.dedupe_locked "
+            "  AND (a.body IS NOT NULL OR (e.source = 'acled' AND e.notes IS NOT NULL) "
+            "       OR (a.error IS NOT NULL AND a.attempts >= 2)) "
+            "ORDER BY e.id LIMIT 200")
+        todo = cur.fetchall()
+        for eid, source, day, zones, title, lead_text, aurl in todo:
+            text = ((title or "") + "\n" + (lead_text or "")).strip()
+            vec = None
+            if use_model and text:
+                if aurl:
+                    cur.execute("SELECT embedding FROM outside_articles WHERE url = %s", (aurl,))
+                    r = cur.fetchone()
+                    vec = r[0] if r and r[0] else None
+                if vec is None:
+                    vec = client.embed(text)
+                    if vec and aurl:
+                        cur.execute("UPDATE outside_articles SET embedding = %s WHERE url = %s", (vec, aurl))
+            if day and zones:
+                cur.execute(
+                    "SELECT e.id, e.source, a.title, a.embedding, COALESCE(left(a.body, 400), e.notes), a.url "
+                    "FROM outside_events e LEFT JOIN outside_articles a ON a.url = e.url "
+                    "WHERE e.id < %s AND e.dup_of IS NULL AND e.zone_ids && %s "
+                    "  AND e.occurred_on BETWEEN %s::date - 1 AND %s::date + 1 "
+                    "ORDER BY e.id", (eid, zones, day, day))
+                for oid, osrc, otitle, ovec, otext, ourl in cur.fetchall():
+                    reason = None
+                    if title and otitle and headline_same(title, otitle):
+                        reason = "same_headline"
+                    elif use_model and vec:
+                        otxt = ((otitle or "") + "\n" + (otext or "")).strip()
+                        if ovec is None and otxt:
+                            # Checked before the model was on, or ACLED's notes:
+                            # embedded now, and kept with its article.
+                            ovec = client.embed(otxt)
+                            if ovec and ourl:
+                                cur.execute("UPDATE outside_articles SET embedding = %s WHERE url = %s", (ovec, ourl))
+                        if ovec and cosine(vec, ovec) >= threshold:
+                            reason = "model"
+                    if reason and fold(cur, eid, oid, reason):
+                        folded += 1
+                        break
+            cur.execute("UPDATE outside_events SET headline_checked = TRUE WHERE id = %s", (eid,))
+    return folded
+
+
 # ---- retention, and the loop ---------------------------------------------------------------
 
 def prune(retention_days: int) -> int:
@@ -416,7 +633,10 @@ def prune(retention_days: int) -> int:
             "DELETE FROM outside_events WHERE status <> 'sent' "
             "AND COALESCE(occurred_on, created_at::date) < (now() - make_interval(days => %s))::date",
             (int(retention_days),))
-        return cur.rowcount
+        n = cur.rowcount
+        cur.execute("DELETE FROM outside_articles a WHERE NOT EXISTS "
+                    "(SELECT 1 FROM outside_events e WHERE e.url = a.url)")
+        return n
 
 
 def run_once(now_prune: bool = False) -> dict:
@@ -444,6 +664,16 @@ def run_once(now_prune: bool = False) -> dict:
         except Exception as exc:
             done["acled_error"] = str(exc)
             _set(acled_last_poll_at=datetime.now(timezone.utc), acled_last_error=str(exc)[:1000])
+    # Duplicates and articles, whenever there is something new to look at.
+    try:
+        if settings.get("dedupe_rules", True):
+            done["folded_rules"] = dedupe_rules()
+        if settings.get("prefetch_articles", True) and zones:
+            done["articles"] = prefetch_articles(settings)
+        if settings.get("dedupe_rules", True) or settings.get("dedupe_model"):
+            done["folded_headlines"] = dedupe_headlines(settings)
+    except Exception as exc:
+        done["dedupe_error"] = str(exc)
     if now_prune:
         done["pruned"] = prune(settings["retention_days"])
     for k, v in done.items():

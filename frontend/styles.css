@@ -2681,3 +2681,29 @@ body.role-viewer #doc-drop-zone{display:none !important;}
 .oe-codes { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 2px 14px; }
 .outside-credit { margin-top: 10px; }
 .status-pill.outside-src-acled { border-color: #b45309; color: #b45309; }
+
+/* Outside events: the reader panel, and incidents with their folded reports */
+.oe-reader {
+  position: fixed; top: var(--topbar-h, 56px); right: 0; bottom: 0; width: min(760px, 100vw); z-index: 3000;
+  background: var(--panel); border-left: 1px solid var(--border);
+  box-shadow: -12px 0 32px rgba(0, 0, 0, 0.14); display: flex; flex-direction: column;
+}
+.oe-reader[hidden] { display: none; }
+.oe-reader-head, .oe-reader-foot {
+  display: flex; align-items: center; gap: 10px; padding: 12px 20px; flex-wrap: wrap;
+  border-bottom: 1px solid var(--border);
+}
+.oe-reader-foot { border-bottom: 0; border-top: 1px solid var(--border); }
+.oe-reader-spacer { flex: 1; }
+.oe-reader-body { flex: 1; overflow-y: auto; padding: 22px 32px 32px; }
+.oe-reader-body h2 { margin: 0 0 6px; font-size: 1.45rem; line-height: 1.25; }
+.oe-reader-body p { font-family: Georgia, "Times New Roman", serif; font-size: 1.06rem; line-height: 1.65;
+  max-width: 68ch; margin: 0 0 1em; }
+.oe-reader-body p.field-hint { font-family: inherit; font-size: 0.85rem; margin-bottom: 1.4em; }
+.oe-reader-body h3 { margin: 1.4em 0 0.5em; font-size: 1.1rem; }
+@media (min-width: 1200px) { body.oe-reading #view-outside { margin-right: min(760px, 50vw); } }
+.oe-title-btn { all: unset; cursor: pointer; }
+.oe-title-btn:hover, .oe-title-btn:focus-visible { text-decoration: underline; }
+.feed-item.oe-current { outline: 2px solid var(--accent); outline-offset: -2px; }
+.oe-group { margin: 10px 0 0 18px; padding-left: 12px; border-left: 2px solid var(--border); }
+.oe-group .feed-item { margin-top: 8px; }

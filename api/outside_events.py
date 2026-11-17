@@ -24,6 +24,7 @@ import audit
 import auth
 from db import db_cursor
 from feeds import UPLOAD_DIR, fetch_article
+import reader
 
 router = APIRouter(prefix="/api/outside-events", tags=["outside-events"])
 admin_router = APIRouter(prefix="/api/admin/outside-events", tags=["outside-events"])
@@ -47,6 +48,9 @@ LIMITS = {
     "acled_request_spacing_seconds": (1, 3600),
     "acled_backfill_days": (1, 365),
     "retention_days": (1, 3650),
+    "article_spacing_seconds": (1, 600),
+    "articles_per_pass": (1, 1000),
+    "dedupe_model_threshold": (0.5, 0.99),
 }
 # The CAMEO root categories, for choosing which GDELT event types to keep.
 ROOT_CODES = [
@@ -60,11 +64,23 @@ ROOT_CODES = [
 EVENT_COLS = ("id", "source", "source_id", "occurred_on", "reported_at", "title", "category", "code",
               "actor1", "actor2", "place", "lat", "lon", "precision", "url", "sources_named",
               "num_sources", "num_articles", "tone", "goldstein", "fatalities", "notes", "zone_ids",
-              "status", "attachment_id", "sent_at", "created_at")
+              "status", "attachment_id", "sent_at", "created_at", "dup_of", "dup_reason")
+# Shown with each event: its article's headline and site, when it has been read.
+ARTICLE_JOIN = "LEFT JOIN outside_articles a ON a.url = e.url"
+ARTICLE_COLS = ("a.title", "a.site", "a.fetched_at IS NOT NULL AND a.body IS NOT NULL")
+REASONS = {"same_article": "the same article", "same_place_type_day": "same kind of event, same place, same day",
+           "same_headline": "near-identical headline", "model": "the model judged it the same story"}
 
 
 def _event(row) -> dict:
-    e = dict(zip(EVENT_COLS, row))
+    e = dict(zip(EVENT_COLS, row[:len(EVENT_COLS)]))
+    extra = row[len(EVENT_COLS):]
+    if extra:
+        e["headline"], e["site"], e["article_ready"] = extra[0], extra[1], bool(extra[2])
+        if len(extra) > 3:
+            e["similar"] = extra[3] or 0
+    if e.get("dup_reason"):
+        e["dup_reason_text"] = REASONS.get(e["dup_reason"], e["dup_reason"])
     for k in ("occurred_on", "reported_at", "sent_at", "created_at"):
         if e.get(k) is not None:
             e[k] = e[k].isoformat()
@@ -109,22 +125,30 @@ def list_events(zone_id: Optional[int] = Query(default=None),
                 q: Optional[str] = Query(default=None, max_length=200),
                 limit: int = Query(default=100, ge=1, le=500),
                 offset: int = Query(default=0, ge=0),
+                grouped: bool = True,
                 user: dict = Depends(auth.require_user)):
+    """Grouped (the default): one entry per incident, its duplicates counted
+    under it (`similar`) and listed by /{id}/similar."""
     clause, params = _filters(zone_id, source, status, days, q)
+    if grouped:
+        clause = (clause + " AND " if clause else " WHERE ") + "e.dup_of IS NULL"
+    cols = ", ".join(["e." + c for c in EVENT_COLS] + list(ARTICLE_COLS)
+                     + ["(SELECT count(*) FROM outside_events d WHERE d.dup_of = e.id)"])
     with db_cursor() as cur:
         cur.execute(f"SELECT count(*) FROM outside_events e{clause}", params)
         total = cur.fetchone()[0]
-        cur.execute(f"SELECT {', '.join('e.' + c for c in EVENT_COLS)} FROM outside_events e{clause} "
+        cur.execute(f"SELECT {cols} FROM outside_events e {ARTICLE_JOIN}{clause} "
                     "ORDER BY COALESCE(e.occurred_on, e.created_at::date) DESC, e.id DESC "
                     "LIMIT %s OFFSET %s", [*params, limit, offset])
         items = [_event(r) for r in cur.fetchall()]
         # The marked zones, for the filter and for naming each event's zones.
         cur.execute("SELECT z.id, COALESCE(ze.name, z.name), "
-                    "       (SELECT count(*) FROM outside_events o WHERE z.id = ANY(o.zone_ids) AND o.status = 'new') "
+                    "       (SELECT count(*) FROM outside_events o WHERE z.id = ANY(o.zone_ids) AND o.status = 'new' "
+                    "          AND o.dup_of IS NULL) "
                     "  FROM map_zones z LEFT JOIN entities ze ON ze.id = z.entity_id "
                     " WHERE z.outside_events ORDER BY 2")
         zones = [{"id": r[0], "name": r[1], "unread": r[2]} for r in cur.fetchall()]
-        cur.execute("SELECT count(*) FROM outside_events WHERE status = 'new'")
+        cur.execute("SELECT count(*) FROM outside_events WHERE status = 'new' AND dup_of IS NULL")
         unread = cur.fetchone()[0]
     return {"items": items, "total": total, "zones": zones, "unread_total": unread,
             "credit": CREDIT}
@@ -143,6 +167,7 @@ def map_points(zone_id: Optional[int] = Query(default=None),
     where = [clause[7:]] if clause else []
     if not include_dismissed:
         where.append("e.status <> 'dismissed'")
+    where.append("e.dup_of IS NULL")
     if None not in (min_lat, min_lon, max_lat, max_lon):
         where.append("e.lat BETWEEN %s AND %s AND e.lon BETWEEN %s AND %s")
         params += [min_lat, max_lat, min_lon, max_lon]
@@ -159,7 +184,9 @@ def map_points(zone_id: Optional[int] = Query(default=None),
 
 
 def _get(cur, event_id: int) -> dict:
-    cur.execute(f"SELECT {', '.join(EVENT_COLS)} FROM outside_events WHERE id = %s", (event_id,))
+    cols = ", ".join(["e." + c for c in EVENT_COLS] + list(ARTICLE_COLS)
+                     + ["(SELECT count(*) FROM outside_events d WHERE d.dup_of = e.id)"])
+    cur.execute(f"SELECT {cols} FROM outside_events e {ARTICLE_JOIN} WHERE e.id = %s", (event_id,))
     row = cur.fetchone()
     if not row:
         raise HTTPException(status_code=404, detail="No such event.")
@@ -188,7 +215,77 @@ def set_status(event_id: int, payload: StatusRequest, user: dict = Depends(auth.
         if e["status"] == "sent":
             raise HTTPException(status_code=409, detail="That event is already in Documents.")
         cur.execute("UPDATE outside_events SET status = %s WHERE id = %s", (payload.status, event_id))
+        # Dismissing (or putting back) an incident does the same to the
+        # reports folded under it; reading one reads them all.
+        cur.execute("UPDATE outside_events SET status = %s WHERE dup_of = %s AND status <> 'sent'",
+                    (payload.status, event_id))
     return {"id": event_id, "status": payload.status}
+
+
+@router.get("/{event_id}/similar")
+def similar(event_id: int, user: dict = Depends(auth.require_user)):
+    """The reports folded under an incident, and why each was matched."""
+    with db_cursor() as cur:
+        _get(cur, event_id)
+        cols = ", ".join(["e." + c for c in EVENT_COLS] + list(ARTICLE_COLS))
+        cur.execute(f"SELECT {cols} FROM outside_events e {ARTICLE_JOIN} WHERE e.dup_of = %s ORDER BY e.id",
+                    (event_id,))
+        return {"items": [_event(r) for r in cur.fetchall()]}
+
+
+@router.post("/{event_id}/separate")
+def separate(event_id: int, user: dict = Depends(auth.require_user)):
+    """"Not the same": take a report out of the incident it was folded under,
+    for good — it is never matched again."""
+    with db_cursor(commit=True) as cur:
+        e = _get(cur, event_id)
+        if not e["dup_of"]:
+            raise HTTPException(status_code=409, detail="That event is not folded under another.")
+        cur.execute("UPDATE outside_events SET dup_of = NULL, dup_reason = NULL, dedupe_locked = TRUE, "
+                    "status = CASE WHEN status = 'dismissed' THEN 'new' ELSE status END WHERE id = %s", (event_id,))
+    audit.record("outside_event.separate", user=user, object_type="outside_events", object_id=event_id,
+                 object_label=e["title"][:200], detail={"was_under": e["dup_of"], "reason": e["dup_reason"]})
+    return {"id": event_id, "separated": True}
+
+
+@router.get("/{event_id}/article")
+def article(event_id: int, refresh: bool = False, user: dict = Depends(auth.require_user)):
+    """The event's article in reader form, for the side panel. Fetched once
+    by the server and kept (the worker fetches ahead when that is on); a
+    failure is kept too, and tried again on request."""
+    with db_cursor() as cur:
+        e = _get(cur, event_id)
+    url = e.get("url")
+    if not url:
+        return {"event": e, "article": None,
+                "error": "This event has no article (ACLED names its sources instead)." if e["source"] == "acled"
+                else "This event has no article.", "notes": e.get("notes")}
+    with db_cursor() as cur:
+        cur.execute("SELECT final_url, title, site, published, body, error, fetched_at FROM outside_articles "
+                    "WHERE url = %s", (url,))
+        row = cur.fetchone()
+    if row and row[4] and not refresh:
+        return {"event": e, "article": {"url": row[0] or url, "title": row[1], "site": row[2],
+                                         "published": row[3], "text": row[4],
+                                         "fetched_at": row[6].isoformat() if row[6] else None}, "error": None}
+    art, err = reader.fetch(url)
+    with db_cursor(commit=True) as cur:
+        if art:
+            cur.execute("INSERT INTO outside_articles (url, final_url, title, site, published, body, error, attempts, fetched_at) "
+                        "VALUES (%s, %s, %s, %s, %s, %s, NULL, 1, now()) "
+                        "ON CONFLICT (url) DO UPDATE SET final_url = EXCLUDED.final_url, title = EXCLUDED.title, "
+                        "site = EXCLUDED.site, published = EXCLUDED.published, body = EXCLUDED.body, error = NULL, "
+                        "attempts = outside_articles.attempts + 1, fetched_at = now()",
+                        (url, art["url"], art["title"], art["site"], art["published"], art["text"]))
+        else:
+            cur.execute("INSERT INTO outside_articles (url, error, attempts, fetched_at) VALUES (%s, %s, 1, now()) "
+                        "ON CONFLICT (url) DO UPDATE SET error = EXCLUDED.error, attempts = outside_articles.attempts + 1, "
+                        "fetched_at = now()", (url, err))
+    if not art:
+        return {"event": e, "article": None, "error": err, "notes": e.get("notes")}
+    return {"event": e, "article": {"url": art["url"], "title": art["title"], "site": art["site"],
+                                     "published": art["published"], "text": art["text"],
+                                     "fetched_at": datetime.now(timezone.utc).isoformat()}, "error": None}
 
 
 class BulkRequest(BaseModel):
@@ -258,7 +355,13 @@ def send_to_documents(event_id: int, payload: SendRequest, user: dict = Depends(
                                                      "document_id": e["attachment_id"]})
     article, fetch_error = (None, None)
     if payload.fetch_article and e.get("url"):
-        article, fetch_error = fetch_article(e["url"])
+        with db_cursor() as cur:
+            cur.execute("SELECT title, body FROM outside_articles WHERE url = %s AND body IS NOT NULL", (e["url"],))
+            kept = cur.fetchone()
+        if kept:
+            article = ((kept[0] + "\n\n") if kept[0] else "") + kept[1]
+        else:
+            article, fetch_error = fetch_article(e["url"])
     text = _document_body(e, article, fetch_error)
     content = text.encode("utf-8")
 
@@ -283,6 +386,8 @@ def send_to_documents(event_id: int, payload: SendRequest, user: dict = Depends(
             document_id = cur.fetchone()[0]
             cur.execute("UPDATE outside_events SET status = 'sent', attachment_id = %s, "
                         "sent_by = %s, sent_at = now() WHERE id = %s", (document_id, user["id"], event_id))
+            cur.execute("UPDATE outside_events SET status = 'read' WHERE dup_of = %s AND status = 'new'",
+                        (event_id,))
     except Exception:
         try:
             os.remove(abs_path)
@@ -304,7 +409,8 @@ SETTING_FIELDS = (
     "gdelt_root_codes", "gdelt_min_sources", "gdelt_city_only", "gdelt_last_file", "gdelt_last_poll_at",
     "gdelt_last_error", "acled_enabled", "acled_username", "acled_password", "acled_interval_minutes",
     "acled_request_spacing_seconds", "acled_backfill_days", "acled_last_poll_at", "acled_last_error",
-    "retention_days", "pull_requested_at", "updated_at")
+    "retention_days", "pull_requested_at", "updated_at", "prefetch_articles", "article_spacing_seconds",
+    "articles_per_pass", "dedupe_rules", "dedupe_model", "dedupe_model_threshold")
 
 
 def _settings(cur) -> dict:
@@ -320,8 +426,20 @@ def _settings(cur) -> dict:
     for k in ("gdelt_last_poll_at", "acled_last_poll_at", "pull_requested_at", "updated_at"):
         if s[k] is not None:
             s[k] = s[k].isoformat()
-    for k in ("gdelt_request_spacing_seconds", "acled_request_spacing_seconds"):
+    for k in ("gdelt_request_spacing_seconds", "acled_request_spacing_seconds", "article_spacing_seconds",
+              "dedupe_model_threshold"):
         s[k] = float(s[k])
+    cur.execute("SELECT count(*) FILTER (WHERE body IS NOT NULL), count(*) FILTER (WHERE error IS NOT NULL) "
+                "FROM outside_articles")
+    s["articles"] = dict(zip(("read", "failed"), cur.fetchone()))
+    cur.execute("SELECT count(*) FROM outside_events WHERE dup_of IS NOT NULL")
+    s["folded"] = cur.fetchone()[0]
+    try:
+        cur.execute("SELECT COALESCE(ollama_embed_model, '') FROM app_settings LIMIT 1")
+        r = cur.fetchone()
+        s["embed_model"] = (r[0] if r else "") or os.environ.get("OLLAMA_EMBED_MODEL", "")
+    except Exception:
+        s["embed_model"] = os.environ.get("OLLAMA_EMBED_MODEL", "")
     s["gdelt_root_codes"] = [c for c in (s["gdelt_root_codes"] or "").split(",") if c]
     cur.execute("SELECT z.id, COALESCE(ze.name, z.name), (z.valid_until IS NOT NULL AND z.valid_until <= now()) "
                 "FROM map_zones z LEFT JOIN entities ze ON ze.id = z.entity_id WHERE z.outside_events ORDER BY 2")
@@ -356,6 +474,12 @@ class SettingsUpdate(BaseModel):
     acled_request_spacing_seconds: Optional[float] = None
     acled_backfill_days: Optional[int] = None
     retention_days: Optional[int] = None
+    prefetch_articles: Optional[bool] = None
+    article_spacing_seconds: Optional[float] = None
+    articles_per_pass: Optional[int] = None
+    dedupe_rules: Optional[bool] = None
+    dedupe_model: Optional[bool] = None
+    dedupe_model_threshold: Optional[float] = None
     # Set to the fastest the sources allow (each field's minimum).
     fastest: Optional[bool] = None
 

@@ -73,8 +73,48 @@ the worker. Nothing can set a faster rate, even by editing the database by hand.
 - **Dismiss** keeps it from coming back as new. **Mark read** keeps it open
   without the unread count.
 - **On the map** centres the map on it.
+- **Read** (or the headline) opens the article in a panel beside the list,
+  in reader form: the headline and paragraphs, without the site's menus and
+  adverts. **Next** and **Previous** (or → and ←) walk the list without
+  closing it, **Esc** closes it, and opening one marks it read. The panel has
+  Send to Documents and Dismiss too, and **The original** for the publisher's
+  page (on the box, a QR code to open it on a phone).
 - Unread and dismissed events are deleted after the retention window
   (90 days by default). Ones sent to Documents stay.
+
+## Reading and duplicates
+
+The server fetches each article itself and keeps the text, so it opens at
+once, reads offline later (on a field server, after it has left Wi-Fi), and
+the headline can be compared. **Admin → Outside events → Reading and
+duplicates**:
+
+- **Read each new incident's article ahead** (on by default). The worker
+  fetches them in batches, waiting at least **2 seconds between two requests
+  to the same news site** (1 at the least), up to **60 per pass**. Only
+  public addresses are fetched, checked again at every redirect. A page built
+  by scripts or behind a paywall says so; open the original instead.
+- **Fold duplicates by rule** (on by default). One incident is often many
+  rows: GDELT codes every article separately, and wire stories run on dozens
+  of sites. Folded under the first report are
+  - rows from the same article;
+  - the same kind of event (CAMEO code, or ACLED sub-event type) at the same
+    place (within about 1 km) on the same day, from the same source;
+  - near-identical headlines in the same areas within a day.
+- **Also ask the model** (off by default): the headline and opening of each
+  article are turned into an embedding by the Ollama embedding model set
+  under Admin → Model (`nomic-embed-text`, say), and reports that are close
+  enough are folded, which catches the same story in other words, and GDELT
+  and ACLED reporting the same incident. **How alike** sets how close
+  (0.86 by default; higher folds less). Check a few groups after turning it
+  on and adjust.
+
+On the page, an incident shows **+N similar reports**; opening it lists
+them, with why each was matched. **Not the same** takes a wrong match out
+for good. Nothing is deleted by folding, and what you do to the incident
+(read, dismiss, send) applies to its reports; a story you dismissed stays
+dismissed when another site reports it later. Unread counts and the map count
+incidents, not rows.
 
 ## On a field server
 

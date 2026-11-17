@@ -1943,3 +1943,55 @@ CREATE INDEX IF NOT EXISTS idx_outside_events_recent ON outside_events (occurred
 CREATE INDEX IF NOT EXISTS idx_outside_events_status ON outside_events (status);
 CREATE INDEX IF NOT EXISTS idx_outside_events_zones ON outside_events USING GIN (zone_ids);
 CREATE INDEX IF NOT EXISTS idx_outside_events_place ON outside_events (lat, lon);
+
+-- ---------------------------------------------------------------------------
+-- Outside events, reading and duplicates (v1.16).
+--
+-- Articles: each linked page fetched once by the server and kept in reader
+-- form (headline and paragraphs), so it opens in a side panel instead of a
+-- new tab, reads offline on a field server, and lets duplicates be spotted by
+-- headline. Fetched ahead as events arrive (setting), or when first opened.
+--
+-- Duplicates: an event that is the same incident as an earlier one points at
+-- it (dup_of) and is shown folded under it. Found by rules (the same article;
+-- the same kind of event at the same place on the same day; near-identical
+-- headlines) and, optionally, by the model comparing headlines' meaning
+-- (embeddings). A person can separate a wrong match; it then stays apart.
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS outside_articles (
+    url TEXT PRIMARY KEY,
+    final_url TEXT,
+    title TEXT,
+    site TEXT,
+    published TEXT,
+    body TEXT,
+    error TEXT,
+    attempts INTEGER NOT NULL DEFAULT 0,
+    fetched_at TIMESTAMPTZ,
+    embedding REAL[],
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+ALTER TABLE outside_events ADD COLUMN IF NOT EXISTS dup_of BIGINT REFERENCES outside_events(id) ON DELETE SET NULL;
+ALTER TABLE outside_events ADD COLUMN IF NOT EXISTS dup_reason TEXT;
+ALTER TABLE outside_events ADD COLUMN IF NOT EXISTS dedupe_locked BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE outside_events ADD COLUMN IF NOT EXISTS rules_checked BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE outside_events ADD COLUMN IF NOT EXISTS headline_checked BOOLEAN NOT NULL DEFAULT FALSE;
+CREATE INDEX IF NOT EXISTS idx_outside_events_dup ON outside_events (dup_of);
+CREATE INDEX IF NOT EXISTS idx_outside_events_url ON outside_events (url);
+
+ALTER TABLE outside_event_settings ADD COLUMN IF NOT EXISTS prefetch_articles BOOLEAN NOT NULL DEFAULT TRUE;
+-- Per news site: a polite gap between two requests to the same site.
+ALTER TABLE outside_event_settings ADD COLUMN IF NOT EXISTS article_spacing_seconds NUMERIC(6,1) NOT NULL DEFAULT 2;
+ALTER TABLE outside_event_settings ADD COLUMN IF NOT EXISTS articles_per_pass INTEGER NOT NULL DEFAULT 60;
+ALTER TABLE outside_event_settings ADD COLUMN IF NOT EXISTS dedupe_rules BOOLEAN NOT NULL DEFAULT TRUE;
+ALTER TABLE outside_event_settings ADD COLUMN IF NOT EXISTS dedupe_model BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE outside_event_settings ADD COLUMN IF NOT EXISTS dedupe_model_threshold REAL NOT NULL DEFAULT 0.86;
+DO $$ BEGIN
+    ALTER TABLE outside_event_settings ADD CONSTRAINT outside_article_spacing_floor
+        CHECK (article_spacing_seconds BETWEEN 1 AND 600);
+    ALTER TABLE outside_event_settings ADD CONSTRAINT outside_articles_per_pass_range
+        CHECK (articles_per_pass BETWEEN 1 AND 1000);
+    ALTER TABLE outside_event_settings ADD CONSTRAINT outside_dedupe_threshold_range
+        CHECK (dedupe_model_threshold BETWEEN 0.5 AND 0.99);
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;

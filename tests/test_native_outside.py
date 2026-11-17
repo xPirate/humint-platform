@@ -1,8 +1,11 @@
 """The native app and outside events: marking a zone on the map, the
 Admin → Outside events settings (with the fastest-allowed rates), the Outside
-events page (filter by area, dismiss, send to Documents), and the map layer."""
+events page (filter by area, dismiss, send to Documents), reading an article
+in the side pane, folded duplicate reports, and the map layer."""
+import http.server
 import os
 import sys
+import threading
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from harness import PASSWORD, ROOT, Console, check, finish  # noqa: E402
@@ -12,7 +15,29 @@ from shoot import FakeMachine  # noqa: E402
 from appdriver import AppDriver  # noqa: E402
 
 SHOTS = os.environ.get("SHOTS")
-c = Console("native_outside").start()
+PARAS = ["Baltimore police arrested two people Sunday evening after a protest outside City Hall turned tense, officials said.",
+         "About 200 people gathered at the plaza around 5 p.m., according to a department spokesperson."]
+
+
+class News(http.server.BaseHTTPRequestHandler):
+    def do_GET(self):
+        body = ("<html><head><title>Police arrest two after downtown protest | The Banner</title></head><body>"
+                "<nav><a href='/'>A long menu entry that should not appear in the reader</a></nav><article>"
+                + "".join(f"<p>{p}</p>" for p in PARAS) + "</article></body></html>").encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def log_message(self, *a):
+        pass
+
+
+srv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), News)
+threading.Thread(target=srv.serve_forever, daemon=True).start()
+NEWS = f"http://127.0.0.1:{srv.server_port}"
+c = Console("native_outside", env={"FEED_FETCH_ALLOW_PRIVATE": "true"}).start()
 api = c.register_admin("ana")
 zone = api.post(c.url + "/api/map/zones", json={
     "name": "Baltimore AOR", "environment": "Semi-permissive",
@@ -24,7 +49,12 @@ for i, (title, src, lat, lon) in enumerate([
         ("Peaceful protest: Protesters (United States)", "acled", 39.30, -76.61)]):
     c.sql(f"INSERT INTO outside_events (source, source_id, occurred_on, title, category, lat, lon, place, precision, "
           f"num_sources, url, zone_ids) VALUES ('{src}', 'X{i}', current_date, '{title}', 'Protest', {lat}, {lon}, "
-          f"'Baltimore, Maryland, United States', 'city', 3, 'https://news.example.org/{i}', ARRAY[{zone['id']}])")
+          f"'Baltimore, Maryland, United States', 'city', 3, '{NEWS}/story/{i}', ARRAY[{zone['id']}])")
+lead = c.sql("SELECT id FROM outside_events WHERE source_id = 'X0'")[0][0]
+c.sql(f"INSERT INTO outside_events (source, source_id, occurred_on, title, category, lat, lon, place, precision, "
+      f"num_sources, url, zone_ids, dup_of, dup_reason) VALUES ('gdelt', 'X3', current_date, 'Arrest: Police', 'Protest', "
+      f"39.2904, -76.6122, 'Baltimore, Maryland, United States', 'city', 1, '{NEWS}/story/3', ARRAY[{zone['id']}], "
+      f"{lead}, 'same_place_type_day')")
 
 m = FakeMachine()
 m.unlock()
@@ -83,6 +113,11 @@ check(c.sql("SELECT gdelt_enabled FROM outside_event_settings")[0][0] is False,
 d.tap("Fastest the terms allow")
 d.until(lambda: c.sql("SELECT gdelt_enabled, gdelt_interval_minutes, gdelt_request_spacing_seconds "
                       "FROM outside_event_settings")[0] == (True, 15, 5), what="fastest")
+check(d.has_text("Reading and duplicates") and d.has_text("Fold duplicates by rule"), "the reading and duplicate settings are there")
+d.tap("Also ask the model (the same story in other words)")
+d.tap("Save")
+d.until(lambda: c.sql("SELECT dedupe_model FROM outside_event_settings")[0][0] is True, what="model on")
+check(True, "the model check can be turned on")
 shot("91-admin-outside")
 check(True, "\"Fastest the terms allow\" saves GDELT at every 15 minutes, 5 s apart")
 
@@ -91,13 +126,36 @@ d.tap("Dashboard")            # out of Admin (its section has the same name)
 d.pump(0.5)
 d.tap("Outside events")
 d.until(lambda: d.has_text("What open sources say is happening in your areas."), what="page")
-d.until(lambda: d.has_text("3 events"), what="events")
+d.until(lambda: d.has_text("3 incidents"), what="events")
 shot("92-outside-events")
+
+# ---- reading, in the pane beside the list ----
+d.tap("Read")
+d.until(lambda: d.has_text(PARAS[0]), what="reader")
+check(d.has_text("3 of 3") and not d.has_text("A long menu entry that should not appear in the reader"),
+      "the article opens beside the list in reader form, with its place in the list")
+first = c.sql("SELECT count(*) FROM outside_events WHERE status = 'read'")[0][0]
+check(first >= 1, "opening it marks it read")
+shot("93-outside-reader")
+d.tap("← Previous")
+d.until(lambda: d.has_text("2 of 3") and d.has_text(PARAS[1]), what="previous")
+check(True, "Previous goes to the one before without closing")
+d.tap("Close")
+d.until(lambda: not d.has_text("2 of 3"), what="closed")
+
+# ---- the folded report ----
+d.tap("+1 similar report")
+d.until(lambda: d.has_text("matched: "), what="similar")
+check(d.has_text("Arrest: Police"), "\"+1 similar report\" shows the folded one, and why")
+d.tap("Not the same")
+d.until(lambda: d.has_text("4 incidents"), what="separated")
+check(c.sql("SELECT dedupe_locked FROM outside_events WHERE source_id = 'X3'")[0][0] is True,
+      "\"Not the same\" separates it, for good")
 check(d.has_text("Data: GDELT Project (gdeltproject.org)") and d.has_text("ACLED, Armed Conflict Location"),
       "GDELT and ACLED are credited")
 check(d.has_text("Baltimore, Maryland, United States · placed at city level · 3 sources"), "with where and how sure")
 d.tap("Dismiss")
-d.until(lambda: d.has_text("2 events"), what="dismissed")
+d.until(lambda: d.has_text("3 incidents"), what="dismissed")
 d.tap("Send to Documents")
 d.until(lambda: d.has_text("Fetch the article it came from"), what="send dialog")
 d.tap("Fetch the article it came from")      # no internet here: no fetch

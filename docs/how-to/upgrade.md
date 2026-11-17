@@ -52,6 +52,7 @@ needs to come after.
 | `db/migrate-v1.13-hardening.sql` | Worker crash recovery (heartbeats, claims), two-factor sign-in, source protection (true identities apart, handlers), and the read-only role. |
 | `db/migrate-v1.14-usernames.sql` | Usernames ignore case ("Thomas" = "thomas"). Accounts that already differ only in case: the oldest keeps its name, newer ones become `name-<id>` (printed, and in the audit log). |
 | `db/migrate-v1.15-outside-events.sql` | Outside events: GDELT and ACLED events inside zones marked as areas of responsibility. Off until an admin turns a source on. |
+| `db/migrate-v1.16-outside-reading.sql` | Outside events: articles kept for the reader panel, and duplicate reports folded under one incident (rules on; the model check off until turned on). |
 
 **Run them in version order, oldest you haven't run first.** For example,
 coming from v1.6:
@@ -67,6 +68,7 @@ docker compose exec -T db psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" < db/migrat
 docker compose exec -T db psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" < db/migrate-v1.13-hardening.sql
 docker compose exec -T db psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" < db/migrate-v1.14-usernames.sql
 docker compose exec -T db psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" < db/migrate-v1.15-outside-events.sql
+docker compose exec -T db psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" < db/migrate-v1.16-outside-reading.sql
 ```
 
 The `-T` matters — without it, compose swallows the redirected file. List

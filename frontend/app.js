@@ -1742,6 +1742,7 @@ function switchView(view) {
   if (view === "documents") loadDocuments();
   if (view === "feeds") { loadFeedRail(); loadFeedItems(); }
   if (view === "outside") loadOutside();
+  else if (typeof closeOutsideReader === "function") closeOutsideReader();
   if (view === "roster") loadRoster();
   if (view === "bolo") loadBolo();
   if (view === "priorities") loadPriorities();
@@ -15084,7 +15085,8 @@ async function revealFieldSubtabIfEnrolled() {
  * Both sources ask to be credited, with a link — the line under the list.
  * ========================================================================== */
 
-const outsideState = { zoneId: null, status: "open", days: "7", source: "", q: "", zones: [], layer: null, show: true };
+const outsideState = { zoneId: null, status: "open", days: "7", source: "", q: "", zones: [], layer: null, show: true,
+                       items: [], readerIndex: -1 };
 
 async function loadOutside() {
   const el = document.getElementById("outside-items");
@@ -15135,45 +15137,80 @@ async function loadOutside() {
     el.innerHTML = `<p class="empty-state">${outsideState.zones.length ? "Nothing here." : "No area is set to pull outside events yet."}</p>`;
     return data;
   }
-  el.innerHTML = `<p class="field-hint feed-count-line">${data.total} event${data.total === 1 ? "" : "s"}${
+  outsideState.items = data.items;
+  el.innerHTML = `<p class="field-hint feed-count-line">${data.total} incident${data.total === 1 ? "" : "s"}${
       data.total > data.items.length ? `, showing ${data.items.length}` : ""}</p>
-    ${data.items.map(outsideItemHtml).join("")}`;
+    ${data.items.map((x) => outsideItemHtml(x)).join("")}`;
   wireOutsideItems(el);
   return data;
 }
 
-function outsideItemHtml(e) {
+function outsideItemHtml(e, inGroup) {
   const src = e.source === "acled" ? "ACLED" : "GDELT";
   const meta = [e.place, e.precision ? `placed at ${e.precision} level` : null,
                 e.num_sources ? `${e.num_sources} source${e.num_sources === 1 ? "" : "s"}` : null,
                 e.fatalities ? `${e.fatalities} killed` : null, e.sources_named].filter(Boolean).join(" · ");
+  const canRead = Boolean(e.url || e.notes);
   return `
-    <div class="feed-item feed-item-${escapeHtml(e.status)}" data-item="${e.id}">
+    <div class="feed-item feed-item-${escapeHtml(e.status)}${inGroup ? " oe-member" : ""}" data-item="${e.id}">
       <div class="feed-item-head">
         <span class="status-pill outside-src-${escapeHtml(e.source)}">${src}</span>
         <span class="feed-item-source">${escapeHtml(e.category || "")}</span>
         ${e.occurred_on ? `<span class="card-meta">${escapeHtml(e.occurred_on)}</span>` : ""}
         ${e.status === "sent" ? '<span class="status-pill feed-sent-pill">in Documents</span>' : ""}
         ${e.status === "dismissed" ? '<span class="status-pill">dismissed</span>' : ""}
+        ${inGroup && e.dup_reason_text ? `<span class="card-meta">matched: ${escapeHtml(e.dup_reason_text)}</span>` : ""}
       </div>
-      <h3 class="feed-item-title">${escapeHtml(e.title)}</h3>
+      <h3 class="feed-item-title">${canRead
+          ? `<button type="button" class="oe-title-btn" data-oe-read="${e.id}">${escapeHtml(e.headline || e.title)}</button>`
+          : escapeHtml(e.headline || e.title)}</h3>
+      ${e.headline ? `<p class="field-hint">${escapeHtml(e.title)}${e.site ? ` · ${escapeHtml(e.site)}` : ""}</p>` : ""}
       ${meta ? `<p class="field-hint">${escapeHtml(meta)}</p>` : ""}
       ${e.notes ? `<p class="feed-item-summary">${escapeHtml(truncate(e.notes, 400))}</p>` : ""}
       <div class="feed-item-actions">
-        ${e.url ? `<a class="btn-link btn-sm" href="${escapeHtml(e.url)}" target="_blank" rel="noopener noreferrer">The article ↗</a>` : ""}
+        ${canRead ? `<button type="button" class="btn-secondary btn-sm" data-oe-read="${e.id}">Read</button>` : ""}
         <button type="button" class="btn-link btn-sm" data-oe-map="${e.id}" data-lat="${e.lat}" data-lon="${e.lon}">On the map</button>
-        ${e.status === "sent"
+        ${inGroup
+          ? `<button type="button" class="btn-link btn-sm" data-oe-separate="${e.id}">Not the same</button>`
+          : e.status === "sent"
           ? `<button type="button" class="btn-link btn-sm" data-open-doc="${e.attachment_id}">See the document</button>`
           : `<button type="button" class="btn-primary btn-sm" data-oe-send="${e.id}">Send to Documents</button>
              ${e.status === "dismissed"
                ? `<button type="button" class="btn-link btn-sm" data-oe-status="new" data-id="${e.id}">Put back</button>`
                : `<button type="button" class="btn-link btn-sm" data-oe-status="dismissed" data-id="${e.id}">Dismiss</button>
                   ${e.status === "new" ? `<button type="button" class="btn-link btn-sm" data-oe-status="read" data-id="${e.id}">Mark read</button>` : ""}`}`}
+        ${!inGroup && e.similar ? `<button type="button" class="btn-link btn-sm oe-similar-toggle" data-oe-similar="${e.id}">
+            +${e.similar} similar report${e.similar === 1 ? "" : "s"}</button>` : ""}
       </div>
+      ${!inGroup && e.similar ? `<div class="oe-group" id="oe-group-${e.id}" hidden></div>` : ""}
     </div>`;
 }
 
 function wireOutsideItems(el) {
+  el.querySelectorAll("[data-oe-read]").forEach((b) => b.addEventListener("click", () => {
+    const id = Number(b.dataset.oeRead);
+    openOutsideReader(id, b.closest(".oe-group") ? null : outsideState.items.findIndex((x) => x.id === id));
+  }));
+  el.querySelectorAll("[data-oe-similar]").forEach((b) => b.addEventListener("click", async () => {
+    const box = document.getElementById(`oe-group-${b.dataset.oeSimilar}`);
+    if (!box) return;
+    if (!box.hidden) { box.hidden = true; return; }
+    box.hidden = false;
+    box.innerHTML = '<p class="field-hint">Loading…</p>';
+    try {
+      const r = await api(`/api/outside-events/${b.dataset.oeSimilar}/similar`);
+      box.innerHTML = `<p class="field-hint">The same incident, as other reports have it. Wrongly matched? “Not the same” takes one out for good.</p>`
+        + r.items.map((m) => outsideItemHtml(m, true)).join("");
+      wireOutsideItems(box);
+    } catch (e) { box.innerHTML = `<p class="form-error">${escapeHtml(e.message)}</p>`; }
+  }));
+  el.querySelectorAll("[data-oe-separate]").forEach((b) => b.addEventListener("click", async () => {
+    try {
+      await api(`/api/outside-events/${b.dataset.oeSeparate}/separate`, { method: "POST" });
+      showToast("Separated — it is now an incident of its own");
+      loadOutside();
+    } catch (e) { showToast(e.message, true); }
+  }));
   el.querySelectorAll("[data-oe-status]").forEach((b) => b.addEventListener("click", async () => {
     try {
       await api(`/api/outside-events/${b.dataset.id}/status`, { method: "POST", body: { status: b.dataset.oeStatus } });
@@ -15223,6 +15260,120 @@ function openSendOutsideForm(id) {
       btn.disabled = false; btn.textContent = "Send";
     }
   });
+}
+
+/* The reader: an event's article in a panel at the side, fetched by the
+ * server once and kept (api/reader.py) — no new tab per article. Previous and
+ * Next walk the list without closing; ← → and Esc work too. Opening one
+ * marks it read. */
+async function openOutsideReader(id, index, refresh) {
+  let panel = document.getElementById("oe-reader");
+  if (!panel) {
+    panel = document.createElement("aside");
+    panel.id = "oe-reader";
+    panel.className = "oe-reader";
+    panel.setAttribute("role", "dialog");
+    panel.setAttribute("aria-label", "Article");
+    document.body.appendChild(panel);
+    document.addEventListener("keydown", (ev) => {
+      if (panel.hidden || ev.target.closest("input, textarea, select")) return;
+      if (ev.key === "Escape") closeOutsideReader();
+      else if (ev.key === "ArrowRight" || ev.key === "j") stepOutsideReader(1);
+      else if (ev.key === "ArrowLeft" || ev.key === "k") stepOutsideReader(-1);
+    });
+  }
+  outsideState.readerIndex = index === null || index === undefined ? -1 : index;
+  outsideState.readerId = id;
+  panel.hidden = false;
+  document.body.classList.add("oe-reading");
+  panel.innerHTML = `<div class="oe-reader-head"><span class="field-hint">Reading…</span>
+    <button type="button" class="icon-btn" data-oe-close aria-label="Close">×</button></div>`;
+  panel.querySelector("[data-oe-close]").addEventListener("click", closeOutsideReader);
+  let r;
+  try {
+    r = await api(`/api/outside-events/${id}/article${refresh ? "?refresh=true" : ""}`);
+  } catch (e) {
+    panel.innerHTML += `<p class="form-error">${escapeHtml(e.message)}</p>`;
+    return;
+  }
+  if (outsideState.readerId !== id) return;          // moved on meanwhile
+  const e = r.event, a = r.article;
+  const src = e.source === "acled" ? "ACLED" : "GDELT";
+  const body = a ? a.text.split(/\n\n+/).map((p) => p.startsWith("## ")
+      ? `<h3>${escapeHtml(p.slice(3))}</h3>` : `<p>${escapeHtml(p)}</p>`).join("")
+    : `<p class="form-error">${escapeHtml(r.error || "No article.")}</p>
+       ${r.notes ? `<p>${escapeHtml(r.notes)}</p>` : ""}`;
+  const pos = outsideState.readerIndex >= 0 ? `${outsideState.readerIndex + 1} of ${outsideState.items.length}` : "";
+  panel.innerHTML = `
+    <div class="oe-reader-head">
+      <span class="status-pill outside-src-${escapeHtml(e.source)}">${src}</span>
+      <span class="field-hint">${escapeHtml([a && a.site, e.occurred_on, pos].filter(Boolean).join(" · "))}</span>
+      <span class="oe-reader-spacer"></span>
+      <button type="button" class="btn-link btn-sm" data-oe-step="-1" ${outsideState.readerIndex > 0 ? "" : "disabled"}>← Previous</button>
+      <button type="button" class="btn-link btn-sm" data-oe-step="1"
+        ${outsideState.readerIndex >= 0 && outsideState.readerIndex < outsideState.items.length - 1 ? "" : "disabled"}>Next →</button>
+      <button type="button" class="icon-btn" data-oe-close aria-label="Close">×</button>
+    </div>
+    <article class="oe-reader-body">
+      <h2>${escapeHtml((a && a.title) || e.title)}</h2>
+      <p class="field-hint">${escapeHtml(e.title)} · ${escapeHtml(e.place || "")} · unverified open source</p>
+      ${body}
+    </article>
+    <div class="oe-reader-foot">
+      ${e.status !== "sent" ? `<button type="button" class="btn-primary btn-sm" data-oe-rsend="${e.id}">Send to Documents</button>` : '<span class="status-pill feed-sent-pill">in Documents</span>'}
+      ${e.status === "new" || e.status === "read" ? `<button type="button" class="btn-secondary btn-sm" data-oe-rdismiss="${e.id}">Dismiss</button>` : ""}
+      ${(a && a.url) || e.url ? `<a class="btn-link btn-sm" href="${escapeHtml((a && a.url) || e.url)}" target="_blank" rel="noopener noreferrer">The original ↗</a>` : ""}
+      ${!a && e.url ? '<button type="button" class="btn-link btn-sm" data-oe-retry>Try again</button>' : ""}
+      <span class="oe-reader-spacer"></span>
+      <span class="field-hint">Text kept by this server${a && a.fetched_at ? `, read ${escapeHtml(relativeTime(a.fetched_at))}` : ""}</span>
+    </div>`;
+  panel.querySelectorAll("[data-oe-close]").forEach((b) => b.addEventListener("click", closeOutsideReader));
+  panel.querySelectorAll("[data-oe-step]").forEach((b) => b.addEventListener("click", () => stepOutsideReader(Number(b.dataset.oeStep))));
+  const retry = panel.querySelector("[data-oe-retry]");
+  if (retry) retry.addEventListener("click", () => openOutsideReader(e.id, outsideState.readerIndex, true));
+  const send = panel.querySelector("[data-oe-rsend]");
+  if (send) send.addEventListener("click", () => openSendOutsideForm(e.id));
+  const dis = panel.querySelector("[data-oe-rdismiss]");
+  if (dis) dis.addEventListener("click", async () => {
+    try {
+      await api(`/api/outside-events/${e.id}/status`, { method: "POST", body: { status: "dismissed" } });
+      showToast("Dismissed");
+      const next = outsideState.readerIndex;
+      await loadOutside();
+      if (next >= 0 && outsideState.items[next]) openOutsideReader(outsideState.items[next].id, next);
+      else closeOutsideReader();
+    } catch (err) { showToast(err.message, true); }
+  });
+  if (e.status === "new") {
+    api(`/api/outside-events/${e.id}/status`, { method: "POST", body: { status: "read" } })
+      .then(() => {
+        const card = document.querySelector(`#outside-items [data-item="${e.id}"]`);
+        if (card) {
+          card.classList.replace("feed-item-new", "feed-item-read");
+          const mr = card.querySelector('[data-oe-status="read"]');
+          if (mr) mr.remove();
+        }
+        const it = outsideState.items.find((x) => x.id === e.id);
+        if (it) it.status = "read";
+      }).catch(() => {});
+  }
+  const card = document.querySelector(`#outside-items [data-item="${e.id}"]`);
+  document.querySelectorAll("#outside-items .oe-current").forEach((c) => c.classList.remove("oe-current"));
+  if (card) { card.classList.add("oe-current"); card.scrollIntoView({ block: "nearest" }); }
+}
+
+function stepOutsideReader(d) {
+  const i = outsideState.readerIndex + d;
+  if (outsideState.readerIndex < 0 || i < 0 || i >= outsideState.items.length) return;
+  openOutsideReader(outsideState.items[i].id, i);
+}
+
+function closeOutsideReader() {
+  const panel = document.getElementById("oe-reader");
+  if (panel) panel.hidden = true;
+  document.body.classList.remove("oe-reading");
+  outsideState.readerId = null;
+  document.querySelectorAll("#outside-items .oe-current").forEach((c) => c.classList.remove("oe-current"));
 }
 
 /* The map layer: the last week's events in the marked areas, small violet
@@ -15303,6 +15454,23 @@ async function loadOutsideSettings() {
         <p class="field-hint">Last checked ${escapeHtml(when(s.acled_last_poll_at))} · ${(s.counts.acled || {}).total || 0} kept</p>
         ${s.acled_last_error ? `<p class="form-error">Last attempt: ${escapeHtml(s.acled_last_error)}</p>` : ""}
       </div>
+      <div class="card"><h3>Reading and duplicates</h3>
+        <label class="inline-check"><input type="checkbox" id="oe-prefetch" ${s.prefetch_articles ? "checked" : ""}>
+          Read each new incident's article ahead (opens at once, reads offline, finds duplicates by headline)</label>
+        ${num("oe-art-sp", "article_spacing_seconds", s.article_spacing_seconds, "Between two requests to the same news site (seconds)",
+              `At least ${L_("article_spacing_seconds").min}.`, "0.5")}
+        ${num("oe-art-n", "articles_per_pass", s.articles_per_pass, "Articles per pass", "Read in batches, every 30 seconds while there are new ones.")}
+        <label class="inline-check"><input type="checkbox" id="oe-dd-rules" ${s.dedupe_rules ? "checked" : ""}>
+          Fold duplicates by rule: the same article; the same kind of event at the same place on the same day;
+          near-identical headlines</label>
+        <label class="inline-check"><input type="checkbox" id="oe-dd-model" ${s.dedupe_model ? "checked" : ""}>
+          Also ask the model: the same story in other words, and across GDELT and ACLED (its embedding model)</label>
+        <p class="field-hint">${s.embed_model ? `Embedding model: <b>${escapeHtml(s.embed_model)}</b>.`
+          : "No embedding model is set (Admin → Model): the rules still run."}</p>
+        ${num("oe-dd-th", "dedupe_model_threshold", s.dedupe_model_threshold, "How alike, for the model (0.5–0.99)",
+              "Higher folds less. 0.86 suits nomic-embed-text; check a few groups and adjust.", "0.01")}
+        <p class="field-hint">${s.articles.read} articles read, ${s.articles.failed} could not be · ${s.folded} reports folded under an incident</p>
+      </div>
       <div class="card"><h3>Keeping them</h3>
         ${num("oe-keep", "retention_days", s.retention_days, "Delete unread and dismissed after (days)",
               "Ones sent to Documents stay: the document is the record.")}
@@ -15324,6 +15492,11 @@ async function loadOutsideSettings() {
       acled_enabled: document.getElementById("oe-a-on").checked, acled_username: v("oe-a-user").trim(),
       acled_interval_minutes: parseInt(v("oe-a-int"), 10), acled_request_spacing_seconds: parseFloat(v("oe-a-sp")),
       acled_backfill_days: parseInt(v("oe-a-back"), 10), retention_days: parseInt(v("oe-keep"), 10),
+      prefetch_articles: document.getElementById("oe-prefetch").checked,
+      article_spacing_seconds: parseFloat(v("oe-art-sp")), articles_per_pass: parseInt(v("oe-art-n"), 10),
+      dedupe_rules: document.getElementById("oe-dd-rules").checked,
+      dedupe_model: document.getElementById("oe-dd-model").checked,
+      dedupe_model_threshold: parseFloat(v("oe-dd-th")),
       ...(extra || {}),
     };
     if (v("oe-a-pass")) body.acled_password = v("oe-a-pass");

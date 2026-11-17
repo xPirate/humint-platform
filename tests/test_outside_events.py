@@ -155,6 +155,7 @@ W.GDELT_MIN_SPACING_S = 0.2
 c.sql("ALTER TABLE outside_event_settings DROP CONSTRAINT IF EXISTS outside_event_settings_gdelt_request_spacing_seconds_check")
 c.sql("UPDATE outside_event_settings SET gdelt_request_spacing_seconds = 0.2")
 
+c.sql("UPDATE outside_event_settings SET prefetch_articles = false, dedupe_rules = false")
 done = W.run_once()
 check(done.get("gdelt") == 4, f"one pull: four events inside the marked zone, after the filters ({done})")
 paths = [h[1] for h in hits]
@@ -175,7 +176,7 @@ check(ev["1001"][3] == [balt] and ev["1001"][4] == "city", "each knows its zone,
 check(c.sql("SELECT gdelt_last_file FROM outside_event_settings")[0][0] == stamps[4], "progress is kept")
 
 hits.clear()
-check(W.run_once() == {}, "not due again until the interval has passed")
+check(not {k for k, v in W.run_once().items() if v}, "not due again until the interval has passed")
 check(hits == [], "and asks nothing in between")
 admin.post(c.url + "/api/admin/outside-events/pull-now")
 done = W.run_once()
@@ -312,7 +313,7 @@ else:
 admin.patch(c.url + f"/api/map/zones/{balt}", json={"outside_events": False})
 admin.post(c.url + "/api/admin/outside-events/pull-now")
 acled_hits.clear()
-check(W.run_once() == {} and acled_hits == [], "with no zone marked, nothing is asked of anybody")
+check("gdelt" not in W.run_once() and acled_hits == [], "with no zone marked, nothing is asked of anybody")
 
 # ---- the migration, on a database from before ------------------------------------------
 old = Console("outside_mig")

@@ -31,6 +31,10 @@ Rectangle {
         aInterval.text = String(r.acled_interval_minutes); aSpacing.text = String(r.acled_request_spacing_seconds)
         aBackfill.text = String(r.acled_backfill_days)
         keep.text = String(r.retention_days)
+        rPrefetch.checked = r.prefetch_articles
+        rSpacing.text = String(r.article_spacing_seconds); rPerPass.text = String(r.articles_per_pass)
+        dRules.checked = r.dedupe_rules; dModel.checked = r.dedupe_model
+        dThreshold.text = String(r.dedupe_model_threshold)
     }
     Component.onCompleted: load()
 
@@ -41,7 +45,10 @@ Rectangle {
             gdelt_min_sources: parseInt(gMin.text, 10), gdelt_city_only: gCity.checked, gdelt_root_codes: page.codes,
             acled_enabled: aOn.checked, acled_username: aUser.text.trim(),
             acled_interval_minutes: parseInt(aInterval.text, 10), acled_request_spacing_seconds: parseFloat(aSpacing.text),
-            acled_backfill_days: parseInt(aBackfill.text, 10), retention_days: parseInt(keep.text, 10)
+            acled_backfill_days: parseInt(aBackfill.text, 10), retention_days: parseInt(keep.text, 10),
+            prefetch_articles: rPrefetch.checked, article_spacing_seconds: parseFloat(rSpacing.text),
+            articles_per_pass: parseInt(rPerPass.text, 10), dedupe_rules: dRules.checked, dedupe_model: dModel.checked,
+            dedupe_model_threshold: parseFloat(dThreshold.text)
         }
         if (aPass.text) body.acled_password = aPass.text
         for (var k in (extra || {})) body[k] = extra[k]
@@ -170,6 +177,41 @@ Rectangle {
                           text: page.s ? "Last checked " + page.when(page.s.acled_last_poll_at) + " · " + ((page.s.counts.acled || {}).total || 0) + " kept" : "" }
                     Txt { Layout.fillWidth: true; visible: !!page.s && !!page.s.acled_last_error; color: Theme.amber
                           text: page.s && page.s.acled_last_error ? "Last attempt: " + page.s.acled_last_error : "" }
+                }
+            }
+
+            // ---- reading and duplicates ----
+            Card {
+                Layout.fillWidth: true; title: "Reading and duplicates"
+                implicitHeight: rCol.implicitHeight + 2 * padding + Theme.gap + 20 * Theme.s
+                ColumnLayout {
+                    id: rCol
+                    width: parent.width; spacing: 8 * Theme.s
+                    Check { id: rPrefetch; text: "Read each new incident's article ahead" }
+                    Txt { Layout.fillWidth: true; kind: "muted"
+                          text: "Kept on this server: it opens at once, reads offline later, and lets duplicates be found by headline." }
+                    RowLayout {
+                        Layout.fillWidth: true; spacing: Theme.gap
+                        Labeled { Layout.fillWidth: true; Layout.preferredWidth: 1; Layout.alignment: Qt.AlignTop
+                                  label: "Between requests to one news site (seconds)"; hint: "At least " + page.lim("article_spacing_seconds").min + "."
+                                  Field { id: rSpacing; width: parent.width; inputMethodHints: Qt.ImhFormattedNumbersOnly } }
+                        Labeled { Layout.fillWidth: true; Layout.preferredWidth: 1; Layout.alignment: Qt.AlignTop
+                                  label: "Articles per pass"; hint: "Every 30 seconds while there are new ones."
+                                  Field { id: rPerPass; width: parent.width; inputMethodHints: Qt.ImhDigitsOnly } }
+                    }
+                    Check { id: dRules; text: "Fold duplicates by rule" }
+                    Txt { Layout.fillWidth: true; kind: "muted"
+                          text: "The same article; the same kind of event at the same place on the same day; near-identical headlines." }
+                    Check { id: dModel; text: "Also ask the model (the same story in other words)" }
+                    Txt { Layout.fillWidth: true; kind: "muted"
+                          text: page.s && page.s.embed_model ? "Embedding model: " + page.s.embed_model + ". Matches across GDELT and ACLED too."
+                                : "No embedding model is set (Admin → Model): the rules still run." }
+                    Labeled { Layout.preferredWidth: 300 * Theme.s; label: "How alike, for the model (0.5–0.99)"
+                              hint: "Higher folds less. 0.86 suits nomic-embed-text."
+                              Field { id: dThreshold; width: parent.width; inputMethodHints: Qt.ImhFormattedNumbersOnly } }
+                    Txt { Layout.fillWidth: true; kind: "muted"; visible: !!page.s
+                          text: page.s ? page.s.articles.read + " articles read, " + page.s.articles.failed + " could not be · "
+                                         + page.s.folded + " reports folded under an incident" : "" }
                 }
             }
 
