@@ -43,6 +43,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 import assistant_agent
+import assistant_drafts
 import audit
 import auth
 import ollama_usage
@@ -327,10 +328,11 @@ def list_messages(user: dict = Depends(auth.require_user)):
                 (user["id"],),
             )
         rows = cur.fetchall()
+        drafts = assistant_drafts.for_messages(cur, [r[0] for r in rows if r[1] == "assistant"])
     return {
         "items": [
             {"id": r[0], "role": r[1], "content": r[2], "citations": r[3] or [], "created_at": r[4],
-             "trail": r[5]}
+             "trail": r[5], "drafts": drafts.get(r[0], [])}
             for r in rows
         ]
     }
@@ -407,6 +409,7 @@ def _save(user: dict, question: str, done: dict) -> dict:
                 (user["id"], done["answer"], json.dumps(done["citations"])),
             )
         new_id, created_at = cur.fetchone()
+        drafts = assistant_drafts.attach(cur, done.get("drafts") or [], new_id, user["id"])
 
     # The assistant reads case data on the user's behalf, so what it looked at
     # is an access event. Neither the question nor what it searched FOR is
@@ -422,7 +425,7 @@ def _save(user: dict, question: str, done: dict) -> dict:
                          "lookups": [s["tool"] for s in done["steps"]],
                          "mode": done["mode"]})
     return {"id": new_id, "role": "assistant", "content": done["answer"],
-            "citations": done["citations"], "trail": trail,
+            "citations": done["citations"], "trail": trail, "drafts": drafts,
             "created_at": created_at.isoformat() if created_at else None}
 
 

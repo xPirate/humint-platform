@@ -2735,3 +2735,17 @@ body.role-viewer #doc-drop-zone{display:none !important;}
 .update-notes h4 { margin: 12px 0 6px; }
 .update-notes h5, .update-notes h6 { margin: 10px 0 4px; font-size: 0.95rem; }
 .update-notes p { margin: 0 0 8px; }
+
+/* The assistant's drafts, under an answer */
+.assistant-drafts { display: flex; flex-direction: column; gap: 8px; margin-top: 10px; }
+.assistant-draft { border: 1px solid var(--border-strong); border-radius: var(--radius); padding: 10px 12px;
+  background: rgba(var(--accent-rgb), 0.05); }
+.assistant-draft-applied, .assistant-draft-discarded { opacity: 0.75; }
+.assistant-draft-discarded .assistant-draft-body { text-decoration: line-through; }
+.assistant-draft-head { display: flex; justify-content: space-between; gap: 8px; margin-bottom: 4px; }
+.assistant-draft-kind { font-size: 0.75rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); }
+.assistant-draft-state { font-size: 0.78rem; color: var(--muted); }
+.assistant-draft-body p { margin: 4px 0; }
+.assistant-draft-body ul { margin: 4px 0 4px 18px; padding: 0; }
+.assistant-draft-text summary { cursor: pointer; font-size: 0.85rem; color: var(--muted); margin-top: 4px; }
+.assistant-draft-actions { display: flex; gap: 10px; align-items: center; margin-top: 8px; font-size: 0.88rem; }

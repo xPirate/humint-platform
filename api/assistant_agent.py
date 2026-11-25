@@ -49,7 +49,18 @@ when you do not have an id.
 - connection: how two records are connected.
 - list_reports / field_reports: what came in, when, and about whom.
 - case_overview: the big picture. priorities: what the team needs answered.
+- outside_events: open-source events (news, ACLED) in the team's areas — unverified.
+- documents: documents in the case file, by words in them. nearby: what is on the map around a place.
+- open_record also opens outside events (outside-<n>) and documents (document-<n>).
 Every record is shown with its id in [square brackets]; pass that id to the next lookup.
+
+You can also PREPARE things, but only when the analyst asks for them:
+- draft_report (write something up), draft_priority (add an intelligence priority),
+  send_outside_event (put an outside event in Documents): these become drafts under your answer,
+  and nothing is made until the analyst approves.
+- propose_link (link or connect records): goes into the Review queue for them to accept.
+Look things up first, so a draft rests on what the file shows. Say in your answer what you
+prepared; do not paste a drafted report's whole text into the answer.
 
 Work like an analyst: look things up before you answer, follow the links that matter, and \
 stop when you have enough. Several lookups are normal for a question about connections, \
@@ -196,7 +207,7 @@ def run(ollama, question: str, history: list[dict], settings: dict, user: dict,
     past = [{"role": m["role"], "content": _clip(m["content"] or "", 1500)}
             for m in (history or [])[-turns * 2:]]
 
-    tool_ctx = {"user": user, "body_chars": int(per_result * 0.6), "semantic": semantic}
+    tool_ctx = {"user": user, "body_chars": int(per_result * 0.6), "semantic": semantic, "drafts": []}
     steps, thinking, pool, opened, seen, notes = [], [], {}, [], {}, []
     lookups = 0
 
@@ -229,6 +240,7 @@ def run(ollama, question: str, history: list[dict], settings: dict, user: dict,
                 "steps": steps, "thinking": "\n\n".join(thinking)[-12000:],
                 "seconds": round(time.monotonic() - started, 1), "lookups": lookups,
                 "mode": mode, "thought": bool(thinking), "notes": notes,
+                "drafts": list(tool_ctx["drafts"]),
                 # Every record any lookup returned — what the model read on
                 # the analyst's behalf, which is what the audit entry lists.
                 "seen": list(pool) or [c["id"] for c in citations]}

@@ -2058,3 +2058,27 @@ DO $$ BEGIN
         CHECK (triage_examples BETWEEN 0 AND 30);
 EXCEPTION WHEN duplicate_object THEN NULL;
 END $$;
+
+-- ---------------------------------------------------------------------------
+-- The assistant's drafts (v1.18): a report, a priority or sending an outside
+-- event to Documents, prepared by the assistant and made only when the person
+-- who asked applies it (api/assistant_drafts.py). Proposed links go to the
+-- Review queue and are recorded here as queued.
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS assistant_drafts (
+    id SERIAL PRIMARY KEY,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    -- The answer it was prepared in (set when the answer is saved).
+    message_id INTEGER REFERENCES assistant_messages(id) ON DELETE CASCADE,
+    kind TEXT NOT NULL CHECK (kind IN ('report', 'priority', 'outside_to_document', 'link')),
+    payload JSONB NOT NULL,
+    summary TEXT NOT NULL,
+    -- pending: waiting for the person; applied / discarded: their decision;
+    -- queued: a proposed link, sent to the Review queue (decided there).
+    status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'applied', 'discarded', 'queued')),
+    result JSONB,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    decided_at TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS idx_assistant_drafts_message ON assistant_drafts (message_id);
+CREATE INDEX IF NOT EXISTS idx_assistant_drafts_user ON assistant_drafts (user_id, status);

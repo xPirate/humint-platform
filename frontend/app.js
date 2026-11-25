@@ -13641,6 +13641,83 @@ function assistantStepHtml(step) {
   </li>`;
 }
 
+/* The assistant's drafts (api/assistant_drafts.py): what it prepared under an
+ * answer. Nothing is made until the person applies it, through the same
+ * create the console's own forms use; a proposed link is already waiting in
+ * Review, where links are accepted. */
+function assistantDraftHtml(d) {
+  const p = d.payload || {};
+  const chips = (p.entities || []).map((e) => `<span class="assistant-citation" data-kind="entity" data-id="${escapeHtml(e.id)}">${escapeHtml(e.name)}</span>`).join("");
+  let kind = "", body = "", applyText = "", doneHtml = "";
+  if (d.kind === "report") {
+    kind = "Draft report";
+    body = `<b>${escapeHtml(p.title || "")}</b>${p.criticality ? ` <span class="card-meta">${escapeHtml(p.criticality)}</span>` : ""}
+      <details class="assistant-draft-text"><summary>The text</summary>${mdToHtml(p.body_markdown || "")}</details>`;
+    applyText = "Make the draft report";
+    if (d.result && d.result.report_id) doneHtml = `<a href="#" data-draft-open-report="${escapeHtml(d.result.report_id)}">Open the report</a>`;
+  } else if (d.kind === "priority") {
+    kind = `Priority P${p.priority || 2}`;
+    body = `<b>${escapeHtml(p.title || "")}</b>${p.question ? `<p>${escapeHtml(p.question)}</p>` : ""}
+      ${(p.indicators || []).length ? `<ul>${p.indicators.map((i) => `<li>${escapeHtml(i)}</li>`).join("")}</ul>` : ""}`;
+    applyText = "Add the priority";
+    if (d.status === "applied") doneHtml = '<a href="#" data-draft-open-priorities>Open Priorities</a>';
+  } else if (d.kind === "outside_to_document") {
+    kind = "Outside event → Documents";
+    body = `<b>${escapeHtml(p.title || "")}</b>`;
+    applyText = "Send to Documents";
+    if (d.result && d.result.document_id) doneHtml = `<a href="#" data-draft-open-doc="${d.result.document_id}">Open the document</a>`;
+  } else if (d.kind === "link") {
+    kind = "Proposed link";
+    body = `<b>${escapeHtml((p.from || {}).name || "")}</b> — ${escapeHtml(p.relationship || "")} — <b>${escapeHtml((p.to || {}).name || "")}</b>
+      ${p.reason ? `<p class="field-hint">${escapeHtml(p.reason)}</p>` : ""}`;
+    doneHtml = '<a href="#" data-draft-open-review>In the Review queue</a>';
+  }
+  const state = { pending: "", applied: "Made", discarded: "Discarded", queued: "" }[d.status] ?? d.status;
+  return `<div class="assistant-draft assistant-draft-${escapeHtml(d.status)}" data-draft="${d.id}">
+    <div class="assistant-draft-head"><span class="assistant-draft-kind">${escapeHtml(kind)}</span>
+      ${state ? `<span class="assistant-draft-state">${escapeHtml(state)}</span>` : ""}</div>
+    <div class="assistant-draft-body">${body}</div>
+    ${chips ? `<div class="assistant-msg-citations">${chips}</div>` : ""}
+    <div class="assistant-draft-actions">
+      ${d.status === "pending" ? `<button type="button" class="btn-primary btn-sm" data-draft-apply="${d.id}">${escapeHtml(applyText)}</button>
+        <button type="button" class="btn-link btn-sm" data-draft-discard="${d.id}">Discard</button>` : doneHtml}
+    </div>
+  </div>`;
+}
+
+function wireAssistantDrafts(container) {
+  container.querySelectorAll("[data-draft-apply]:not([data-wired])").forEach((b) => {
+    b.dataset.wired = "1";
+    b.addEventListener("click", async () => {
+      b.disabled = true;
+      try {
+        const d = await api(`/api/assistant/drafts/${b.dataset.draftApply}/apply`, { method: "POST", body: {} });
+        const card = b.closest(".assistant-draft");
+        card.outerHTML = assistantDraftHtml(d);
+        wireAssistantDrafts(container); wireAssistantCitations(container);
+        showToast("Made");
+      } catch (e) { b.disabled = false; showToast(e.message, true); }
+    });
+  });
+  container.querySelectorAll("[data-draft-discard]:not([data-wired])").forEach((b) => {
+    b.dataset.wired = "1";
+    b.addEventListener("click", async () => {
+      try {
+        const d = await api(`/api/assistant/drafts/${b.dataset.draftDiscard}/discard`, { method: "POST" });
+        b.closest(".assistant-draft").outerHTML = assistantDraftHtml(d);
+      } catch (e) { showToast(e.message, true); }
+    });
+  });
+  const nav = (sel, fn) => container.querySelectorAll(`${sel}:not([data-wired])`).forEach((a) => {
+    a.dataset.wired = "1";
+    a.addEventListener("click", (ev) => { ev.preventDefault(); toggleAssistantPanel(false); fn(a); });
+  });
+  nav("[data-draft-open-report]", (a) => openReportDetail(a.dataset.draftOpenReport));
+  nav("[data-draft-open-doc]", (a) => openDocument(Number(a.dataset.draftOpenDoc)));
+  nav("[data-draft-open-review]", () => switchView("review"));
+  nav("[data-draft-open-priorities]", () => switchView("priorities"));
+}
+
 function assistantMessageHtml(msg) {
   const isUser = msg.role === "user";
   const bodyHtml = isUser ? escapeHtml(msg.content) : renderMarkdown(msg.content);
@@ -13651,6 +13728,7 @@ function assistantMessageHtml(msg) {
     <div class="assistant-msg assistant-msg-${isUser ? "user" : "assistant"}">
       ${bodyHtml}
       ${citationsHtml ? `<div class="assistant-msg-citations">${citationsHtml}</div>` : ""}
+      ${(msg.drafts || []).length ? `<div class="assistant-drafts">${msg.drafts.map(assistantDraftHtml).join("")}</div>` : ""}
       ${isUser ? "" : assistantTrailHtml(msg.trail)}
     </div>
   `;
@@ -13743,13 +13821,18 @@ async function streamAssistant(question, onEvent) {
 // (these citations aren't inside a blur-on-focus-loss input), so a plain
 // `click` is fine.
 function wireAssistantCitations(container) {
-  container.querySelectorAll(".assistant-citation").forEach((el) => {
+  container.querySelectorAll(".assistant-citation:not([data-wired])").forEach((el) => {
+    el.dataset.wired = "1";
     el.addEventListener("click", () => {
       toggleAssistantPanel(false);
+      const num = (el.dataset.id.match(/(\d+)$/) || [])[1];
       if (el.dataset.kind === "entity") openEntityDetail(el.dataset.id);
+      else if (el.dataset.kind === "document") openDocument(Number(num));
+      else if (el.dataset.kind === "outside_event") { switchView("outside"); openOutsideReader(Number(num), null); }
       else openReportDetail(el.dataset.id);
     });
   });
+  wireAssistantDrafts(container);
 }
 
 function appendAssistantMessage(msg) {

@@ -54,6 +54,7 @@ needs to come after.
 | `db/migrate-v1.15-outside-events.sql` | Outside events: GDELT and ACLED events inside zones marked as areas of responsibility. Off until an admin turns a source on. |
 | `db/migrate-v1.16-outside-reading.sql` | Outside events: articles kept for the reader panel, and duplicate reports folded under one incident (rules on; the model check off until turned on). |
 | `db/migrate-v1.17-outside-triage.sql` | Outside events: the model triages incidents (real event, in the area, kind, severity), with people's corrections kept as examples. Off until an admin turns it on. |
+| `db/migrate-v1.18-assistant-drafts.sql` | The assistant prepares drafts (a report, a priority, an outside event to Documents) that the person who asked applies. |
 
 **Run them in version order, oldest you haven't run first.** For example,
 coming from v1.6:
@@ -71,6 +72,7 @@ docker compose exec -T db psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" < db/migrat
 docker compose exec -T db psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" < db/migrate-v1.15-outside-events.sql
 docker compose exec -T db psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" < db/migrate-v1.16-outside-reading.sql
 docker compose exec -T db psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" < db/migrate-v1.17-outside-triage.sql
+docker compose exec -T db psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" < db/migrate-v1.18-assistant-drafts.sql
 ```
 
 The `-T` matters — without it, compose swallows the redirected file. List

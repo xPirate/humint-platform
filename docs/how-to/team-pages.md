@@ -94,11 +94,25 @@ and never pruned.
 
 - **Propose links:** the box at the top of Review — "link the Smiths",
   "connect everyone at the rail yard". Proposals land in the queue.
-- **Ask questions:** the **AI Assistant** panel. It sees only your records and
-  can't write anything.
+- **Ask questions:** the **AI Assistant** panel. It looks things up in your
+  case file before it answers — records, reports, field reports, documents
+  (and their text), outside events in your areas (as the model's triage left
+  them), and what is on the map around a place ("what's within 2 km of the
+  east docks?") — and shows each lookup under its answer.
+- **Have it prepare things:** ask it to *write that up*, *add a priority for
+  it*, *put that event in Documents* or *link Ana to the docks*. A report, a
+  priority or an outside event to Documents comes back as a **draft card**
+  under the answer: nothing is made until you press **Make the draft report**
+  / **Add the priority** / **Send to Documents** (or **Discard**). Applying
+  goes through the same forms as doing it yourself, under your name, and the
+  report is made as a *draft* report you can edit. A proposed link goes
+  straight to the Review queue, where links are always accepted or dismissed.
+  At most five drafts per question.
 
 It's a reader and a proposer, not a source. Check anything it says against
-the record before it goes in a report.
+the record before it goes in a report. How well it chooses its lookups
+depends on the model: a 14B-class model that can call tools (Qwen3, gpt-oss)
+does noticeably better than an 8B one on questions with several steps.
 
 ## The dashboard
 

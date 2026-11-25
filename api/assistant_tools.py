@@ -446,6 +446,10 @@ def open_record(ctx, id: str = "") -> tuple[str, list]:  # noqa: A002 - the name
     with db_cursor() as cur:
         if ref.startswith("report-"):
             return _open_report(cur, ref, ctx.get("body_chars", 2500))
+        if ref.lower().startswith("outside-") and _num_id(ref, "outside") is not None:
+            return _open_outside(cur, _num_id(ref, "outside"), ctx.get("body_chars", 2500))
+        if ref.lower().startswith("document-") and _num_id(ref, "document") is not None:
+            return _open_document(cur, _num_id(ref, "document"), ctx.get("body_chars", 2500))
         entity_id, candidates = resolve_entity(cur, ref)
         if entity_id is None:
             cur.execute("SELECT id FROM reports WHERE lower(title) = lower(%s) LIMIT 1", (ref,))
@@ -814,6 +818,343 @@ def priorities(ctx, include_closed: bool = False) -> tuple[str, list]:
 
 
 # ---------------------------------------------------------------------------
+# outside events, documents, nearby (v1.18)
+# ---------------------------------------------------------------------------
+# Open-source events in the team's areas (GDELT, ACLED; triaged by the model
+# when that is on), the documents in the case file, and what is on the map
+# around a place. Ids: outside-<n>, document-<n>.
+
+OUTSIDE_CATEGORIES = {
+    "protest": "Protest or demonstration", "unrest": "Civil unrest or riot", "violent_crime": "Violent crime",
+    "police": "Arrest or police action", "attack": "Attack or armed violence", "threat": "Threat or extremism",
+    "disaster": "Disaster or emergency", "infrastructure": "Infrastructure or outage",
+    "government": "Government or political", "other": "Other",
+}
+SEVERITY_WORDS = {1: "routine", 2: "minor", 3: "notable", 4: "significant", 5: "critical"}
+
+
+def _num_id(ref: str, prefix: str) -> int | None:
+    m = re.fullmatch(rf"\[?\s*(?:{prefix}-|#)?(\d+)\s*\]?", (ref or "").strip(), re.I)
+    return int(m.group(1)) if m else None
+
+
+def _triage_cfg(cur) -> tuple[bool, int]:
+    try:
+        cur.execute("SELECT triage_enabled, triage_min_severity FROM outside_event_settings WHERE id = 1")
+        r = cur.fetchone()
+        return bool(r and r[0]), int(r[1]) if r and r[1] else 1
+    except Exception:  # noqa: BLE001 - before outside events existed
+        cur.connection.rollback()
+        return False, 1
+
+
+def _outside_line(r) -> str:
+    (eid, source, occurred, title, category, place, status, cat, sev, summary, similar, zones) = r
+    kind = OUTSIDE_CATEGORIES.get(cat or "", category or "event")
+    head = summary or title
+    sev_txt = f", severity {sev} ({SEVERITY_WORDS.get(sev, '')})" if sev else ""
+    bits = [f"{_d(occurred)} · {head} [outside-{eid}]", f"{kind}{sev_txt}", place or "",
+            f"{'ACLED' if source == 'acled' else 'GDELT'}" + (f", {similar} similar reports" if similar else ""),
+            {"new": "unread", "read": "read", "sent": "in Documents", "dismissed": "dismissed"}.get(status, status)]
+    if zones:
+        bits.append("area: " + ", ".join(zones))
+    return "- " + " · ".join(b for b in bits if b)
+
+
+def outside_events(ctx, days: int | None = 7, area: str | None = None, category: str | None = None,
+                   text: str | None = None, min_severity: int | None = None,
+                   include_filtered: bool = False, limit: int = 15) -> tuple[str, list]:
+    n = _days(days, 7, 365)
+    where = ["e.dup_of IS NULL", "e.status <> 'dismissed'",
+             "COALESCE(e.occurred_on, e.created_at::date) >= (now() - make_interval(days => %s))::date"]
+    params: list = [n]
+    described = [f"last {n} days"]
+    with db_cursor() as cur:
+        enabled, floor = _triage_cfg(cur)
+        try:
+            if area:
+                cur.execute("SELECT id, name FROM map_zones WHERE outside_events AND name ILIKE %s", (f"%{area}%",))
+                zs = cur.fetchall()
+                if not zs:
+                    cur.execute("SELECT name FROM map_zones WHERE outside_events ORDER BY name")
+                    names = [r[0] for r in cur.fetchall()]
+                    return (f"No area called '{area}'. The areas are: {', '.join(names) or 'none yet'}."), []
+                where.append("e.zone_ids && %s")
+                params.append([z[0] for z in zs])
+                described.append("in " + ", ".join(z[1] for z in zs))
+            if category:
+                key = category.strip().lower().replace(" ", "_")
+                key = next((k for k, v in OUTSIDE_CATEGORIES.items() if key in (k, v.lower().replace(" ", "_"))
+                            or key in v.lower()), key)
+                where.append("e.triage_category = %s")
+                params.append(key)
+                described.append(OUTSIDE_CATEGORIES.get(key, key))
+            if min_severity:
+                where.append("e.triage_severity >= %s")
+                params.append(max(1, min(5, int(min_severity))))
+                described.append(f"severity {min_severity}+")
+            for t in _terms(text or ""):
+                where.append("(e.title ILIKE %s OR COALESCE(e.triage_summary,'') ILIKE %s OR COALESCE(e.place,'') ILIKE %s "
+                             " OR COALESCE(e.notes,'') ILIKE %s OR COALESCE(a.title,'') ILIKE %s)")
+                params += [f"%{t}%"] * 5
+            if text:
+                described.append(f"mentioning '{text}'")
+            if enabled and not include_filtered:
+                where.append("NOT (e.triaged_at IS NOT NULL AND (e.triage_is_event IS FALSE OR "
+                             "e.triage_in_area IS FALSE OR e.triage_severity < %s))")
+                params.append(floor)
+            cap = max(1, min(40, _days(limit, 15, 40)))
+            cur.execute(
+                "SELECT e.id, e.source, e.occurred_on, e.title, e.category, e.place, e.status, e.triage_category, "
+                "       e.triage_severity, e.triage_summary, "
+                "       (SELECT count(*) FROM outside_events d WHERE d.dup_of = e.id), "
+                "       ARRAY(SELECT z.name FROM map_zones z WHERE z.id = ANY(e.zone_ids) ORDER BY z.name) "
+                "FROM outside_events e LEFT JOIN outside_articles a ON a.url = e.url "
+                f"WHERE {' AND '.join(where)} "
+                "ORDER BY COALESCE(e.occurred_on, e.created_at::date) DESC, COALESCE(e.triage_severity, 0) DESC, e.id DESC "
+                "LIMIT %s", params + [cap])
+            rows = cur.fetchall()
+        except Exception:  # noqa: BLE001 - a console without outside events
+            cur.connection.rollback()
+            return "This console does not pull outside events.", []
+    what = ", ".join(described)
+    if not rows:
+        return f"No outside events ({what}).", []
+    head = (f"Outside events ({what}), newest first — open-source and unverified"
+            + ("; the model's triage has set aside what is not a real event in the area" if enabled and not include_filtered else "")
+            + ":")
+    return "\n".join([head] + [_outside_line(r) for r in rows]), \
+        [_ref("outside_event", f"outside-{r[0]}", f"Outside event: {_clip(r[9] or r[3], 60)}") for r in rows]
+
+
+def _open_outside(cur, eid: int, body_chars: int) -> tuple[str, list]:
+    cur.execute(
+        "SELECT e.id, e.source, e.occurred_on, e.title, e.category, e.place, e.status, e.triage_category, "
+        "       e.triage_severity, e.triage_summary, "
+        "       (SELECT count(*) FROM outside_events d WHERE d.dup_of = e.id), "
+        "       ARRAY(SELECT z.name FROM map_zones z WHERE z.id = ANY(e.zone_ids) ORDER BY z.name), "
+        "       e.notes, e.url, e.triage_reason, e.triage_is_event, e.triage_in_area, a.title, a.site, a.body, "
+        "       e.lat, e.lon, e.precision, e.fatalities, e.attachment_id, e.dup_of "
+        "FROM outside_events e LEFT JOIN outside_articles a ON a.url = e.url WHERE e.id = %s", (eid,))
+    r = cur.fetchone()
+    if not r:
+        return f"No outside event outside-{eid}.", []
+    (notes, url, reason, is_event, in_area, headline, site, body, lat, lon, precision, fatalities,
+     attachment_id, dup_of) = r[12:]
+    lines = ["Outside event (open-source, unverified):", _outside_line(r[:12])[2:]]
+    if dup_of:
+        lines.append(f"Folded under another report of the same incident: outside-{dup_of}.")
+    if headline:
+        lines.append(f"Article: {headline}" + (f" ({site})" if site else ""))
+    if is_event is not None:
+        lines.append("The model's triage: " + ("not a real event" if is_event is False else
+                                               "not in the area" if in_area is False else "kept")
+                     + (f" — {reason}" if reason else ""))
+    lines.append(f"Placed at {lat:.4f}, {lon:.4f}" + (f" ({precision} level)" if precision else ""))
+    if fatalities:
+        lines.append(f"Fatalities: {fatalities}")
+    if attachment_id:
+        lines.append(f"Sent to Documents as document-{attachment_id}.")
+    if body:
+        lines += ["", "Article text:", body[:body_chars]]
+    elif notes:
+        lines += ["", "Notes:", notes[:body_chars]]
+    elif url:
+        lines.append("The article has not been read by the server.")
+    return "\n".join(lines), [_ref("outside_event", f"outside-{r[0]}", f"Outside event: {_clip(r[9] or r[3], 60)}")]
+
+
+def _doc_label(title, filename) -> str:
+    return title or filename
+
+
+def documents(ctx, text: str | None = None, days: int | None = None, unfiled_only: bool = False,
+              limit: int = 12) -> tuple[str, list]:
+    where, params, described = ["a.archived_at IS NULL"], [], []
+    n = _days(days)
+    if n:
+        where.append("a.uploaded_at >= now() - %s * interval '1 day'")
+        params.append(n)
+        described.append(f"last {n} days")
+    terms = _terms(text or "")
+    for t in terms:
+        where.append("(COALESCE(a.title,'') ILIKE %s OR a.filename ILIKE %s OR COALESCE(a.source_note,'') ILIKE %s "
+                     " OR COALESCE(a.extracted_text,'') ILIKE %s)")
+        params += [f"%{t}%"] * 4
+    if text:
+        described.append(f"mentioning '{text}'")
+    if unfiled_only:
+        where.append("a.report_id IS NULL AND a.entity_id IS NULL")
+        described.append("not filed under anything")
+    cap = max(1, min(30, _days(limit, 12, 30)))
+    with db_cursor() as cur:
+        cur.execute(
+            "SELECT a.id, a.title, a.filename, a.source_note, a.uploaded_at, a.extraction_status, a.report_id, "
+            "       r.title, a.entity_id, e.name, e.entity_type, a.extracted_text "
+            "FROM attachments a LEFT JOIN reports r ON r.id = a.report_id LEFT JOIN entities e ON e.id = a.entity_id "
+            f"WHERE {' AND '.join(where)} ORDER BY a.uploaded_at DESC LIMIT %s", params + [cap])
+        rows = cur.fetchall()
+    what = ", ".join(described) or "all"
+    if not rows:
+        return f"No documents ({what}).", []
+    lines, refs = [f"Documents ({what}), newest first:"], []
+    for (aid, title, fname, note, up, xs, rid, rtitle, eid, ename, etype, xtext) in rows:
+        filed = (f"filed under report '{rtitle}' [{rid}]" if rid else
+                 f"filed under {_ent(eid, etype, ename)}" if eid else "unfiled")
+        bits = [f"{_d(up)} · {_doc_label(title, fname)} [document-{aid}]", filed]
+        if note:
+            bits.append(f"from: {_clip(note, 80)}")
+        if xs != "done":
+            bits.append({"pending": "not read yet", "processing": "being read", "failed": "could not be read",
+                         "skipped": "no text"}.get(xs, xs))
+        lines.append("- " + " · ".join(bits))
+        if xtext:
+            low = xtext.lower()
+            at = min([low.find(t) for t in terms if low.find(t) >= 0] or [0])
+            lines.append("  “" + _clip(xtext[max(0, at - 60): at + 200], 240) + "”")
+        refs.append(_ref("document", f"document-{aid}", f"Document: {_doc_label(title, fname)}"))
+        if rid:
+            refs.append(_ref("report", rid, f"Report: {rtitle}"))
+    return "\n".join(lines), refs
+
+
+def _open_document(cur, aid: int, body_chars: int) -> tuple[str, list]:
+    cur.execute(
+        "SELECT a.id, a.title, a.filename, a.source_note, a.uploaded_at, a.extraction_status, a.report_id, "
+        "       r.title, a.entity_id, e.name, e.entity_type, a.extracted_text, a.archived_at, a.extraction_error "
+        "FROM attachments a LEFT JOIN reports r ON r.id = a.report_id LEFT JOIN entities e ON e.id = a.entity_id "
+        "WHERE a.id = %s", (aid,))
+    r = cur.fetchone()
+    if not r:
+        return f"No document document-{aid}.", []
+    (aid, title, fname, note, up, xs, rid, rtitle, eid, ename, etype, xtext, archived, xerr) = r
+    refs = [_ref("document", f"document-{aid}", f"Document: {_doc_label(title, fname)}")]
+    lines = [f"Document: {_doc_label(title, fname)} [document-{aid}] ({fname}), uploaded {_d(up)}"
+             + (", archived" if archived else "")]
+    if note:
+        lines.append(f"Where it came from: {note}")
+    if rid:
+        lines.append(f"Filed under report '{rtitle}' [{rid}]")
+        refs.append(_ref("report", rid, f"Report: {rtitle}"))
+    elif eid:
+        lines.append(f"Filed under {_ent(eid, etype, ename)}")
+        refs.append(_ent_ref(eid, etype, ename))
+    if xtext:
+        lines += ["", "Text:", xtext[:body_chars] + (" … [more]" if len(xtext) > body_chars else "")]
+    else:
+        lines.append({"pending": "Its text has not been read yet.", "processing": "Its text is being read now.",
+                      "failed": f"Its text could not be read ({xerr or 'unknown reason'}).",
+                      "skipped": "It has no text to read (an image without words, say)."}.get(xs, "No text."))
+    return "\n".join(lines), refs
+
+
+def _km(lat1, lon1, lat2, lon2) -> float:
+    import math
+    p = math.pi / 180
+    a = (math.sin((lat2 - lat1) * p / 2) ** 2
+         + math.cos(lat1 * p) * math.cos(lat2 * p) * math.sin((lon2 - lon1) * p / 2) ** 2)
+    return 12742 * math.asin(math.sqrt(a))
+
+
+def nearby(ctx, place: str = "", radius_km: float = 2, days: int | None = 30) -> tuple[str, list]:
+    """What is on the map around a place: a Location record, a zone, or
+    'lat, lon'. Locations, field reports and outside events within the radius."""
+    ref = (place or "").strip()
+    if not ref:
+        return "nearby needs a place: a Location's id or name, a zone's name, or 'lat, lon'.", []
+    try:
+        radius = max(0.1, min(50.0, float(radius_km or 2)))
+    except (TypeError, ValueError):
+        radius = 2.0
+    n = _days(days, 30, 365)
+    refs: list = []
+    with db_cursor() as cur:
+        center, label = None, ref
+        m = re.fullmatch(r"\s*(-?\d+(?:\.\d+)?)\s*[, ]\s*(-?\d+(?:\.\d+)?)\s*", ref)
+        if m:
+            center = (float(m.group(1)), float(m.group(2)))
+        if center is None:
+            eid, cands = resolve_entity(cur, ref)
+            if eid:
+                cur.execute("SELECT e.name, e.entity_type, ld.lat, ld.lng FROM entities e "
+                            "LEFT JOIN location_details ld ON ld.entity_id = e.id WHERE e.id = %s", (eid,))
+                row = cur.fetchone()
+                if row and row[2] is not None:
+                    center, label = (row[2], row[3]), f"{row[0]} [{eid}]"
+                    refs.append(_ent_ref(eid, row[1], row[0]))
+                elif row:
+                    return (f"{row[0]} [{eid}] has no place on the map. Give a Location, a zone or 'lat, lon'."), []
+        if center is None:
+            cur.execute("SELECT name, min_lat, min_lon, max_lat, max_lon FROM map_zones "
+                        "WHERE name ILIKE %s AND min_lat IS NOT NULL ORDER BY length(name) LIMIT 1", (f"%{ref}%",))
+            z = cur.fetchone()
+            if z:
+                center = ((z[1] + z[3]) / 2, (z[2] + z[4]) / 2)
+                label = f"the zone {z[0]}"
+                radius = max(radius, _km(z[1], z[2], z[3], z[4]) / 2)
+        if center is None:
+            return (f"'{ref}' is not a Location on the map, a zone or 'lat, lon'. Try search_case for the "
+                    f"Location first."), []
+        lat, lon = center
+        dlat = radius / 111.0
+        dlon = radius / max(1e-6, 111.0 * abs(__import__("math").cos(lat * 3.14159265 / 180)))
+        box = (lat - dlat, lat + dlat, lon - dlon, lon + dlon)
+        cur.execute("SELECT e.id, e.name, ld.lat, ld.lng, ld.address FROM entities e "
+                    "JOIN location_details ld ON ld.entity_id = e.id WHERE e.is_active AND e.merged_into IS NULL "
+                    "AND ld.lat BETWEEN %s AND %s AND ld.lng BETWEEN %s AND %s", box)
+        locs = [(r, _km(lat, lon, r[2], r[3])) for r in cur.fetchall()]
+        locs = sorted([x for x in locs if x[1] <= radius], key=lambda x: x[1])[:15]
+        fields = []
+        try:
+            cur.execute("SELECT id, title, COALESCE(observed_at, received_at), lat, lng, status FROM field_submissions "
+                        "WHERE lat BETWEEN %s AND %s AND lng BETWEEN %s AND %s "
+                        "AND COALESCE(observed_at, received_at) >= now() - %s * interval '1 day'", (*box, n))
+            fields = sorted([(r, _km(lat, lon, r[3], r[4])) for r in cur.fetchall()], key=lambda x: x[0][2], reverse=True)
+            fields = [x for x in fields if x[1] <= radius][:12]
+        except Exception:  # noqa: BLE001
+            cur.connection.rollback()
+        outs = []
+        try:
+            enabled, floor = _triage_cfg(cur)
+            cur.execute(
+                "SELECT e.id, e.source, e.occurred_on, e.title, e.category, e.place, e.status, e.triage_category, "
+                "       e.triage_severity, e.triage_summary, "
+                "       (SELECT count(*) FROM outside_events d WHERE d.dup_of = e.id), "
+                "       ARRAY(SELECT z.name FROM map_zones z WHERE z.id = ANY(e.zone_ids) ORDER BY z.name), e.lat, e.lon "
+                "FROM outside_events e WHERE e.dup_of IS NULL AND e.status <> 'dismissed' "
+                "AND e.lat BETWEEN %s AND %s AND e.lon BETWEEN %s AND %s "
+                "AND COALESCE(e.occurred_on, e.created_at::date) >= (now() - make_interval(days => %s))::date "
+                + ("AND NOT (e.triaged_at IS NOT NULL AND (e.triage_is_event IS FALSE OR e.triage_in_area IS FALSE "
+                   "OR e.triage_severity < %s)) " if enabled else "")
+                + "ORDER BY e.occurred_on DESC LIMIT 60", (*box, n, *([floor] if enabled else [])))
+            outs = [(r, _km(lat, lon, r[12], r[13])) for r in cur.fetchall()]
+            outs = [x for x in outs if x[1] <= radius][:12]
+        except Exception:  # noqa: BLE001
+            cur.connection.rollback()
+        cur.execute("SELECT name, environment FROM map_zones WHERE min_lat <= %s AND max_lat >= %s "
+                    "AND min_lon <= %s AND max_lon >= %s AND (valid_until IS NULL OR valid_until > now())",
+                    (lat, lat, lon, lon))
+        zones = cur.fetchall()
+    lines = [f"Within {radius:g} km of {label} ({lat:.4f}, {lon:.4f}):"]
+    if zones:
+        lines.append("Inside the zone(s): " + ", ".join(f"{z[0]}" + (f" ({z[1]})" if z[1] else "") for z in zones))
+    lines.append(f"Locations ({len(locs)}):" if locs else "Locations: none on the map here.")
+    for (r, d) in locs:
+        lines.append(f"- {_ent(r[0], 'location', r[1])} · {d:.1f} km" + (f" · {r[4]}" if r[4] else ""))
+        refs.append(_ent_ref(r[0], "location", r[1]))
+    if fields:
+        lines.append(f"Field reports, last {n} days ({len(fields)}):")
+        for (r, d) in fields:
+            lines.append(f"- {_d(r[2])} · {r[1]} (field report #{r[0]}; {r[5]}) · {d:.1f} km")
+    if outs:
+        lines.append(f"Outside events, last {n} days ({len(outs)}) — open-source, unverified:")
+        for (r, d) in outs:
+            lines.append(_outside_line(r[:12]) + f" · {d:.1f} km")
+            refs.append(_ref("outside_event", f"outside-{r[0]}", f"Outside event: {_clip(r[9] or r[3], 60)}"))
+    return "\n".join(lines), refs
+
+
+# ---------------------------------------------------------------------------
 # The catalogue the model sees
 # ---------------------------------------------------------------------------
 
@@ -877,12 +1218,39 @@ TOOLS = [
         "The team's intelligence priorities: each question the team needs answered, what "
         "would answer it, the records linked to it and any answer so far.",
         {"include_closed": {"type": "boolean"}}),
+    _fn("outside_events",
+        "Open-source events (GDELT news, ACLED) in the team's areas of responsibility: what is happening "
+        "around them — protests, crime, unrest, disasters — newest first, with the model's category and "
+        "severity. Unverified. Open one with open_record (outside-<n>) to read its article.",
+        {"days": {"type": "integer", "description": "Only the last N days, default 7"},
+         "area": {"type": "string", "description": "Optional: an area's name"},
+         "category": {"type": "string", "description": "Optional: protest, unrest, violent_crime, police, attack, "
+                      "threat, disaster, infrastructure, government"},
+         "text": {"type": "string", "description": "Words that must appear"},
+         "min_severity": {"type": "integer", "description": "Optional: 1 (routine) to 5 (critical)"},
+         "include_filtered": {"type": "boolean", "description": "Also what the triage set aside"},
+         "limit": {"type": "integer"}}),
+    _fn("documents",
+        "Documents in the case file (uploads, pasted text, articles sent from feeds): find them by words in "
+        "their title or text. Open one with open_record (document-<n>) to read its text.",
+        {"text": {"type": "string", "description": "Words to look for"},
+         "days": {"type": "integer", "description": "Only uploaded in the last N days"},
+         "unfiled_only": {"type": "boolean", "description": "Only those not filed under a report or record"},
+         "limit": {"type": "integer"}}),
+    _fn("nearby",
+        "What is on the map around a place: Locations, field reports and outside events within a radius, "
+        "and the zones it is in. The place is a Location's id or name, a zone's name, or 'lat, lon'.",
+        {"place": {"type": "string"},
+         "radius_km": {"type": "number", "description": "Default 2"},
+         "days": {"type": "integer", "description": "For reports and events, the last N days (default 30)"}},
+        ["place"]),
 ]
 
 TOOL_FUNCS = {
     "search_case": search_case, "open_record": open_record, "network": network,
     "connection": connection, "list_reports": list_reports, "field_reports": field_reports,
     "case_overview": case_overview, "priorities": priorities,
+    "outside_events": outside_events, "documents": documents, "nearby": nearby,
 }
 
 # What the panel shows while a lookup runs, and in the trail under an answer.
@@ -913,6 +1281,16 @@ def describe(name: str, args: dict) -> str:
         return f"Checked the case overview (last {a.get('days') or 14} days)"
     if name == "priorities":
         return "Read the team's priorities"
+    if name == "outside_events":
+        bits = [f"last {a['days']} days" if a.get("days") else "", a.get("area") or "", a.get("category") or "",
+                f"“{a['text']}”" if a.get("text") else ""]
+        return "Checked outside events" + (f" ({', '.join(b for b in bits if b)})" if any(bits) else "")
+    if name == "documents":
+        return "Searched documents" + (f" for “{a['text']}”" if a.get("text") else "")
+    if name == "nearby":
+        return f"Looked around {a.get('place', '')} ({a.get('radius_km') or 2} km)"
+    if name in assistant_drafts.TOOL_FUNCS:
+        return assistant_drafts.describe(name, a)
     return name
 
 
@@ -942,9 +1320,12 @@ def summarize(name: str, text: str, refs: list) -> str:
     if name == "connection":
         chain = next((l for l in lines if l[:2] == "1."), first)
         return chain[3:] if chain.startswith("1. ") else chain
-    if name in ("list_reports", "field_reports"):
+    if name in ("list_reports", "field_reports", "outside_events", "documents"):
         n = sum(1 for l in lines if l.startswith("- "))
-        return first.rstrip(":") if "found" in first else f"{n} found"
+        return first.rstrip(":") if "found" in first or not n else f"{n} found"
+    if name == "nearby":
+        n = sum(1 for l in lines if l.startswith("- "))
+        return f"{n} things nearby" if n else first.rstrip(":")
     return first.rstrip(":")
 
 
@@ -964,4 +1345,9 @@ def run_tool(ctx: dict, name: str, args: dict) -> tuple[str, list]:
         return f"That lookup failed: {exc}", []
 
 
+# The drafts the assistant can prepare for a person to approve (v1.18).
+import assistant_drafts  # noqa: E402 - it imports this module's helpers lazily
+
+TOOLS = TOOLS + assistant_drafts.TOOLS
+TOOL_FUNCS.update(assistant_drafts.TOOL_FUNCS)
 TOOL_SCHEMA_KEYS = {t["function"]["name"]: set(t["function"]["parameters"]["properties"]) for t in TOOLS}

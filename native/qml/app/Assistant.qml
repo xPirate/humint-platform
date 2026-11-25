@@ -77,8 +77,53 @@ Rectangle {
     Timer { interval: 1000; repeat: true; running: page.working; onTriggered: page.now = Date.now() }
 
     function openCitation(c) {
+        var num = Number((String(c.id).match(/(\d+)$/) || [0, 0])[1])
         if (c.kind === "entity") shell.go("entity", c.id)
+        else if (c.kind === "document") shell.go("document", num)
+        else if (c.kind === "outside_event") shell.go("outside")
         else shell.go("report", c.id)
+    }
+    // The assistant's drafts (api/assistant_drafts.py): made only when applied.
+    function decide(d, action) {
+        Net.post("/api/assistant/drafts/" + d.id + "/" + action, {}).then(function(nd) {
+            var msgs = page.messages.slice()
+            for (var i = 0; i < msgs.length; i++) {
+                var ds = msgs[i].drafts || []
+                for (var j = 0; j < ds.length; j++)
+                    if (ds[j].id === nd.id) {
+                        var copy = ds.slice(); copy[j] = nd
+                        msgs[i] = Object.assign({}, msgs[i], { drafts: copy })
+                    }
+            }
+            page.messages = msgs
+            ui.toast(action === "apply" ? "Made" : "Discarded")
+        }).catch(function(e) { ui.toast(e.message, true) })
+    }
+    function draftKind(d) {
+        var p = d.payload || {}
+        return ({ report: "DRAFT REPORT", priority: "PRIORITY P" + (p.priority || 2),
+                  outside_to_document: "OUTSIDE EVENT → DOCUMENTS", link: "PROPOSED LINK" })[d.kind] || d.kind
+    }
+    function draftText(d) {
+        var p = d.payload || {}
+        if (d.kind === "report") return "<b>" + Fmt.escapeHtml(p.title || "") + "</b>" + (p.criticality ? " · " + p.criticality : "")
+                                        + "<br>" + Fmt.escapeHtml(Fmt.plainText(p.body_markdown || "").slice(0, 400))
+        if (d.kind === "priority") return "<b>" + Fmt.escapeHtml(p.title || "") + "</b>" + (p.question ? "<br>" + Fmt.escapeHtml(p.question) : "")
+                                          + ((p.indicators || []).length ? "<br>• " + p.indicators.map(Fmt.escapeHtml).join("<br>• ") : "")
+        if (d.kind === "outside_to_document") return "<b>" + Fmt.escapeHtml(p.title || "") + "</b>"
+        if (d.kind === "link") return "<b>" + Fmt.escapeHtml((p.from || {}).name || "") + "</b> — " + Fmt.escapeHtml(p.relationship || "")
+                                      + " — <b>" + Fmt.escapeHtml((p.to || {}).name || "") + "</b>"
+        return Fmt.escapeHtml(d.summary || "")
+    }
+    function applyText(d) {
+        return ({ report: "Make the draft report", priority: "Add the priority", outside_to_document: "Send to Documents" })[d.kind] || "Apply"
+    }
+    function openMade(d) {
+        var r = d.result || {}
+        if (d.kind === "report" && r.report_id) shell.go("report", r.report_id)
+        else if (d.kind === "priority") shell.go("priorities")
+        else if (d.kind === "outside_to_document" && r.document_id) shell.go("document", r.document_id)
+        else if (d.kind === "link") shell.go("review")
     }
 
     ColumnLayout {
@@ -112,7 +157,7 @@ Rectangle {
                 readonly property bool mine: modelData.role === "user"
                 Rectangle {
                     id: bubble
-                    width: Math.min(list.width * (mine ? 0.75 : 0.92), Math.max(body.implicitWidth, 200 * Theme.s) + 2 * Theme.pad)
+                    width: Math.min(list.width * (mine ? 0.75 : 0.92), Math.max(body.implicitWidth, (!mine && (modelData.drafts || []).length) ? 560 * Theme.s : 200 * Theme.s) + 2 * Theme.pad)
                     anchors.right: mine ? parent.right : undefined
                     implicitHeight: bc.implicitHeight + 2 * Theme.pad * 0.8
                     radius: Theme.radius * 1.4
@@ -138,6 +183,38 @@ Rectangle {
                             visible: !mine && (modelData.citations || []).length > 0
                             Repeater { model: modelData.citations || []
                                        Btn { compact: true; kind: "ghost"; text: modelData.label; onClicked: page.openCitation(modelData) } }
+                        }
+                        Repeater {
+                            model: mine ? [] : (modelData.drafts || [])
+                            delegate: Rectangle {
+                                required property var modelData
+                                Layout.fillWidth: true
+                                implicitHeight: dc.implicitHeight + 16 * Theme.s
+                                radius: Theme.radius; color: Theme.panel2; border.color: Theme.borderStrong
+                                opacity: modelData.status === "applied" || modelData.status === "discarded" ? 0.75 : 1
+                                ColumnLayout {
+                                    id: dc
+                                    x: 10 * Theme.s; y: 8 * Theme.s; width: parent.width - 20 * Theme.s; spacing: 4 * Theme.s
+                                    RowLayout {
+                                        Layout.fillWidth: true
+                                        Txt { Layout.fillWidth: true; kind: "label"; text: page.draftKind(modelData) }
+                                        Txt { kind: "muted"; visible: modelData.status === "applied" || modelData.status === "discarded"
+                                              text: modelData.status === "applied" ? "Made" : "Discarded" }
+                                    }
+                                    Txt { Layout.fillWidth: true; textFormat: Text.StyledText; text: page.draftText(modelData)
+                                          font.strikeout: modelData.status === "discarded" }
+                                    Flow {
+                                        Layout.fillWidth: true; spacing: 6 * Theme.s
+                                        Btn { compact: true; kind: "primary"; visible: modelData.status === "pending" && !shell.viewer
+                                              text: page.applyText(modelData); onClicked: page.decide(modelData, "apply") }
+                                        Btn { compact: true; kind: "ghost"; visible: modelData.status === "pending" && !shell.viewer
+                                              text: "Discard"; onClicked: page.decide(modelData, "discard") }
+                                        Btn { compact: true; kind: "ghost"; visible: modelData.status === "applied" || modelData.status === "queued"
+                                              text: modelData.status === "queued" ? "In the Review queue" : "Open"
+                                              onClicked: page.openMade(modelData) }
+                                    }
+                                }
+                            }
                         }
                         Repeater { model: mine ? [] : ((modelData.trail || {}).notes || [])
                                    Txt { Layout.fillWidth: true; color: Theme.amber; text: modelData } }

@@ -46,7 +46,15 @@ class FakeOllama(BaseHTTPRequestHandler):
         req = json.loads(self.rfile.read(int(self.headers.get("Content-Length", 0))) or b"{}")
         asked.append(req)
         msgs = req.get("messages") or []
-        if req.get("tools") and not any(m.get("role") == "tool" for m in msgs):
+        last_q = next((m.get("content") or "" for m in reversed(msgs) if m.get("role") == "user"), "")
+        since = msgs[max(i for i, m in enumerate(msgs) if m.get("role") == "user"):]
+        if req.get("tools") and last_q.startswith("Write") and not any(m.get("role") == "tool" for m in since):
+            self._send({"message": {"role": "assistant", "content": "", "tool_calls": [{"function": {
+                "name": "draft_report", "arguments": {"title": "Kovac at the docks", "about": ["Ana Kovac"],
+                                                      "body": "Ana Kovac was seen at the docks."}}}]}})
+        elif last_q.startswith("Write"):
+            self._send({"message": {"role": "assistant", "content": "I drafted a report on Kovac for you to check."}})
+        elif req.get("tools") and not any(m.get("role") == "tool" for m in msgs):
             self._send({"message": {"role": "assistant", "content": "",
                                     "tool_calls": [{"function": {"name": "search_case",
                                                                  "arguments": {"query": "Kovac"}}}]}})
@@ -128,6 +136,24 @@ d.tap("Person: Ana Kovac" if d.button("Person: Ana Kovac") else "Ana Kovac")
 d.until(lambda: d.has_text("Courier, seen at the docks."), what="the record")
 check(True, "a citation opens its record")
 
+# A draft: prepared under the answer, made only when applied.
+d.tap("Assistant")
+d.until(lambda: d.has_text("Clear conversation"), what="assistant again")
+d.type("Ask about the case file — Enter sends, Shift+Enter for a new line", "Write it up")
+d.key("Return")
+d.until(lambda: d.has_text("I drafted a report on Kovac"), timeout=30, what="the draft")
+check(d.has_text("DRAFT REPORT") and c.sql("SELECT count(*) FROM reports")[0][0] == 0,
+      "a draft report under the answer, and nothing made yet")
+shot(d, "92-assistant-draft")
+d.tap("Make the draft report")
+d.until(lambda: c.sql("SELECT count(*) FROM reports WHERE title = 'Kovac at the docks' AND status = 'draft'")[0][0] == 1,
+        what="made")
+check(True, "Make the draft report makes it")
+d.until(lambda: d.button("Open") is not None, what="open")
+d.tap("Open")
+d.until(lambda: d.has_text("Kovac at the docks"), what="the report")
+check(True, "and opens it")
+
 # A failed question is not kept: the model goes away.
 srv.shutdown()
 srv.server_close()
@@ -137,7 +163,7 @@ d.type("Ask about the case file — Enter sends, Shift+Enter for a new line", "A
 d.key("Return")
 d.until(lambda: d.has_text("Couldn't reach Ollama") or d.has_text("hit an error") or d.has_text("stopped before answering"),
         timeout=40, what="the error")
-check(c.sql("SELECT count(*) FROM assistant_messages")[0][0] == 2 and d.has_text("And the van?"),
+check(c.sql("SELECT count(*) FROM assistant_messages")[0][0] == 4 and d.has_text("And the van?"),
       "a question that could not be answered is not saved, and goes back in the box to try again")
 
 d.tap("Clear conversation")
