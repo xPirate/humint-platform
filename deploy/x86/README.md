@@ -206,8 +206,36 @@ open), which needs free room there of about twice the bundle's size.
 ### With internet: straight from Ubuntu
 
 **Box → Actions → Update the system** (or `sudo humint-ctl os-update`)
-fetches and installs Ubuntu's updates directly. Code updates still come as
-bundles.
+fetches and installs Ubuntu's updates directly.
+
+### With internet: the code, from GitHub
+
+**Box → Actions → Update online**, or **Admin → Backup & restore → Check for
+updates** in the console, asks the repository's GitHub releases for a build
+newer than the one installed, for this kind of machine. It shows the change
+log of every release since (each commit's message), and **Download and
+install** fetches the bundle into the same inbox an uploaded bundle goes to:
+the signature is checked against this machine's key, the database backed up,
+and a failure rolled back, exactly as from a stick. A bundle that the
+builder's key did not sign is refused, wherever it came from. The check is
+unsigned-in, which GitHub allows 60 times an hour per network; the answer is
+kept for 10 minutes. `UPDATE_REPO` (in the API's environment) points it at a
+fork.
+
+**Publishing a release** (on the builder, from a clean checkout that is
+pushed, with the GitHub CLI signed in — `gh auth login`):
+
+```sh
+humint-platform/deploy/publish-release.sh            # x86, code only
+humint-platform/deploy/publish-release.sh --pi       # and a Pi bundle
+```
+
+It writes the change log since the last release (`deploy/release-notes.py`;
+`--notes FILE` to write your own), shows it and asks, builds the signed
+bundle(s) with `make-update.sh --no-os` (a machine online fetches Ubuntu's
+fixes itself; `--with-os` to include them), and creates the release
+`build-<n>` on GitHub with the bundles attached. The key never leaves the
+builder.
 
 ---
 

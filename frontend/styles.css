@@ -2727,3 +2727,11 @@ body.role-viewer #doc-drop-zone{display:none !important;}
 .oe-focus-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .oe-focus-row input { flex: 1; min-width: 200px; }
 .oe-reader-triage { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; font-size: 0.92rem; }
+
+/* Updates online: the change log before installing */
+.update-available { margin-top: 10px; }
+.update-notes { max-height: 420px; overflow-y: auto; padding: 4px 12px; margin: 8px 0 12px;
+  border: 1px solid var(--border); border-radius: var(--radius); }
+.update-notes h4 { margin: 12px 0 6px; }
+.update-notes h5, .update-notes h6 { margin: 10px 0 4px; font-size: 0.95rem; }
+.update-notes p { margin: 0 0 8px; }

@@ -27,6 +27,7 @@ Item {
       Layout.preferredHeight: 92 * Theme.s
   }
   WifiDialog { id: wifi }
+  UpdateOnlineDialog { id: updOnline }
   GridLayout {
     width: acts.width
     columns: width > 900 * Theme.s ? 4 : 3
@@ -49,6 +50,8 @@ Item {
                                   function() { wifi.open() }, false)
               else wifi.open()
           } }
+    Act { text: "Update online"; sub: "check for a newer release · needs internet"
+          onClicked: updOnline.open() }
     Act { text: "Update from USB"; sub: "a signed update bundle"
           onClicked: ui.confirm("Update from the USB stick?",
                                 "The console restarts on the new version; if it does not come back, it is put back as it was.",

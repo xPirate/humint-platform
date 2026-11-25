@@ -12021,6 +12021,11 @@ async function loadFieldUpdate() {
   const last = st.last ? ` · Last update: ${escapeHtml(st.last.state)} — ${escapeHtml(st.last.message || "")}` : "";
   document.getElementById("field-update-status").innerHTML =
     `${inst}${last}${st.pending ? " · <b>An update is being applied…</b>" : ""}`;
+  const chk = document.getElementById("online-update-check");
+  if (chk && !chk.dataset.wired) {
+    chk.dataset.wired = "1";
+    chk.addEventListener("click", () => checkOnlineUpdate(true));
+  }
   const btn = document.getElementById("field-update-btn");
   if (btn.dataset.wired) return;
   btn.dataset.wired = "1";
@@ -12045,6 +12050,68 @@ async function loadFieldUpdate() {
       };
       setTimeout(poll, 4000);
     } catch (err) { showToast(err.message, true); }
+  });
+}
+
+/* Updates online (api/field_update.py): the repository's releases, newer
+ * than the installed build, with their notes — the change log — and a
+ * download into the same inbox root checks and applies. */
+async function checkOnlineUpdate(refresh) {
+  const out = document.getElementById("online-update-result");
+  if (!out) return;
+  out.innerHTML = '<p class="field-hint">Asking GitHub…</p>';
+  let r;
+  try { r = await api(`/api/admin/field-update/online${refresh ? "?refresh=true" : ""}`); } catch (e) {
+    out.innerHTML = `<p class="form-error">${escapeHtml(e.message)}</p>`; return;
+  }
+  const dl = r.download || {};
+  if (!r.available) {
+    out.innerHTML = `<p class="field-hint">Up to date: build ${r.installed_build} is the newest release for this
+      ${r.platform === "x86" ? "x86 machine" : "Pi"}${r.latest ? ` (published ${escapeHtml(relativeTime(r.latest.published_at))})` : ""}.</p>`;
+    return;
+  }
+  const a = r.available;
+  const mb = a.size ? ` · ${(a.size / 1048576).toFixed(1)} MB` : "";
+  out.innerHTML = `
+    <div class="update-available">
+      <p><b>Build ${a.build} is available</b> — you have build ${r.installed_build}.
+        <span class="field-hint">Published ${escapeHtml(relativeTime(a.published_at))}${mb} ·
+        <a href="${escapeHtml(a.page)}" target="_blank" rel="noopener noreferrer">on GitHub ↗</a></span></p>
+      <div class="update-notes">${r.changes.map((c) => `
+        <section><h4>${escapeHtml(c.name || `Build ${c.build}`)}</h4>${mdToHtml(c.notes || "No notes.")}</section>`).join("")}</div>
+      ${r.managed ? `<button type="button" class="btn-primary" id="online-update-install"
+          ${dl.state === "downloading" || dl.state === "queued" ? "disabled" : ""}>Download and install build ${a.build}</button>
+        <p class="field-hint" id="online-update-progress">${escapeHtml(dl.message || "")}</p>`
+        : '<p class="field-hint">This console is updated with git pull and docker compose.</p>'}
+    </div>`;
+  const btn = document.getElementById("online-update-install");
+  if (!btn) return;
+  btn.addEventListener("click", async () => {
+    if (!confirm(`Download and install build ${a.build}? The database is backed up first; the console restarts on the new
+version, or is put back as it was if it does not come up.`)) return;
+    btn.disabled = true;
+    try { await api("/api/admin/field-update/online", { method: "POST", body: { build: a.build } }); } catch (e) {
+      btn.disabled = false; showToast(e.message, true); return;
+    }
+    const started = Date.now();
+    const prog = document.getElementById("online-update-progress");
+    const poll = async () => {
+      let st = null;
+      try { st = await api("/api/admin/field-update"); } catch (e) { /* restarting */ }
+      if (st) {
+        const d = st.download || {};
+        if (d.state === "downloading" && prog) {
+          prog.textContent = `Downloading… ${(d.done / 1048576).toFixed(1)}${d.size ? ` of ${(d.size / 1048576).toFixed(1)}` : ""} MB`;
+        } else if (d.state === "failed") {
+          if (prog) prog.textContent = d.message; btn.disabled = false; showToast(d.message, true); return;
+        } else if (prog && d.message) prog.textContent = d.message;
+        if (st.last && ["done", "failed"].includes(st.last.state) && st.last.time * 1000 > started - 5000 && !st.pending) {
+          showToast(st.last.message, st.last.state === "failed"); loadFieldUpdate(); checkOnlineUpdate(true); return;
+        }
+      } else if (prog) prog.textContent = "Restarting on the new version…";
+      if (Date.now() - started < 20 * 60 * 1000) setTimeout(poll, 3000);
+    };
+    setTimeout(poll, 1500);
   });
 }
 
