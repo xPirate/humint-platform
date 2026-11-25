@@ -1321,6 +1321,19 @@
         </div>
 
         <div class="admin-section" data-admin-panel="backup" hidden>
+<!-- The Docker deployment: what changed on GitHub since this server's
+     version, and the command that updates it (./update.sh). -->
+<div id="docker-update-block" hidden>
+  <div class="section-title">Update this server</div>
+  <p class="view-hint" id="docker-update-status"></p>
+  <div class="backup-panel"><div class="backup-block">
+    <p class="field-hint">On the server, from the project folder, <code>./update.sh</code> shows what changed, backs up
+      the database, pulls the code, rebuilds, runs the database migrations it needs and restarts;
+      <code>./update.sh --rollback</code> puts the previous version back.</p>
+    <button type="button" id="docker-update-check" class="btn-secondary">Check for updates</button>
+    <div id="docker-update-result"></div>
+  </div></div>
+</div>
 <!-- Field servers only (filled in by loadFieldUpdate when the console says
      it is one): apply a signed update bundle. -->
 <div id="field-update-block" hidden>

@@ -12023,7 +12023,20 @@ async function loadFieldUpdate() {
   let st;
   try { st = await api("/api/admin/field-update"); } catch (e) { block.hidden = true; return; }
   block.hidden = !st.managed;
-  if (!st.managed) return;
+  const docker = document.getElementById("docker-update-block");
+  if (docker) docker.hidden = st.managed;
+  if (!st.managed) {
+    const b = st.installed;
+    document.getElementById("docker-update-status").innerHTML = b && b.commit
+      ? `Running ${escapeHtml(String(b.commit).slice(0, 10))} (build ${escapeHtml(String(b.build))})${b.updated_at ? `, updated ${escapeHtml(relativeTime(b.updated_at))}` : ""}.`
+      : "This server's version is not recorded yet — it is, the first time it is updated with <code>./update.sh</code>.";
+    const chk = document.getElementById("docker-update-check");
+    if (chk && !chk.dataset.wired) {
+      chk.dataset.wired = "1";
+      chk.addEventListener("click", checkDockerUpdate);
+    }
+    return;
+  }
   const inst = st.installed ? `Build ${st.installed.build} (${escapeHtml(st.installed.commit || "")})` : "Build unknown";
   const last = st.last ? ` · Last update: ${escapeHtml(st.last.state)} — ${escapeHtml(st.last.message || "")}` : "";
   document.getElementById("field-update-status").innerHTML =
@@ -12193,6 +12206,30 @@ async function loadWebResearch() {
         `<li>${escapeHtml(x.title)} — <span class="field-hint">${escapeHtml(x.url)}</span></li>`).join("")}</ul>`;
     } catch (e) { out.innerHTML = `<p class="form-error">${escapeHtml(e.message)}</p>`; }
   });
+}
+
+async function checkDockerUpdate() {
+  const out = document.getElementById("docker-update-result");
+  out.innerHTML = '<p class="field-hint">Asking GitHub…</p>';
+  let r;
+  try { r = await api("/api/admin/field-update/online?refresh=true"); } catch (e) {
+    out.innerHTML = `<p class="form-error">${escapeHtml(e.message)}</p>`; return;
+  }
+  if (!r.behind) {
+    out.innerHTML = `<p class="field-hint">This server's version is not recorded, so it cannot be compared. Run
+      <code>./update.sh</code> on the server: it shows what changed and records the version.</p>`;
+    return;
+  }
+  if (!r.behind.ahead_by) {
+    out.innerHTML = `<p class="field-hint">Up to date with ${escapeHtml(r.branch)} on GitHub.</p>`;
+    return;
+  }
+  out.innerHTML = `<div class="update-available">
+    <p><b>${r.behind.ahead_by} change${r.behind.ahead_by === 1 ? "" : "s"} on GitHub</b> since this server's version.
+      On the server: <code>${escapeHtml(r.update_command)}</code></p>
+    <div class="update-notes">${r.behind.commits.map((c) => `<section><h4>${escapeHtml(c.subject)}</h4>
+      ${c.body ? mdToHtml(c.body) : ""}<p class="field-hint">${escapeHtml(c.sha)}${c.date ? ` · ${escapeHtml(relativeTime(c.date))}` : ""}</p></section>`).join("")}</div>
+  </div>`;
 }
 
 const ADMIN_LOADERS = {

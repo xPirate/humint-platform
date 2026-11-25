@@ -39,6 +39,10 @@ Open `http://localhost:8080`. The first screen asks you to create the admin
 account — there are no default credentials, and the first account made is the
 admin.
 
+**To update it later:** `./update.sh` in the same folder — it shows what
+changed, backs up the database, pulls, rebuilds and runs the database
+migrations ([Upgrade](docs/how-to/upgrade.md)).
+
 That is the whole install. The step-by-step version, including running it on
 a Pi, putting it behind HTTPS, and turning on the optional model, is
 [How to install and run it for the first time](docs/how-to/install.md).

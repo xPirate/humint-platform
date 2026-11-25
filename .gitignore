@@ -21,3 +21,6 @@ Thumbs.db
 *.swp
 .idea/
 .vscode/
+
+# Written by ./update.sh: what this Docker server runs (Check for updates reads it).
+api/build-info.json

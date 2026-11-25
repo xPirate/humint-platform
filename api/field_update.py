@@ -63,7 +63,7 @@ def _read(path):
 
 @router.get("")
 def status(user: dict = Depends(auth.require_admin)):
-    return {"managed": bool(INBOX), "installed": _read(BUILD_FILE), "last": _read(STATUS_FILE),
+    return {"managed": bool(INBOX), "installed": build_info() or None, "last": _read(STATUS_FILE),
             "pending": bool(INBOX) and os.path.exists(INBOX), "download": dict(_download),
             "repo": UPDATE_REPO}
 
@@ -113,8 +113,18 @@ def platform() -> str:
         return "pi"
 
 
+# On the Docker deployment, ./update.sh writes what it built into the image.
+DOCKER_BUILD_FILE = os.environ.get("DOCKER_BUILD_FILE") or os.path.join(os.path.dirname(os.path.abspath(__file__)), "build-info.json")
+UPDATE_BRANCH = os.environ.get("UPDATE_BRANCH", "main")
+TRAILER = re.compile(r"^(Co-Authored-By|Signed-off-by|Claude-Session):", re.I)
+
+
+def build_info() -> dict:
+    return (_read(BUILD_FILE) if INBOX else None) or _read(DOCKER_BUILD_FILE) or _read(BUILD_FILE) or {}
+
+
 def installed_build() -> int:
-    b = _read(BUILD_FILE) or {}
+    b = build_info()
     try:
         return int(b.get("build") or 0)
     except (TypeError, ValueError):
@@ -163,10 +173,53 @@ def _releases(refresh: bool) -> list:
     return out
 
 
+_compare_cache = {"at": 0.0, "key": None, "value": None}
+
+
+def _behind(commit: str, refresh: bool) -> dict:
+    """The Docker deployment follows the branch, not releases: the commits on
+    GitHub since the one this server was built from (its change log)."""
+    now = time.time()
+    key = (commit, UPDATE_BRANCH)
+    if not refresh and _compare_cache["key"] == key and now - _compare_cache["at"] < CHECK_CACHE_SECONDS:
+        return _compare_cache["value"]
+    try:
+        r = requests.get(f"{GITHUB_API}/repos/{UPDATE_REPO}/compare/{commit}...{UPDATE_BRANCH}", timeout=20,
+                         headers={"Accept": "application/vnd.github+json", "User-Agent": "humint-platform-updater"})
+    except requests.RequestException as exc:
+        raise HTTPException(status_code=502, detail="GitHub could not be reached — is this server online? "
+                                                    f"({type(exc).__name__})")
+    if r.status_code == 404:
+        raise HTTPException(status_code=502, detail="GitHub does not know this server's version (a local commit?).")
+    if r.status_code != 200:
+        raise HTTPException(status_code=502, detail=f"GitHub answered {r.status_code}")
+    data = r.json()
+    commits = []
+    for c in reversed(data.get("commits") or []):            # newest first
+        msg = (c.get("commit") or {}).get("message") or ""
+        subject, _, body = msg.partition("\n")
+        body = "\n".join(l for l in body.strip().splitlines() if not TRAILER.match(l.strip())).strip()
+        commits.append({"sha": (c.get("sha") or "")[:10], "subject": subject.strip(), "body": body,
+                        "date": ((c.get("commit") or {}).get("committer") or {}).get("date"), "page": c.get("html_url")})
+    value = {"ahead_by": int(data.get("ahead_by") or 0), "commits": commits}
+    _compare_cache.update(at=now, key=key, value=value)
+    return value
+
+
 @router.get("/online")
 def check_online(refresh: bool = False, user: dict = Depends(auth.require_admin)):
     """What is newer than the installed build, newest first, each with its
-    release notes — together, the change log since this box was updated."""
+    release notes — together, the change log since this box was updated.
+
+    On the Docker deployment (no inbox) it is the commits on the branch since
+    the one ./update.sh built, and the answer says to run ./update.sh."""
+    if not INBOX:
+        b = build_info()
+        out = {"repo": UPDATE_REPO, "managed": False, "docker": True, "branch": UPDATE_BRANCH,
+               "commit": b.get("commit"), "installed_build": installed_build(), "update_command": "./update.sh"}
+        if not b.get("commit"):
+            return {**out, "behind": None}
+        return {**out, "behind": _behind(b["commit"], refresh)}
     rels = _releases(refresh)
     have = installed_build()
     newer = [r for r in rels if r["build"] > have]

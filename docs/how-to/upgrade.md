@@ -1,34 +1,65 @@
 # How to upgrade the console
 
 **You end up with:** the latest code running against your existing data.
-**Takes:** five minutes, plus any migrations.
+**Takes:** a few minutes: `./update.sh`.
 Run every command from the project directory.
 
 ---
 
-## Upgrade
+## Upgrade (one command)
 
-1. **Take a backup.** Every time, before anything else —
-   [Back up and restore](backup-and-restore.md).
-2. **Pull and rebuild:**
+On the server, from the project folder:
 
-   ```bash
-   cd humint-platform
-   git pull
-   docker compose up -d --build
-   ```
+```bash
+cd humint-platform
+./update.sh --check     # what changed since this server's version, and the migrations it needs
+./update.sh             # update (it shows the same, then asks)
+```
 
-   Don't skip `--build`. The API and worker code is baked into their images;
-   the frontend updates straight from disk. Without `--build` you get new
-   pages talking to old code.
-3. **Run any migrations you skipped** (next section).
-4. **Check it:** `curl http://localhost:8080/health`, then open the app.
-5. **Hard-reload the browser** (Ctrl-Shift-R / Cmd-Shift-R) once if anything
-   looks half-applied.
-6. **Update the field app** if the release notes say so. Its forms are built
-   into the APK, so handsets only learn about a new form when they install a
-   new build. Older builds keep working; they just don't have the new form.
-   See [Set up field devices → Update the app](field-devices.md#update-the-app-on-a-phone).
+`./update.sh`:
+
+1. fetches the latest code and shows the change log — the commits since this
+   server's version — and the database migrations it would run;
+2. **backs up the database** to `backups/pre-update-<when>-<commit>.dump`
+   (uploaded files live in their own volume; an update does not touch them);
+3. moves the code forward (fast-forward only: it refuses if tracked files
+   have local changes, rather than overwrite them);
+4. rebuilds the api and worker images, stops them, runs each migration this
+   database has not had — once, oldest first, recorded in the database's
+   `schema_migrations` table — and starts everything again;
+5. waits for `/health`, then tells you to hard-reload the browser once.
+
+If anything goes wrong after the code moved, it stops and says so.
+**`./update.sh --rollback`** puts the previous code back and restores the
+database from that backup. `--yes` skips the question (for a cron job or a
+script).
+
+The first time you use it on an existing server it has no record of which
+migrations ran before, so it runs all of them once. That is safe: every
+migration checks before it changes anything.
+
+**In the console:** Admin → Backup & restore → **Check for updates** shows
+the changes on GitHub since this server's version (recorded by
+`./update.sh`), so you can see what an update brings before you run it.
+
+Then **update the field app** if the release notes say so. Its forms are
+built into the APK, so handsets only learn about a new form when they
+install a new build. See
+[Set up field devices → Update the app](field-devices.md#update-the-app-on-a-phone).
+
+A field box updates differently — signed bundles from a USB stick or from
+GitHub (Box → Actions → Update online); see the x86 and Pi READMEs.
+
+## Upgrade by hand
+
+What `./update.sh` does, step by step, if you would rather:
+
+1. **Take a backup** — [Back up and restore](backup-and-restore.md).
+2. **Pull and rebuild:** `git pull`, then `docker compose up -d --build`.
+   Don't skip `--build`: the API and worker code is baked into their images.
+3. **Run the migrations you skipped** (next section).
+4. **Check it:** `curl http://localhost:8080/health`, then open the app and
+   hard-reload once (Ctrl-Shift-R / Cmd-Shift-R).
 
 A fresh install needs no migrations — `db/init.sql` already has everything.
 
