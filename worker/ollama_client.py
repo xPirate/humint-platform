@@ -99,6 +99,11 @@ class OllamaUnsupported(Exception):
         self.feature = feature
 
 
+# Models found not to accept "think" or a JSON schema (structured()).
+_NO_THINK: set = set()
+_NO_SCHEMA: set = set()
+
+
 class OllamaClient:
     def __init__(self, base_url: str, model: str, embed_model: str = "", timeout: int = 180,
                  enabled: bool = True, on_call=None, extract_model: str = ""):
@@ -442,6 +447,73 @@ class OllamaClient:
                 calls.append({"name": fn["name"], "arguments": args if isinstance(args, dict) else {}})
         return {"content": content.strip(), "thinking": thinking.strip(), "tool_calls": calls,
                 "message": message}
+
+    def structured(self, system: str, user: str, schema: dict, model: str | None = None,
+                   num_ctx: int = 8192, temperature: float = 0.1) -> dict | None:
+        """One question whose answer must fit `schema` (a JSON schema, which
+        Ollama 0.5+ enforces while generating). The parsed answer, or None
+        with last_error set. Used for the outside-events triage.
+
+        Thinking is turned off: a yes/no-and-a-category judgement does not
+        need it, and on a CPU it would make each answer several times slower.
+        A model that refuses the setting is asked again without it, and an
+        Ollama too old for a schema is asked for plain JSON."""
+        self.last_error = None
+        if not self.enabled:
+            return None
+        key = (self.base_url, model or self.model)
+        payload = {"model": model or self.model, "stream": False, "format": schema, "think": False,
+                   "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}],
+                   "options": {"temperature": temperature, "num_ctx": int(num_ctx)}}
+        # Remembered for the life of the process, so a model that refuses is
+        # not asked the failing way first every time.
+        if key in _NO_THINK:
+            payload.pop("think")
+        if key in _NO_SCHEMA:
+            payload["format"] = "json"
+        body = None
+        for _ in range(3):
+            try:
+                resp = requests.post(f"{self.base_url}/api/chat", json=payload, timeout=self.timeout)
+                if resp.status_code == 400 or resp.status_code == 500:
+                    try:
+                        error = str(resp.json().get("error") or "").lower()
+                    except ValueError:
+                        error = ""
+                    if "think" in error and "think" in payload:
+                        payload.pop("think")
+                        _NO_THINK.add(key)
+                        continue
+                    if "format" in error and isinstance(payload["format"], dict):
+                        payload["format"] = "json"
+                        _NO_SCHEMA.add(key)
+                        continue
+                resp.raise_for_status()
+                body = resp.json()
+                content = body["message"]["content"]
+                content = re.sub(r"\A\s*<think>.*?</think>", "", content, flags=re.S)
+                data = json.loads(content)
+                if not isinstance(data, dict):
+                    raise ValueError("not an object")
+            except (requests.RequestException, KeyError, ValueError, TypeError) as exc:
+                logger.warning("Ollama structured answer failed: %s", exc)
+                self.last_error = _plain_reason(exc)
+                self._record_as(model or self.model, self._outcome_for(exc), body, exc)
+                return None
+            self._record_as(model or self.model, "success", body, None)
+            return data
+        self.last_error = "the model server refused the request"
+        return None
+
+    def _record_as(self, model, outcome, response, error):
+        if not self.on_call:
+            return
+        try:
+            usage = ollama_usage.from_response(response) if response is not None else {}
+            self.on_call(operation="chat", outcome=outcome, model=usage.get("model") or model,
+                         usage=usage, error=error)
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("Usage recorder raised, ignoring: %s", exc)
 
     def embed(self, text: str) -> list[float] | None:
         """Used by the correlation pass — see main.py."""

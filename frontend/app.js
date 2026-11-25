@@ -15086,7 +15086,8 @@ async function revealFieldSubtabIfEnrolled() {
  * ========================================================================== */
 
 const outsideState = { zoneId: null, status: "open", days: "7", source: "", q: "", zones: [], layer: null, show: true,
-                       items: [], readerIndex: -1 };
+                       items: [], readerIndex: -1, view: "main", category: "", sort: "date",
+                       triage: false, minSeverity: 1, categories: [], filteredTotal: 0 };
 
 async function loadOutside() {
   const el = document.getElementById("outside-items");
@@ -15095,6 +15096,9 @@ async function loadOutside() {
   if (outsideState.days) params.set("days", outsideState.days);
   if (outsideState.source) params.set("source", outsideState.source);
   if (outsideState.q) params.set("q", outsideState.q);
+  if (outsideState.view !== "main") params.set("view", outsideState.view);
+  if (outsideState.category) params.set("category", outsideState.category);
+  if (outsideState.sort !== "date") params.set("sort", outsideState.sort);
   if (el) el.innerHTML = '<p class="empty-state">Loading…</p>';
   let data;
   try {
@@ -15104,6 +15108,22 @@ async function loadOutside() {
     return null;
   }
   outsideState.zones = data.zones || [];
+  outsideState.triage = Boolean(data.triage_enabled);
+  outsideState.minSeverity = data.min_severity || 1;
+  outsideState.categories = data.categories || [];
+  outsideState.filteredTotal = data.filtered_total || 0;
+  // The model's categories and order: only once the triage is on.
+  const catSel = document.getElementById("outside-category");
+  const sortSel = document.getElementById("outside-sort");
+  if (catSel) {
+    catSel.hidden = !outsideState.triage;
+    if (catSel.options.length <= 1) {
+      catSel.innerHTML = '<option value="">Every kind</option>' + outsideState.categories
+        .map((c) => `<option value="${escapeHtml(c.key)}">${escapeHtml(c.label)}</option>`).join("");
+      catSel.value = outsideState.category;
+    }
+  }
+  if (sortSel) sortSel.hidden = !outsideState.triage;
   const tab = document.getElementById("outside-tab");
   const badge = document.getElementById("outside-badge");
   if (tab) tab.hidden = outsideState.zones.length === 0 && data.total === 0;
@@ -15134,19 +15154,81 @@ async function loadOutside() {
   }
   if (!el) return data;
   if (!data.items.length) {
-    el.innerHTML = `<p class="empty-state">${outsideState.zones.length ? "Nothing here." : "No area is set to pull outside events yet."}</p>`;
+    el.innerHTML = `${outsideViewLine()}<p class="empty-state">${outsideState.zones.length
+      ? (outsideState.view === "filtered" ? "The model has set nothing aside here." : "Nothing here.")
+      : "No area is set to pull outside events yet."}</p>`;
+    wireOutsideViewLine(el);
     return data;
   }
   outsideState.items = data.items;
-  el.innerHTML = `<p class="field-hint feed-count-line">${data.total} incident${data.total === 1 ? "" : "s"}${
+  el.innerHTML = `${outsideViewLine()}<p class="field-hint feed-count-line">${data.total} incident${data.total === 1 ? "" : "s"}${
       data.total > data.items.length ? `, showing ${data.items.length}` : ""}</p>
     ${data.items.map((x) => outsideItemHtml(x)).join("")}`;
   wireOutsideItems(el);
+  wireOutsideViewLine(el);
   return data;
+}
+
+/* The model's triage (worker/outside_triage.py): what it kept shows as usual,
+ * with its category, severity and a one-line summary; what it set aside is in
+ * a view of its own, with its reason. Either can be corrected; a person's call
+ * is final and the model is shown it as an example next time. */
+function outsideViewLine() {
+  if (!outsideState.triage) return "";
+  if (outsideState.view === "filtered") {
+    return `<div class="oe-viewline oe-viewline-filtered"><span><b>Set aside by the model</b> — not an event, not in the
+      area, or below ${escapeHtml(SEVERITY_NAMES[outsideState.minSeverity] || "")} severity. Each shows why; “Keep it”
+      if it got one wrong.</span>
+      <button type="button" class="btn-link btn-sm" data-oe-view="main">← Back to what it kept</button></div>`;
+  }
+  return `<div class="oe-viewline"><span>The model reads each incident and sets aside what is not a real event
+    in your areas.</span>${outsideState.filteredTotal
+      ? `<button type="button" class="btn-link btn-sm" data-oe-view="filtered">${outsideState.filteredTotal} set aside →</button>`
+      : ""}</div>`;
+}
+
+const SEVERITY_NAMES = { 1: "routine", 2: "minor", 3: "notable", 4: "significant", 5: "critical" };
+
+function wireOutsideViewLine(el) {
+  el.querySelectorAll("[data-oe-view]").forEach((b) => b.addEventListener("click", () => {
+    outsideState.view = b.dataset.oeView;
+    closeOutsideReader();
+    loadOutside();
+  }));
+}
+
+function outsideTriageHtml(e) {
+  const t = e.triage;
+  if (!t) {
+    return outsideState.triage && e.source === "gdelt" && !e.dup_of
+      ? `<p class="field-hint oe-triage-wait">${e.triage_error ? `The model could not judge it yet (${escapeHtml(e.triage_error)}).`
+          : "Not judged by the model yet."}</p>` : "";
+  }
+  const why = !t.is_event ? "Not an event" : !t.in_area ? "Not in the area"
+    : (t.severity || 5) < outsideState.minSeverity ? "Below the severity shown" : "";
+  return `${e.filtered ? `<p class="oe-setaside"><b>${escapeHtml(why)}</b>${t.reason ? ` — ${escapeHtml(t.reason)}` : ""}</p>` : ""}
+    <p class="field-hint oe-triage-line">${t.by === "analyst" ? "Set by a person" : `Judged by ${escapeHtml(t.model || "the model")}`}${
+      !e.filtered && t.reason ? ` · ${escapeHtml(t.reason)}` : ""}</p>`;
+}
+
+function outsideCorrectFormHtml(e) {
+  const t = e.triage || {};
+  return `<form class="oe-correct" data-oe-correct-form="${e.id}">
+    <label class="inline-check"><input type="checkbox" name="is_event" ${t.is_event === false ? "" : "checked"}> A real event</label>
+    <label class="inline-check"><input type="checkbox" name="in_area" ${t.in_area === false ? "" : "checked"}> In the area</label>
+    <select name="category" aria-label="Kind">${outsideState.categories.map((c) =>
+      `<option value="${escapeHtml(c.key)}" ${c.key === (t.category || "other") ? "selected" : ""}>${escapeHtml(c.label)}</option>`).join("")}</select>
+    <select name="severity" aria-label="Severity">${[1, 2, 3, 4, 5].map((n) =>
+      `<option value="${n}" ${n === (t.severity || 2) ? "selected" : ""}>${n} · ${SEVERITY_NAMES[n]}</option>`).join("")}</select>
+    <button type="submit" class="btn-primary btn-sm">Save</button>
+    <button type="button" class="btn-link btn-sm" data-oe-correct-cancel>Cancel</button>
+    <p class="field-hint">Final for this incident, and shown to the model as an example on later ones.</p>
+  </form>`;
 }
 
 function outsideItemHtml(e, inGroup) {
   const src = e.source === "acled" ? "ACLED" : "GDELT";
+  const t = e.triage;
   const meta = [e.place, e.precision ? `placed at ${e.precision} level` : null,
                 e.num_sources ? `${e.num_sources} source${e.num_sources === 1 ? "" : "s"}` : null,
                 e.fatalities ? `${e.fatalities} killed` : null, e.sources_named].filter(Boolean).join(" · ");
@@ -15155,16 +15237,20 @@ function outsideItemHtml(e, inGroup) {
     <div class="feed-item feed-item-${escapeHtml(e.status)}${inGroup ? " oe-member" : ""}" data-item="${e.id}">
       <div class="feed-item-head">
         <span class="status-pill outside-src-${escapeHtml(e.source)}">${src}</span>
-        <span class="feed-item-source">${escapeHtml(e.category || "")}</span>
+        ${t && t.is_event && t.category ? `<span class="status-pill oe-cat">${escapeHtml(t.category_label)}</span>`
+          : `<span class="feed-item-source">${escapeHtml(e.category || "")}</span>`}
+        ${t && t.is_event && t.severity ? `<span class="oe-sev oe-sev-${t.severity}" title="Severity ${t.severity} of 5">${t.severity} · ${escapeHtml(t.severity_label || "")}</span>` : ""}
         ${e.occurred_on ? `<span class="card-meta">${escapeHtml(e.occurred_on)}</span>` : ""}
         ${e.status === "sent" ? '<span class="status-pill feed-sent-pill">in Documents</span>' : ""}
         ${e.status === "dismissed" ? '<span class="status-pill">dismissed</span>' : ""}
         ${inGroup && e.dup_reason_text ? `<span class="card-meta">matched: ${escapeHtml(e.dup_reason_text)}</span>` : ""}
       </div>
       <h3 class="feed-item-title">${canRead
-          ? `<button type="button" class="oe-title-btn" data-oe-read="${e.id}">${escapeHtml(e.headline || e.title)}</button>`
-          : escapeHtml(e.headline || e.title)}</h3>
-      ${e.headline ? `<p class="field-hint">${escapeHtml(e.title)}${e.site ? ` · ${escapeHtml(e.site)}` : ""}</p>` : ""}
+          ? `<button type="button" class="oe-title-btn" data-oe-read="${e.id}">${escapeHtml((t && t.summary) || e.headline || e.title)}</button>`
+          : escapeHtml((t && t.summary) || e.headline || e.title)}</h3>
+      ${t && t.summary && e.headline ? `<p class="field-hint">${escapeHtml(e.headline)}${e.site ? ` · ${escapeHtml(e.site)}` : ""}</p>`
+        : e.headline ? `<p class="field-hint">${escapeHtml(e.title)}${e.site ? ` · ${escapeHtml(e.site)}` : ""}</p>` : ""}
+      ${inGroup ? "" : outsideTriageHtml(e)}
       ${meta ? `<p class="field-hint">${escapeHtml(meta)}</p>` : ""}
       ${e.notes ? `<p class="feed-item-summary">${escapeHtml(truncate(e.notes, 400))}</p>` : ""}
       <div class="feed-item-actions">
@@ -15179,14 +15265,47 @@ function outsideItemHtml(e, inGroup) {
                ? `<button type="button" class="btn-link btn-sm" data-oe-status="new" data-id="${e.id}">Put back</button>`
                : `<button type="button" class="btn-link btn-sm" data-oe-status="dismissed" data-id="${e.id}">Dismiss</button>
                   ${e.status === "new" ? `<button type="button" class="btn-link btn-sm" data-oe-status="read" data-id="${e.id}">Mark read</button>` : ""}`}`}
+        ${!inGroup && e.filtered ? `<button type="button" class="btn-secondary btn-sm" data-oe-keep="${e.id}">Keep it</button>` : ""}
+        ${!inGroup && outsideState.triage && (e.source === "gdelt" || t)
+          ? `<button type="button" class="btn-link btn-sm" data-oe-correct="${e.id}">${t ? "Wrong call?" : "Judge it"}</button>` : ""}
         ${!inGroup && e.similar ? `<button type="button" class="btn-link btn-sm oe-similar-toggle" data-oe-similar="${e.id}">
             +${e.similar} similar report${e.similar === 1 ? "" : "s"}</button>` : ""}
       </div>
+      <div class="oe-correct-slot" id="oe-correct-${e.id}"></div>
       ${!inGroup && e.similar ? `<div class="oe-group" id="oe-group-${e.id}" hidden></div>` : ""}
     </div>`;
 }
 
+async function correctOutside(id, body) {
+  try {
+    await api(`/api/outside-events/${id}/triage`, { method: "POST", body });
+    showToast("Saved — the model will be shown this call as an example");
+    loadOutside();
+  } catch (err) { showToast(err.message, true); }
+}
+
 function wireOutsideItems(el) {
+  el.querySelectorAll("[data-oe-keep]").forEach((b) => b.addEventListener("click", () => {
+    const e = outsideState.items.find((x) => x.id === Number(b.dataset.oeKeep));
+    const t = (e && e.triage) || {};
+    correctOutside(Number(b.dataset.oeKeep), { is_event: true, in_area: true, category: t.category || "other",
+      severity: Math.max(t.severity || 2, outsideState.minSeverity) });
+  }));
+  el.querySelectorAll("[data-oe-correct]").forEach((b) => b.addEventListener("click", () => {
+    const id = Number(b.dataset.oeCorrect);
+    const slot = document.getElementById(`oe-correct-${id}`);
+    const e = outsideState.items.find((x) => x.id === id);
+    if (!slot || !e) return;
+    if (slot.innerHTML) { slot.innerHTML = ""; return; }
+    slot.innerHTML = outsideCorrectFormHtml(e);
+    const form = slot.querySelector("form");
+    form.querySelector("[data-oe-correct-cancel]").addEventListener("click", () => { slot.innerHTML = ""; });
+    form.addEventListener("submit", (ev) => {
+      ev.preventDefault();
+      correctOutside(id, { is_event: form.is_event.checked, in_area: form.in_area.checked,
+        category: form.category.value, severity: Number(form.severity.value) });
+    });
+  }));
   el.querySelectorAll("[data-oe-read]").forEach((b) => b.addEventListener("click", () => {
     const id = Number(b.dataset.oeRead);
     openOutsideReader(id, b.closest(".oe-group") ? null : outsideState.items.findIndex((x) => x.id === id));
@@ -15317,6 +15436,9 @@ async function openOutsideReader(id, index, refresh) {
     <article class="oe-reader-body">
       <h2>${escapeHtml((a && a.title) || e.title)}</h2>
       <p class="field-hint">${escapeHtml(e.title)} · ${escapeHtml(e.place || "")} · unverified open source</p>
+      ${e.triage ? `<p class="oe-reader-triage">${e.triage.is_event ? `<span class="status-pill oe-cat">${escapeHtml(e.triage.category_label || "")}</span>
+          <span class="oe-sev oe-sev-${e.triage.severity}">${e.triage.severity} · ${escapeHtml(e.triage.severity_label || "")}</span>` : "<b>Not an event</b>"}
+          ${e.triage.reason ? ` ${escapeHtml(e.triage.reason)}` : ""}</p>` : ""}
       ${body}
     </article>
     <div class="oe-reader-foot">
@@ -15471,6 +15593,39 @@ async function loadOutsideSettings() {
               "Higher folds less. 0.86 suits nomic-embed-text; check a few groups and adjust.", "0.01")}
         <p class="field-hint">${s.articles.read} articles read, ${s.articles.failed} could not be · ${s.folded} reports folded under an incident</p>
       </div>
+      <div class="card"><h3>Model triage</h3>
+        <p class="field-hint">GDELT codes news by machine and often wrongly — a war film filed as fighting, a story from
+          elsewhere filed as local. With this on, the model reads each incident's article and says whether it is a real
+          event, whether it happened in the area, what kind it is and how much it matters. What it sets aside is kept,
+          in a view of its own with its reason; a person's correction is final and becomes an example for it.</p>
+        <label class="inline-check"><input type="checkbox" id="oe-tr-on" ${s.triage_enabled ? "checked" : ""}>
+          Have the model triage incoming GDELT incidents</label>
+        <div class="form-row"><label for="oe-tr-model">Model</label>
+          <input type="text" id="oe-tr-model" value="${escapeHtml(s.triage_model || "")}"
+                 placeholder="${escapeHtml(s.assistant_model ? `the assistant's: ${s.assistant_model}` : "the assistant's model")}"></div>
+        <p class="field-hint">An Ollama model name. Empty uses the assistant's. One call per incident, in the background;
+          an 8B model on a CPU takes a few seconds each. Larger models judge better.</p>
+        <div class="form-row"><label for="oe-tr-min">Show from severity</label>
+          <select id="oe-tr-min">${[1, 2, 3, 4, 5].map((n) => `<option value="${n}" ${n === s.triage_min_severity ? "selected" : ""}>${n} · ${SEVERITY_NAMES[n]}${n === 1 ? " (everything real and in the area)" : " and up"}</option>`).join("")}</select></div>
+        ${num("oe-tr-n", "triage_per_pass", s.triage_per_pass, "Incidents per pass", "Every 30 seconds while there are new ones.")}
+        ${num("oe-tr-ex", "triage_examples", s.triage_examples, "Corrections shown to the model as examples",
+              "The most recent. 0 turns examples off; more makes each call longer.")}
+        <label class="inline-check"><input type="checkbox" id="oe-tr-acled" ${s.triage_acled ? "checked" : ""}>
+          ACLED too (hand-coded already: usually not needed)</label>
+        <p class="field-hint">${s.triage_counts.checked} judged by the model, ${s.triage_counts.filtered} set aside,
+          ${s.triage_counts.waiting} waiting · ${s.triage_counts.corrected} corrected by people, ${s.triage_counts.examples} kept as examples</p>
+        ${s.triage_last_error ? `<p class="form-error">Last attempt: ${escapeHtml(s.triage_last_error)}</p>` : ""}
+        <div class="oe-tr-actions">
+          <button type="button" class="btn-secondary btn-sm" id="oe-tr-again">Judge the last week again</button>
+          <button type="button" class="btn-link btn-sm" id="oe-tr-forget" ${s.triage_counts.examples ? "" : "disabled"}>Forget the examples</button>
+        </div>
+        ${s.zones.length ? `<h4>Each area's focus</h4>
+          <p class="field-hint">What your team cares about there, in your own words: the model weighs each event against it
+            (e.g. “civil unrest, threats to the port, gang violence near the rail yard”).</p>
+          ${s.zones.map((z) => `<div class="form-row oe-focus-row"><label for="oe-focus-${z.id}">${escapeHtml(z.name)}</label>
+            <input type="text" id="oe-focus-${z.id}" maxlength="500" value="${escapeHtml(z.focus || "")}">
+            <button type="button" class="btn-secondary btn-sm" data-oe-focus="${z.id}">Save</button></div>`).join("")}` : ""}
+      </div>
       <div class="card"><h3>Keeping them</h3>
         ${num("oe-keep", "retention_days", s.retention_days, "Delete unread and dismissed after (days)",
               "Ones sent to Documents stay: the document is the record.")}
@@ -15497,6 +15652,10 @@ async function loadOutsideSettings() {
       dedupe_rules: document.getElementById("oe-dd-rules").checked,
       dedupe_model: document.getElementById("oe-dd-model").checked,
       dedupe_model_threshold: parseFloat(v("oe-dd-th")),
+      triage_enabled: document.getElementById("oe-tr-on").checked,
+      triage_model: v("oe-tr-model").trim(), triage_min_severity: parseInt(v("oe-tr-min"), 10),
+      triage_per_pass: parseInt(v("oe-tr-n"), 10), triage_examples: parseInt(v("oe-tr-ex"), 10),
+      triage_acled: document.getElementById("oe-tr-acled").checked,
       ...(extra || {}),
     };
     if (v("oe-a-pass")) body.acled_password = v("oe-a-pass");
@@ -15508,6 +15667,28 @@ async function loadOutsideSettings() {
   };
   document.getElementById("outside-form").addEventListener("submit", (e) => { e.preventDefault(); save(); });
   document.getElementById("outside-fastest").addEventListener("click", () => save({ fastest: true }));
+  document.getElementById("oe-tr-again").addEventListener("click", async () => {
+    try {
+      const r = await api("/api/admin/outside-events/retriage", { method: "POST", body: { days: 7 } });
+      showToast(`${r.requeued} incident${r.requeued === 1 ? "" : "s"} will be judged again`);
+      loadOutsideSettings();
+    } catch (e) { showToast(e.message, true); }
+  });
+  document.getElementById("oe-tr-forget").addEventListener("click", async () => {
+    if (!confirm("Stop showing the model the team's earlier corrections? The corrected incidents keep their corrections.")) return;
+    try {
+      await api("/api/admin/outside-events/corrections", { method: "DELETE" });
+      showToast("Examples forgotten");
+      loadOutsideSettings();
+    } catch (e) { showToast(e.message, true); }
+  });
+  el.querySelectorAll("[data-oe-focus]").forEach((b) => b.addEventListener("click", async () => {
+    try {
+      await api(`/api/admin/outside-events/zones/${b.dataset.oeFocus}/focus`,
+                { method: "PUT", body: { focus: document.getElementById(`oe-focus-${b.dataset.oeFocus}`).value } });
+      showToast("Saved — “Judge the last week again” applies it to what is already in");
+    } catch (e) { showToast(e.message, true); }
+  }));
 }
 
 (function wireOutside() {
@@ -15516,7 +15697,8 @@ async function loadOutsideSettings() {
     let t = null;
     search.addEventListener("input", () => { clearTimeout(t); t = setTimeout(() => { outsideState.q = search.value.trim(); loadOutside(); }, 300); });
   }
-  [["outside-days", "days"], ["outside-source", "source"], ["outside-status", "status"]].forEach(([id, key]) => {
+  [["outside-days", "days"], ["outside-source", "source"], ["outside-status", "status"],
+   ["outside-category", "category"], ["outside-sort", "sort"]].forEach(([id, key]) => {
     const el = document.getElementById(id);
     if (el) el.addEventListener("change", () => { outsideState[key] = el.value; loadOutside(); });
   });

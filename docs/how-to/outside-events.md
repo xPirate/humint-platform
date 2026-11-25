@@ -116,6 +116,56 @@ for good. Nothing is deleted by folding, and what you do to the incident
 dismissed when another site reports it later. Unread counts and the map count
 incidents, not rows.
 
+## Model triage: filtering out what is not an event
+
+GDELT codes news into events by machine, from an article's first sentences,
+and gets a lot wrong: an interview with an actor who played a soldier is
+filed as fighting, a history feature as an attack, a story from overseas as
+local because the publisher is local. Nothing in GDELT's own fields tells
+these apart. Reading the article does, and the server already keeps it.
+
+**Admin → Outside events → Model triage** (off until turned on):
+
+- **Have the model triage incoming GDELT incidents.** For each incident (one
+  call per incident, after duplicates are folded), the model reads the
+  headline and opening and answers:
+  - whether it is a **real event** — not a film, book, history, opinion,
+    sport, obituary, or a passing mention;
+  - whether it happened **in the area** (not just a local publisher);
+  - its **kind**, in the platform's own categories: protest, civil unrest,
+    violent crime, arrest or police action, attack or armed violence, threat
+    or extremism, disaster or emergency, infrastructure or outage, government
+    or political, other;
+  - its **severity**, 1 (routine) to 5 (critical), a one-line **summary**, and
+    its **reason**.
+- **Model**: an Ollama model name; empty uses the assistant's. It runs in the
+  background, so speed matters less than judgement: an 8B model on a CPU takes
+  a few seconds per incident, a 14B one judges noticeably better.
+- **Show from severity** (2, minor, by default): incidents below it are set
+  aside with the rest.
+- **Each area's focus**: a line per area in your own words ("civil unrest,
+  threats to the port, gang violence near the rail yard"). The model weighs
+  every event against it.
+- **Judge the last week again** after changing the model, the severity or a
+  focus.
+
+On the Outside events page the list shows what the model kept, with its
+summary as the title, its kind and severity, and filters for **kind** and
+**most severe first**. **N set aside** opens what it filtered, each with why.
+Nothing is deleted.
+
+When it gets one wrong, **Keep it** (in the set-aside view) or **Wrong
+call?** (anywhere) sets it right. A person's call is final — the model never
+overwrites it — and is shown to the model as an example on later incidents,
+so it learns your team's judgement without any retraining. **Corrections
+shown as examples** sets how many (the most recent; 8 by default), and
+**Forget the examples** starts over.
+
+Incidents the model has not judged yet show in the list as usual ("Not judged
+by the model yet"), so nothing waits on a slow model. If the model is off or
+unreachable, the reason shows under the card and it tries again next pass.
+ACLED is hand-coded and is not triaged unless you tick **ACLED too**.
+
 ## On a field server
 
 It works the same. The server pulls only while it has internet, so join a

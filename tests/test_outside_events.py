@@ -317,6 +317,7 @@ check("gdelt" not in W.run_once() and acled_hits == [], "with no zone marked, no
 
 # ---- the migration, on a database from before ------------------------------------------
 old = Console("outside_mig")
+old.sql("DROP TABLE outside_triage_corrections")      # newer than v1.15
 old.sql("DROP TABLE outside_events")
 old.sql("DROP TABLE outside_event_settings")
 old.sql("ALTER TABLE map_zones DROP COLUMN outside_events")

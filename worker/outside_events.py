@@ -117,7 +117,8 @@ SETTINGS_COLS = (
     "acled_enabled", "acled_username", "acled_password", "acled_interval_minutes",
     "acled_request_spacing_seconds", "acled_backfill_days", "acled_token", "acled_token_expires",
     "acled_last_poll_at", "retention_days", "pull_requested_at", "prefetch_articles",
-    "article_spacing_seconds", "articles_per_pass", "dedupe_rules", "dedupe_model", "dedupe_model_threshold")
+    "article_spacing_seconds", "articles_per_pass", "dedupe_rules", "dedupe_model", "dedupe_model_threshold",
+    "triage_enabled", "triage_model", "triage_acled", "triage_per_pass", "triage_min_severity", "triage_examples")
 
 
 def load_settings() -> dict | None:
@@ -674,6 +675,20 @@ def run_once(now_prune: bool = False) -> dict:
             done["folded_headlines"] = dedupe_headlines(settings)
     except Exception as exc:
         done["dedupe_error"] = str(exc)
+    # The model's triage: after duplicates are folded, so one call per incident.
+    if settings.get("triage_enabled"):
+        try:
+            import outside_triage
+            t = outside_triage.triage(settings, _model_client())
+            done["triaged"] = t["checked"]
+            done["triage_filtered"] = t["filtered"]
+            if t["error"]:
+                done["triage_error"] = t["error"]
+            if t["checked"] or t["error"]:
+                _set(triage_last_error=t["error"] if not t["checked"] else None)
+        except Exception as exc:
+            done["triage_error"] = str(exc)
+            _set(triage_last_error=str(exc)[:1000])
     if now_prune:
         done["pruned"] = prune(settings["retention_days"])
     for k, v in done.items():

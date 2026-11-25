@@ -35,7 +35,11 @@ Rectangle {
         rSpacing.text = String(r.article_spacing_seconds); rPerPass.text = String(r.articles_per_pass)
         dRules.checked = r.dedupe_rules; dModel.checked = r.dedupe_model
         dThreshold.text = String(r.dedupe_model_threshold)
+        trOn.checked = r.triage_enabled; trModel.text = r.triage_model || ""
+        trMin.value = String(r.triage_min_severity); trPerPass.text = String(r.triage_per_pass)
+        trExamples.text = String(r.triage_examples); trAcled.checked = r.triage_acled
     }
+    readonly property var severityNames: ({ 1: "routine", 2: "minor", 3: "notable", 4: "significant", 5: "critical" })
     Component.onCompleted: load()
 
     function save(extra) {
@@ -48,7 +52,10 @@ Rectangle {
             acled_backfill_days: parseInt(aBackfill.text, 10), retention_days: parseInt(keep.text, 10),
             prefetch_articles: rPrefetch.checked, article_spacing_seconds: parseFloat(rSpacing.text),
             articles_per_pass: parseInt(rPerPass.text, 10), dedupe_rules: dRules.checked, dedupe_model: dModel.checked,
-            dedupe_model_threshold: parseFloat(dThreshold.text)
+            dedupe_model_threshold: parseFloat(dThreshold.text),
+            triage_enabled: trOn.checked, triage_model: trModel.text.trim(),
+            triage_min_severity: parseInt(trMin.value, 10), triage_per_pass: parseInt(trPerPass.text, 10),
+            triage_examples: parseInt(trExamples.text, 10), triage_acled: trAcled.checked
         }
         if (aPass.text) body.acled_password = aPass.text
         for (var k in (extra || {})) body[k] = extra[k]
@@ -212,6 +219,76 @@ Rectangle {
                     Txt { Layout.fillWidth: true; kind: "muted"; visible: !!page.s
                           text: page.s ? page.s.articles.read + " articles read, " + page.s.articles.failed + " could not be · "
                                          + page.s.folded + " reports folded under an incident" : "" }
+                }
+            }
+
+            // ---- the model's triage ----
+            Card {
+                Layout.fillWidth: true; title: "Model triage"
+                implicitHeight: tCol.implicitHeight + 2 * padding + Theme.gap + 20 * Theme.s
+                ColumnLayout {
+                    id: tCol
+                    width: parent.width; spacing: 8 * Theme.s
+                    Txt { Layout.fillWidth: true; kind: "muted"
+                          text: "GDELT codes news by machine and often wrongly — a war film filed as fighting, a story from elsewhere filed as local. With this on, the model reads each incident's article and says whether it is a real event, whether it happened in the area, what kind it is and how much it matters. What it sets aside is kept, with its reason; a person's correction is final and becomes an example for it." }
+                    Check { id: trOn; text: "Have the model triage incoming GDELT incidents" }
+                    RowLayout {
+                        Layout.fillWidth: true; spacing: Theme.gap
+                        Labeled { Layout.fillWidth: true; Layout.preferredWidth: 1; Layout.alignment: Qt.AlignTop; label: "Model"
+                                  hint: "An Ollama model name. Empty uses the assistant's" + (page.s && page.s.assistant_model ? " (" + page.s.assistant_model + ")" : "") + ". Larger judges better."
+                                  Field { id: trModel; width: parent.width } }
+                        Labeled { Layout.fillWidth: true; Layout.preferredWidth: 1; Layout.alignment: Qt.AlignTop; label: "Show from severity"
+                                  Select { id: trMin; width: parent.width
+                                           options: [1, 2, 3, 4, 5].map(function(n) { return [String(n), n + " · " + page.severityNames[n] + (n === 1 ? "" : " and up")] })
+                                           onPicked: function(v) { value = v } } }
+                    }
+                    RowLayout {
+                        Layout.fillWidth: true; spacing: Theme.gap
+                        Labeled { Layout.fillWidth: true; Layout.preferredWidth: 1; Layout.alignment: Qt.AlignTop; label: "Incidents per pass"
+                                  hint: "Every 30 seconds while there are new ones."
+                                  Field { id: trPerPass; width: parent.width; inputMethodHints: Qt.ImhDigitsOnly } }
+                        Labeled { Layout.fillWidth: true; Layout.preferredWidth: 1; Layout.alignment: Qt.AlignTop; label: "Corrections shown as examples"
+                                  hint: "The most recent. 0 turns examples off."
+                                  Field { id: trExamples; width: parent.width; inputMethodHints: Qt.ImhDigitsOnly } }
+                    }
+                    Check { id: trAcled; text: "ACLED too (hand-coded already: usually not needed)" }
+                    Txt { Layout.fillWidth: true; kind: "muted"; visible: !!page.s
+                          text: page.s ? page.s.triage_counts.checked + " judged by the model, " + page.s.triage_counts.filtered + " set aside, "
+                                         + page.s.triage_counts.waiting + " waiting · " + page.s.triage_counts.corrected + " corrected by people, "
+                                         + page.s.triage_counts.examples + " kept as examples" : "" }
+                    Txt { Layout.fillWidth: true; visible: !!page.s && !!page.s.triage_last_error; color: Theme.amber
+                          text: page.s && page.s.triage_last_error ? "Last attempt: " + page.s.triage_last_error : "" }
+                    Flow {
+                        Layout.fillWidth: true; spacing: 6 * Theme.s
+                        Btn { compact: true; text: "Judge the last week again"; enabled: !!page.s
+                              onClicked: Net.post("/api/admin/outside-events/retriage", { days: 7 }).then(function(r) {
+                                  page.apply(r); ui.toast(r.requeued + (r.requeued === 1 ? " incident" : " incidents") + " will be judged again")
+                              }).catch(function(e) { ui.toast(e.message, true) }) }
+                        Btn { compact: true; kind: "ghost"; text: "Forget the examples"
+                              enabled: !!page.s && page.s.triage_counts.examples > 0
+                              onClicked: ui.confirm("Forget the team's corrections as examples?",
+                                                    "The corrected incidents keep their corrections; the model stops being shown them.", function() {
+                                  Net.del("/api/admin/outside-events/corrections").then(function(r) { page.apply(r); ui.toast("Examples forgotten") })
+                                      .catch(function(e) { ui.toast(e.message, true) })
+                              }, false, "Forget") }
+                    }
+                    Txt { kind: "label"; visible: !!page.s && page.s.zones.length > 0; text: "Each area's focus" }
+                    Txt { Layout.fillWidth: true; kind: "muted"; visible: !!page.s && page.s.zones.length > 0
+                          text: "What your team cares about there, in your own words — e.g. “civil unrest, threats to the port, gang violence near the rail yard”." }
+                    Repeater {
+                        model: page.s ? page.s.zones : []
+                        delegate: RowLayout {
+                            required property var modelData
+                            Layout.fillWidth: true; spacing: 8 * Theme.s
+                            Txt { Layout.preferredWidth: 180 * Theme.s; text: modelData.name; elide: Text.ElideRight; wrapMode: Text.NoWrap }
+                            Field { id: focusField; Layout.fillWidth: true; text: modelData.focus || ""
+                                    placeholderText: "What matters in " + modelData.name }
+                            Btn { compact: true; text: "Save"
+                                  onClicked: Net.put("/api/admin/outside-events/zones/" + modelData.id + "/focus", { focus: focusField.text })
+                                      .then(function(r) { ui.toast("Saved — “Judge the last week again” applies it to what is already in") })
+                                      .catch(function(e) { ui.toast(e.message, true) }) }
+                        }
+                    }
                 }
             }
 

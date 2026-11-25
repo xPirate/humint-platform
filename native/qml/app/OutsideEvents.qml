@@ -28,12 +28,24 @@ Rectangle {
     property var readerEvent: null
     property bool readerLoading: false
     property var groups: ({})           // lead id -> its folded reports, once opened
+    // The model's triage (worker/outside_triage.py).
+    property bool triage: false
+    property int minSeverity: 1
+    property var categories: []
+    property int filteredTotal: 0
+    property string view: "main"        // "main": what it kept; "filtered": what it set aside
+    property string category: ""
+    property string sort: "date"
+    readonly property var severityNames: ({ 1: "routine", 2: "minor", 3: "notable", 4: "significant", 5: "critical" })
 
     function lastQuery() {
         var q = { status: page.status, limit: 100, q: search.text.trim() }
         if (page.zoneId !== null) q.zone_id = page.zoneId
         if (page.days) q.days = page.days
         if (page.source) q.source = page.source
+        if (page.view !== "main") q.view = page.view
+        if (page.category) q.category = page.category
+        if (page.sort !== "date") q.sort = page.sort
         return q
     }
     function load() {
@@ -41,6 +53,8 @@ Rectangle {
         Net.get("/api/outside-events" + Net.qs(page.lastQuery())).then(function(r) {
             page.items = r.items || []; page.total = r.total || 0; page.zones = r.zones || []
             page.unreadTotal = r.unread_total || 0; page.credit = r.credit || {}; page.loading = false
+            page.triage = !!r.triage_enabled; page.minSeverity = r.min_severity || 1
+            page.categories = r.categories || []; page.filteredTotal = r.filtered_total || 0
         }).catch(function(e) { page.loading = false; ui.toast(e.message, true) })
     }
     Component.onCompleted: load()
@@ -51,6 +65,21 @@ Rectangle {
             .catch(function(e) { ui.toast(e.message, true) })
     }
     function srcName(s) { return s === "acled" ? "ACLED" : "GDELT" }
+    function correct(item, body) {
+        Net.post("/api/outside-events/" + item.id + "/triage", body).then(function() {
+            ui.toast("Saved — the model will be shown this call as an example"); page.load()
+        }).catch(function(e) { ui.toast(e.message, true) })
+    }
+    function keep(item) {
+        var t = item.triage || {}
+        page.correct(item, { is_event: true, in_area: true, category: t.category || "other",
+                             severity: Math.max(t.severity || 2, page.minSeverity) })
+    }
+    function setAsideWhy(item) {
+        var t = item.triage
+        if (!t) return ""
+        return !t.is_event ? "Not an event" : !t.in_area ? "Not in the area" : "Below the severity shown"
+    }
 
     function openReader(item, index, refresh) {
         page.readerEvent = item; page.readerIndex = index; page.reader = null; page.readerLoading = true
@@ -158,6 +187,24 @@ Rectangle {
                          options: [["open", "Open"], ["new", "Unread"], ["sent", "Sent to Documents"], ["dismissed", "Dismissed"], ["all", "Everything"]]
                          onPicked: function(v) { page.status = v; page.load() } }
             }
+            // The model's categories and order, once the triage is on.
+            RowLayout {
+                Layout.fillWidth: true; spacing: 8 * Theme.s
+                visible: page.triage
+                Select { Layout.preferredWidth: 240 * Theme.s; Layout.fillWidth: true; Layout.minimumWidth: 120 * Theme.s; value: page.category
+                         options: [["", "Every kind"]].concat(page.categories.map(function(c) { return [c.key, c.label] }))
+                         onPicked: function(v) { page.category = v; page.load() } }
+                Select { Layout.preferredWidth: 200 * Theme.s; Layout.fillWidth: true; Layout.minimumWidth: 120 * Theme.s; value: page.sort
+                         options: [["date", "Newest first"], ["severity", "Most severe first"]]
+                         onPicked: function(v) { page.sort = v; page.load() } }
+                Btn { compact: true; kind: page.view === "filtered" ? "primary" : "normal"
+                      text: page.view === "filtered" ? "← What it kept" : page.filteredTotal + " set aside"
+                      enabled: page.view === "filtered" || page.filteredTotal > 0
+                      onClicked: { page.view = page.view === "filtered" ? "main" : "filtered"; page.closeReader(); page.load() } }
+            }
+            Txt { Layout.fillWidth: true; visible: page.triage && page.view === "filtered"; kind: "muted"
+                  text: "Set aside by the model — not an event, not in the area, or below " + page.severityNames[page.minSeverity]
+                        + " severity. Each shows why; “Keep it” if it got one wrong." }
             Txt { visible: page.total > 0; kind: "muted"
                   text: page.total + (page.total === 1 ? " incident" : " incidents") + (page.total > page.items.length ? ", showing " + page.items.length : "") }
             Txt { visible: !page.loading && page.items.length === 0; kind: "muted"
@@ -183,16 +230,34 @@ Rectangle {
                         RowLayout {
                             Layout.fillWidth: true; spacing: 8 * Theme.s
                             Pill { text: page.srcName(modelData.source); tone: modelData.source === "acled" ? Theme.amber : Theme.accent }
-                            Txt { kind: "label"; text: modelData.category || "" }
+                            readonly property var tr: modelData.triage
+                            Pill { visible: !!(parent.tr && parent.tr.is_event && parent.tr.category)
+                                   text: parent.tr ? (parent.tr.category_label || "") : ""; tone: Theme.accent }
+                            Txt { kind: "label"; visible: !(parent.tr && parent.tr.is_event && parent.tr.category); text: modelData.category || "" }
+                            Pill { visible: !!(parent.tr && parent.tr.is_event && parent.tr.severity)
+                                   text: parent.tr ? parent.tr.severity + " · " + (parent.tr.severity_label || "") : ""
+                                   tone: parent.tr && parent.tr.severity >= 4 ? Theme.red : parent.tr && parent.tr.severity === 3 ? Theme.amber : Theme.muted
+                                   filled: !!(parent.tr && parent.tr.severity === 5) }
                             Txt { kind: "muted"; text: modelData.occurred_on || "" }
                             Item { Layout.fillWidth: true }
                             Pill { visible: modelData.status === "sent"; text: "in Documents"; tone: Theme.accent }
                             Pill { visible: modelData.status === "dismissed"; text: "dismissed"; tone: Theme.muted }
                         }
-                        Txt { Layout.fillWidth: true; text: modelData.headline || modelData.title; font.weight: Font.DemiBold; font.pixelSize: 17 * Theme.s
+                        Txt { Layout.fillWidth: true; font.weight: Font.DemiBold; font.pixelSize: 17 * Theme.s
+                              text: (modelData.triage && modelData.triage.summary) || modelData.headline || modelData.title
                               TapHandler { enabled: !!(modelData.url || modelData.notes); onTapped: page.openReader(modelData, index) } }
                         Txt { Layout.fillWidth: true; kind: "muted"; visible: !!modelData.headline
-                              text: modelData.title + (modelData.site ? " · " + modelData.site : "") }
+                              text: (modelData.triage && modelData.triage.summary ? modelData.headline : modelData.title)
+                                    + (modelData.site ? " · " + modelData.site : "") }
+                        Txt { Layout.fillWidth: true; visible: !!modelData.filtered
+                              text: "<b>" + page.setAsideWhy(modelData) + "</b>" + (modelData.triage && modelData.triage.reason ? " — " + modelData.triage.reason : "")
+                              textFormat: Text.StyledText }
+                        Txt { Layout.fillWidth: true; kind: "muted"
+                              visible: page.triage && !modelData.dup_of && (!!modelData.triage || modelData.source === "gdelt")
+                              text: !modelData.triage ? (modelData.triage_error ? "The model could not judge it yet (" + modelData.triage_error + ")."
+                                                                                : "Not judged by the model yet.")
+                                    : (modelData.triage.by === "analyst" ? "Set by a person" : "Judged by " + (modelData.triage.model || "the model"))
+                                      + (!modelData.filtered && modelData.triage.reason ? " · " + modelData.triage.reason : "") }
                         Txt { Layout.fillWidth: true; kind: "muted"
                               text: (modelData.place || "") + (modelData.precision ? " · placed at " + modelData.precision + " level" : "")
                                     + (modelData.num_sources ? " · " + modelData.num_sources + (modelData.num_sources === 1 ? " source" : " sources") : "")
@@ -216,6 +281,10 @@ Rectangle {
                                   text: "Mark read"; onClicked: page.setStatus(modelData, "read") }
                             Btn { compact: true; kind: "ghost"; visible: modelData.status === "dismissed" && !shell.viewer
                                   text: "Put back"; onClicked: page.setStatus(modelData, "new") }
+                            Btn { compact: true; visible: !!modelData.filtered && !shell.viewer
+                                  text: "Keep it"; onClicked: page.keep(modelData) }
+                            Btn { compact: true; kind: "ghost"; visible: page.triage && !shell.viewer && (!!modelData.triage || modelData.source === "gdelt")
+                                  text: modelData.triage ? "Wrong call?" : "Judge it"; onClicked: correctDlg.open(modelData) }
                             Btn { compact: true; kind: "ghost"; visible: modelData.similar > 0
                                   text: (page.groups[modelData.id] ? "Hide " : "+") + modelData.similar
                                         + (modelData.similar === 1 ? " similar report" : " similar reports")
@@ -363,6 +432,38 @@ Rectangle {
         Check { id: fetch; visible: !!(send.item && send.item.url); text: "Fetch the article it came from"; checked: true }
         Labeled { label: "Where it came from"; hint: "Leave blank for the source's name."
                   Field { id: note; width: parent.width } }
+    }
+
+    // A person's call on an incident: final, and an example for the model.
+    FormDialog {
+        id: correctDlg
+        property var item: null
+        title: "The model's call"
+        okText: "Save"
+        function open(x) {
+            item = x
+            var t = x.triage || {}
+            isEvent.checked = t.is_event !== false; inArea.checked = t.in_area !== false
+            cat.value = t.category || "other"; sev.value = String(t.severity || 2)
+            visible = true
+        }
+        onAccepted: { page.correct(item, { is_event: isEvent.checked, in_area: inArea.checked,
+                                           category: cat.value, severity: parseInt(sev.value, 10) }); close() }
+        Txt { width: parent.width; font.weight: Font.DemiBold
+              text: correctDlg.item ? ((correctDlg.item.triage && correctDlg.item.triage.summary) || correctDlg.item.headline || correctDlg.item.title) : "" }
+        Txt { width: parent.width; kind: "muted"; visible: !!(correctDlg.item && correctDlg.item.triage && correctDlg.item.triage.reason)
+              text: correctDlg.item && correctDlg.item.triage ? "The model: " + (correctDlg.item.triage.reason || "") : "" }
+        Check { id: isEvent; text: "A real event" }
+        Check { id: inArea; text: "In the area" }
+        Labeled { label: "Kind"
+                  Select { id: cat; width: parent.width
+                           options: page.categories.map(function(c) { return [c.key, c.label] })
+                           onPicked: function(v) { value = v } } }
+        Labeled { label: "Severity"
+                  Select { id: sev; width: parent.width
+                           options: [1, 2, 3, 4, 5].map(function(n) { return [String(n), n + " · " + page.severityNames[n]] })
+                           onPicked: function(v) { value = v } } }
+        Txt { width: parent.width; kind: "muted"; text: "Final for this incident, and shown to the model as an example on later ones." }
     }
 
     // No browser here: the link, and a code to open it on a phone.
