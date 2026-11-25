@@ -300,6 +300,7 @@ if sync_playwright:
         PRELOADED[0] = None
         page.click("#web-entity-btn")
         page.wait_for_selector("#assistant-web-toggle:not([hidden])")
+        page.wait_for_function("() => document.getElementById('assistant-web').checked", timeout=10000)
         check(page.is_checked("#assistant-web") and "Acme Freight" in page.input_value("#assistant-input"),
               "\"Search the web\" on a record asks about it, with the web allowed for that question")
         page.press("#assistant-input", "Enter")
