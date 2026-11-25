@@ -8,6 +8,8 @@ pydantic>=2.8.0
 bcrypt>=4.2.0
 python-multipart>=0.0.9
 requests>=2.32.0
+# SOCKS proxies for web research (Tor: socks5h://127.0.0.1:9050).
+PySocks>=1.7.1
 reportlab>=4.2.0
 pillow>=10.4.0
 segno>=1.6.0

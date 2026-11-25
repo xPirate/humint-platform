@@ -35,6 +35,7 @@ conversation log, not case data.
 """
 
 import json
+from typing import Optional
 import logging
 import re
 
@@ -44,6 +45,8 @@ from pydantic import BaseModel, Field
 
 import assistant_agent
 import assistant_drafts
+import assistant_web
+import web_research
 import audit
 import auth
 import ollama_usage
@@ -93,8 +96,24 @@ a guess as a confirmed fact, and never fabricate an entity, relationship, or rep
 in the provided context."""
 
 
+class WebItem(BaseModel):
+    kind: str = Field(pattern="^(search|page)$")
+    text: str = Field(min_length=1, max_length=1000)
+
+
+class WebApproval(BaseModel):
+    # The answer whose queued web lookups these are, as the person approved
+    # them (edited, some struck out).
+    message_id: int
+    items: list[WebItem] = Field(min_length=1, max_length=40)
+
+
 class AssistantQuestion(BaseModel):
-    question: str = Field(min_length=1, max_length=2000)
+    question: str = Field(default="", max_length=2000)
+    # Let this question use the web (when an admin has turned it on).
+    web: bool = False
+    # Continue an earlier question with the web lookups the person approved.
+    approve: Optional[WebApproval] = None
 
 
 def _cosine_similarity(a: list, b: list) -> float:
@@ -389,6 +408,10 @@ def _save(user: dict, question: str, done: dict) -> dict:
     answer, so a failed question never leaves an orphan in the history."""
     trail = {"steps": done["steps"], "thinking": done["thinking"], "seconds": done["seconds"],
              "lookups": done["lookups"], "mode": done["mode"], "notes": done.get("notes") or []}
+    if done.get("web") is not None:
+        w = done["web"]
+        trail["web"] = {"queued": w["queued"], "status": "pending" if w["queued"] else None,
+                        "searches": w["searches"], "pages": w["pages"]}
     with db_cursor(commit=True) as cur:
         cur.execute(
             "INSERT INTO assistant_messages (user_id, role, content) VALUES (%s, 'user', %s)",
@@ -429,8 +452,12 @@ def _save(user: dict, question: str, done: dict) -> dict:
             "created_at": created_at.isoformat() if created_at else None}
 
 
-def _run(user: dict, question: str):
-    """The agent for this user and question, as an event generator."""
+def _run(user: dict, question: str, web: bool = False, approve: "WebApproval | None" = None):
+    """The agent for this user and question, as an event generator.
+
+    With `approve`, the question is the one asked before that answer: the
+    approved web lookups run first (each audited), then the agent continues
+    with their results, the web still allowed."""
     ollama = _client_for(user)
     settings = get_assistant_settings()
     with db_cursor() as cur:
@@ -440,8 +467,53 @@ def _run(user: dict, question: str):
         with db_cursor() as cur:
             return build_context(cur, ollama, q, user)
 
-    return assistant_agent.run(ollama, question, history, settings, user,
-                               semantic=_semantic_for(ollama), single_search=single_search)
+    wctx = assistant_web.context(user, live=False) if (web or approve) else None
+    if (web or approve) and wctx is None:
+        raise HTTPException(status_code=403, detail="Web research is turned off here, or not for your role.")
+    if not approve:
+        return assistant_agent.run(ollama, question, history, settings, user, semantic=_semantic_for(ollama),
+                                   single_search=single_search, web=wctx)
+
+    def continued():
+        preloaded = []
+        body_chars = 2500
+        for ev in assistant_web.run_approved(user, [i.model_dump() for i in approve.items], wctx["settings"], body_chars):
+            if ev["type"] == "_approved":
+                preloaded = ev["items"]
+                wctx["allowed"] |= ev["allowed"]
+                wctx["read"] |= ev["read"]
+                wctx["searches"], wctx["pages"] = ev["searches"], ev["pages"]
+                continue
+            yield ev
+        assistant_web.mark(approve.message_id, user["id"], "approved", [i.model_dump() for i in approve.items])
+        yield from assistant_agent.run(ollama, question, history, settings, user, semantic=_semantic_for(ollama),
+                                       single_search=single_search, web=wctx, preloaded=preloaded)
+    return continued()
+
+
+def _approval_question(user: dict, approve: "WebApproval") -> str:
+    """The question an approval continues, after checking the answer is this
+    person's and still waiting."""
+    with db_cursor() as cur:
+        cur.execute("SELECT steps FROM assistant_messages WHERE id = %s AND user_id = %s AND role = 'assistant'",
+                    (approve.message_id, user["id"]))
+        r = cur.fetchone()
+        if not r:
+            raise HTTPException(status_code=404, detail="No such answer.")
+        web = (r[0] or {}).get("web") or {}
+        if web.get("status") != "pending":
+            raise HTTPException(status_code=409, detail="Those web lookups were already decided.")
+        cur.execute("SELECT content FROM assistant_messages WHERE user_id = %s AND role = 'user' AND id < %s "
+                    "ORDER BY id DESC LIMIT 1", (user["id"], approve.message_id))
+        q = cur.fetchone()
+    if not q:
+        raise HTTPException(status_code=404, detail="The question that answer was for is gone.")
+    return q[0]
+
+
+def _approval_label(items) -> str:
+    parts = [(f"search “{i.text}”" if i.kind == "search" else f"read {i.text}") for i in items]
+    return "Go ahead on the web: " + "; ".join(parts)
 
 
 @router.post("/ask")
@@ -450,13 +522,21 @@ def ask_streaming(payload: AssistantQuestion, user: dict = Depends(auth.require_
     lookup as it runs, the model's reasoning when it thinks, and finally the
     saved answer — so an analyst watches the work happen rather than staring
     at "Thinking…" for a minute."""
-    events = _run(user, payload.question)   # raises 503 here, before streaming, if disabled
+    if payload.approve:
+        question = _approval_question(user, payload.approve)
+        label = _approval_label(payload.approve.items)
+        events = _run(user, question, approve=payload.approve)
+    else:
+        if not payload.question.strip():
+            raise HTTPException(status_code=422, detail="Ask a question.")
+        question = label = payload.question
+        events = _run(user, payload.question, web=payload.web)   # raises 503 here, before streaming, if disabled
 
     def stream():
         try:
             for event in events:
                 if event["type"] == "done":
-                    message = _save(user, payload.question, event)
+                    message = _save(user, label, event)
                     yield json.dumps({"type": "answer", "message": message}, default=str) + "\n"
                     return
                 if event["type"] == "error":
@@ -477,9 +557,18 @@ def ask_streaming(payload: AssistantQuestion, user: dict = Depends(auth.require_
 def ask_assistant(payload: AssistantQuestion, user: dict = Depends(auth.require_user)):
     """The same work as /ask, answered in one response. Kept for scripts and
     anything older than the streaming panel."""
-    for event in _run(user, payload.question):
+    if payload.approve:
+        question = _approval_question(user, payload.approve)
+        label = _approval_label(payload.approve.items)
+        events = _run(user, question, approve=payload.approve)
+    else:
+        if not payload.question.strip():
+            raise HTTPException(status_code=422, detail="Ask a question.")
+        label = payload.question
+        events = _run(user, payload.question, web=payload.web)
+    for event in events:
         if event["type"] == "done":
-            return _save(user, payload.question, event)
+            return _save(user, label, event)
         if event["type"] == "error":
             raise HTTPException(status_code=502,
                                 detail=UNREACHABLE if event["detail"] == "unreachable" else event["detail"])
@@ -497,3 +586,24 @@ def clear_messages(user: dict = Depends(auth.require_user)):
     audit.record("assistant.clear", user=user, object_type="assistant",
                  detail={"messages_deleted": deleted})
     return {"status": "cleared"}
+
+
+@router.post("/messages/{message_id}/web-skip")
+def skip_web(message_id: int, user: dict = Depends(auth.require_user)):
+    """Decline an answer's queued web lookups: nothing is sent."""
+    with db_cursor() as cur:
+        cur.execute("SELECT steps FROM assistant_messages WHERE id = %s AND user_id = %s AND role = 'assistant'",
+                    (message_id, user["id"]))
+        r = cur.fetchone()
+    if not r or ((r[0] or {}).get("web") or {}).get("status") != "pending":
+        raise HTTPException(status_code=404, detail="Nothing waiting there.")
+    assistant_web.mark(message_id, user["id"], "skipped")
+    return {"ok": True}
+
+
+@router.get("/web")
+def web_available(user: dict = Depends(auth.require_user)):
+    """Whether this person may let a question use the web (the panel's toggle)."""
+    s = web_research.settings()
+    return {"available": web_research.allowed_for(user, s), "require_approval": s["require_approval"],
+            "provider": s["provider"] if s["enabled"] else None, "via_proxy": bool(s.get("proxy_url"))}

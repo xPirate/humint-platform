@@ -24,6 +24,7 @@ import analysts
 import profiles
 import assistant
 import assistant_drafts
+import web_research
 import audit
 import audit_api
 import auth
@@ -178,6 +179,7 @@ app.include_router(settings.public_router)
 app.include_router(preferences.router)
 app.include_router(assistant.router)
 app.include_router(assistant_drafts.router)
+app.include_router(web_research.router)
 app.include_router(destroy.router)
 app.include_router(backup.router)
 app.include_router(field_sync.router)

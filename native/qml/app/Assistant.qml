@@ -25,7 +25,7 @@ Rectangle {
         Net.get("/api/assistant/messages").then(function(r) { page.messages = r.items || []; toEnd() })
             .catch(function() {})
     }
-    Component.onCompleted: { load(); input.forceActiveFocus() }
+    Component.onCompleted: { load(); loadWeb(); input.forceActiveFocus() }
     function toEnd() { Qt.callLater(function() { list.positionViewAtEnd() }) }
 
     function seconds(s) {
@@ -33,17 +33,47 @@ Rectangle {
         return n < 60 ? n + " s" : Math.floor(n / 60) + " min " + (n % 60) + " s"
     }
 
+    // Web research (api/assistant_web.py): offered when an admin turned it on.
+    property var web: ({ available: false })
+    function loadWeb() { Net.get("/api/assistant/web").then(function(r) { page.web = r }).catch(function() {}) }
+
     function ask() {
         var q = input.text.trim()
         if (!q || page.working) return
+        var extra = webCheck.checked && page.web.available ? { web: true } : {}
+        webCheck.checked = false              // per question: never left on by accident
+        page.run(q, q, extra)
+    }
+    function approveWeb(messageId, items) {
+        var shown = "Go ahead on the web: " + items.map(function(i) {
+            return i.kind === "search" ? "search “" + i.text + "”" : "read " + i.text }).join("; ")
+        page.markWeb(messageId, "approved", items)
+        page.run(shown, "", { approve: { message_id: messageId, items: items } })
+    }
+    function skipWeb(messageId) {
+        Net.post("/api/assistant/messages/" + messageId + "/web-skip", {}).then(function() {
+            page.markWeb(messageId, "skipped", null)
+        }).catch(function(e) { ui.toast(e.message, true) })
+    }
+    function markWeb(messageId, status, items) {
+        var msgs = page.messages.slice()
+        for (var i = 0; i < msgs.length; i++)
+            if (msgs[i].id === messageId && msgs[i].trail && msgs[i].trail.web) {
+                var t = Object.assign({}, msgs[i].trail)
+                t.web = Object.assign({}, t.web, { status: status, approved: items || [] })
+                msgs[i] = Object.assign({}, msgs[i], { trail: t })
+            }
+        page.messages = msgs
+    }
+    function run(shown, q, extra) {
         page.error = ""
-        page.messages = page.messages.concat([{ role: "user", content: q }])
+        page.messages = page.messages.concat([{ role: "user", content: shown }])
         input.text = ""
         page.working = true; page.statusText = "Starting…"; page.steps = []; page.thinking = ""; page.notes = []
         page.startedAt = Date.now(); page.now = page.startedAt
         toEnd()
         var answered = false
-        Net.stream("/api/assistant/ask", { question: q }, function(ev) {
+        Net.stream("/api/assistant/ask", Object.assign({ question: q }, extra || {}), function(ev) {
             if (ev.type === "status") page.statusText = ev.text
             else if (ev.type === "step") {
                 var s = page.steps.slice()
@@ -77,6 +107,7 @@ Rectangle {
     Timer { interval: 1000; repeat: true; running: page.working; onTriggered: page.now = Date.now() }
 
     function openCitation(c) {
+        if (c.kind === "web") { linkDlg.open({ title: c.label.replace(/^Web: /, ""), url: c.id }); return }
         var num = Number((String(c.id).match(/(\d+)$/) || [0, 0])[1])
         if (c.kind === "entity") shell.go("entity", c.id)
         else if (c.kind === "document") shell.go("document", num)
@@ -101,7 +132,7 @@ Rectangle {
     }
     function draftKind(d) {
         var p = d.payload || {}
-        return ({ report: "DRAFT REPORT", priority: "PRIORITY P" + (p.priority || 2),
+        return ({ report: "DRAFT REPORT", priority: "PRIORITY P" + (p.priority || 2), web_to_document: "WEB PAGE → DOCUMENTS",
                   outside_to_document: "OUTSIDE EVENT → DOCUMENTS", link: "PROPOSED LINK" })[d.kind] || d.kind
     }
     function draftText(d) {
@@ -111,18 +142,20 @@ Rectangle {
         if (d.kind === "priority") return "<b>" + Fmt.escapeHtml(p.title || "") + "</b>" + (p.question ? "<br>" + Fmt.escapeHtml(p.question) : "")
                                           + ((p.indicators || []).length ? "<br>• " + p.indicators.map(Fmt.escapeHtml).join("<br>• ") : "")
         if (d.kind === "outside_to_document") return "<b>" + Fmt.escapeHtml(p.title || "") + "</b>"
+        if (d.kind === "web_to_document") return "<b>" + Fmt.escapeHtml(p.title || "") + "</b><br>" + Fmt.escapeHtml(p.url || "")
         if (d.kind === "link") return "<b>" + Fmt.escapeHtml((p.from || {}).name || "") + "</b> — " + Fmt.escapeHtml(p.relationship || "")
                                       + " — <b>" + Fmt.escapeHtml((p.to || {}).name || "") + "</b>"
         return Fmt.escapeHtml(d.summary || "")
     }
     function applyText(d) {
-        return ({ report: "Make the draft report", priority: "Add the priority", outside_to_document: "Send to Documents" })[d.kind] || "Apply"
+        return ({ report: "Make the draft report", priority: "Add the priority", outside_to_document: "Send to Documents",
+                  web_to_document: "Keep as a document" })[d.kind] || "Apply"
     }
     function openMade(d) {
         var r = d.result || {}
         if (d.kind === "report" && r.report_id) shell.go("report", r.report_id)
         else if (d.kind === "priority") shell.go("priorities")
-        else if (d.kind === "outside_to_document" && r.document_id) shell.go("document", r.document_id)
+        else if ((d.kind === "outside_to_document" || d.kind === "web_to_document") && r.document_id) shell.go("document", r.document_id)
         else if (d.kind === "link") shell.go("review")
     }
 
@@ -216,6 +249,56 @@ Rectangle {
                                 }
                             }
                         }
+                        // The web lookups it would like to make: nothing sent until approved.
+                        Rectangle {
+                            id: webBox
+                            readonly property var w: mine ? null : ((modelData.trail || {}).web || null)
+                            readonly property int mid: modelData.id || 0
+                            visible: !!w && (w.queued || []).length > 0
+                            Layout.fillWidth: true
+                            implicitHeight: wc.implicitHeight + 16 * Theme.s
+                            radius: Theme.radius; color: "transparent"; border.color: Theme.amber
+                            property var edits: ({})
+                            ColumnLayout {
+                                id: wc
+                                x: 10 * Theme.s; y: 8 * Theme.s; width: parent.width - 20 * Theme.s; spacing: 6 * Theme.s
+                                Txt { Layout.fillWidth: true; visible: !!webBox.w && webBox.w.status === "pending"
+                                      text: "<b>The assistant would like to look on the web.</b> Nothing has been sent. These leave this machine as written — change or untick any."
+                                      textFormat: Text.StyledText }
+                                Txt { Layout.fillWidth: true; kind: "muted"; visible: !!webBox.w && webBox.w.status !== "pending"
+                                      text: webBox.w && webBox.w.status === "approved" ? "Approved: " + (webBox.w.approved || []).length + " web lookup(s)"
+                                            : "Web lookups skipped — nothing was sent" }
+                                Repeater {
+                                    id: webItems
+                                    model: webBox.w && webBox.w.status === "pending" ? webBox.w.queued : []
+                                    delegate: RowLayout {
+                                        required property var modelData
+                                        required property int index
+                                        property alias on: tick.checked
+                                        property alias value: itemField.text
+                                        readonly property string itemKind: modelData.kind
+                                        Layout.fillWidth: true; spacing: 6 * Theme.s
+                                        Check { id: tick; checked: true; text: modelData.kind === "search" ? "Search" : "Read" }
+                                        Field { id: itemField; Layout.fillWidth: true; text: modelData.text }
+                                    }
+                                }
+                                Flow {
+                                    Layout.fillWidth: true; spacing: 6 * Theme.s
+                                    visible: !!webBox.w && webBox.w.status === "pending" && !shell.viewer
+                                    Btn { compact: true; kind: "primary"; text: "Run these and continue"; enabled: !page.working
+                                          onClicked: {
+                                              var items = []
+                                              for (var i = 0; i < webItems.count; i++) {
+                                                  var it = webItems.itemAt(i)
+                                                  if (it && it.on && it.value.trim()) items.push({ kind: it.itemKind, text: it.value.trim() })
+                                              }
+                                              if (!items.length) { ui.toast("Nothing ticked — Skip sends nothing.", true); return }
+                                              page.approveWeb(webBox.mid, items)
+                                          } }
+                                    Btn { compact: true; kind: "ghost"; text: "Skip"; onClicked: page.skipWeb(webBox.mid) }
+                                }
+                            }
+                        }
                         Repeater { model: mine ? [] : ((modelData.trail || {}).notes || [])
                                    Txt { Layout.fillWidth: true; color: Theme.amber; text: modelData } }
                         // What it looked up, folded away under the answer.
@@ -288,6 +371,14 @@ Rectangle {
         Txt { Layout.fillWidth: true; visible: page.error !== ""; color: Theme.amber; text: page.error }
         RowLayout {
             Layout.fillWidth: true; spacing: 8 * Theme.s
+            visible: !!page.web.available
+            Check { id: webCheck; text: "May use the web for this question" }
+            Txt { Layout.fillWidth: true; kind: "muted"
+                  text: page.web.require_approval ? "— you approve each search before it is sent" + (page.web.via_proxy ? ", through the proxy" : "")
+                                                  : "— searches go out without asking" + (page.web.via_proxy ? ", through the proxy" : "") }
+        }
+        RowLayout {
+            Layout.fillWidth: true; spacing: 8 * Theme.s
             TextArea {
                 id: input
                 Layout.fillWidth: true
@@ -303,6 +394,30 @@ Rectangle {
             }
             Btn { kind: "primary"; text: page.working ? "Working…" : "Ask"; enabled: !page.working && input.text.trim() !== ""
                   onClicked: page.ask() }
+        }
+    }
+
+    // No browser here: a web source's address, and a code to open it on a phone.
+    FormDialog {
+        id: linkDlg
+        property var item: null
+        title: "Web source"
+        okText: "Done"
+        function open(x) { item = x; visible = true }
+        onAccepted: close()
+        Txt { width: parent.width; font.weight: Font.DemiBold; text: linkDlg.item ? linkDlg.item.title : "" }
+        Row {
+            width: parent.width; spacing: Theme.gap
+            Rectangle {
+                width: 200 * Theme.s; height: width; color: "white"; radius: Theme.radius
+                Image { anchors.fill: parent; anchors.margins: 8 * Theme.s; smooth: false; fillMode: Image.PreserveAspectFit
+                        source: linkDlg.item && linkDlg.item.url ? "image://qr/" + encodeURIComponent(linkDlg.item.url) : "" }
+            }
+            Column {
+                width: parent.width - 200 * Theme.s - Theme.gap; spacing: 8 * Theme.s
+                Txt { width: parent.width; text: "Open-source and unverified. Scan to open it on a phone." }
+                Txt { width: parent.width; kind: "mono"; wrapMode: Text.WrapAnywhere; text: linkDlg.item ? (linkDlg.item.url || "") : "" }
+            }
         }
     }
 }

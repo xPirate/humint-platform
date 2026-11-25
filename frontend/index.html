@@ -1169,6 +1169,11 @@
       <p class="view-hint">Ollama host and models. Changes apply within about 20 seconds. Blank fields use the .env value.</p>
       <div id="ollama-settings-panel"></div>
 
+      <div class="section-title">Web research</div>
+      <p class="view-hint">Let the assistant search the web and read pages, for questions where the person asking
+        allows it. Searches leave this machine — names and all — so it is off until turned on here.</p>
+      <div id="web-research-panel"></div>
+
       <div class="section-title">Model activity</div>
       <div class="view-toolbar">
         <p class="view-hint">Recent model activity, and whether this machine is keeping up.</p>
@@ -1437,6 +1442,10 @@
   <div id="assistant-messages" class="assistant-messages">
     <p class="assistant-empty-hint" id="assistant-empty-hint">Ask about anything in this case file — “how is John Smith connected to Acme?”, “what came in from the field this week?”, “what is still missing for our open priorities?”. It looks things up as it goes and shows you what it checked. Answers come only from your case data.</p>
   </div>
+  <label class="assistant-web-toggle" id="assistant-web-toggle" hidden>
+    <input type="checkbox" id="assistant-web"> May use the web for this question
+    <span class="field-hint" id="assistant-web-hint"></span>
+  </label>
   <form id="assistant-form" class="assistant-form">
     <textarea id="assistant-input" placeholder="Ask about your case…" rows="2" maxlength="2000" required></textarea>
     <button type="submit" class="btn-primary">Send</button>

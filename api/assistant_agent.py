@@ -178,7 +178,7 @@ def _citations(answer: str, pool: dict, opened: list) -> list[dict]:
 
 
 def run(ollama, question: str, history: list[dict], settings: dict, user: dict,
-        semantic=None, single_search=None):
+        semantic=None, single_search=None, web=None, preloaded=None):
     """Answer `question`, yielding progress events as it goes.
 
     Events: {"type": "status", "text"}, {"type": "step", "label", "summary"?,
@@ -187,7 +187,13 @@ def run(ollama, question: str, history: list[dict], settings: dict, user: dict,
 
     `single_search(question)` -> (context_text, citations) is the pre-v1.11
     retrieval, used when lookups are set to 0 or the model cannot call tools.
+
+    `web` (assistant_web.context) offers the web lookups for this question;
+    `preloaded` are lookups already made for it — the web searches a person
+    approved — given to the model as if it had made them.
     """
+    import assistant_web  # noqa: PLC0415
+    catalogue = assistant_tools.TOOLS + (assistant_web.TOOLS if web else [])
     started = time.monotonic()
     num_ctx = int(settings.get("context_tokens") or 8192)
     max_lookups = int(settings.get("max_lookups") if settings.get("max_lookups") is not None else 6)
@@ -198,7 +204,7 @@ def run(ollama, question: str, history: list[dict], settings: dict, user: dict,
     # What fits. Room is kept for the reply (more when the model thinks,
     # since its reasoning comes out of the same window), and the tool
     # catalogue itself costs about a thousand tokens on every call.
-    tools_chars = len(json.dumps(assistant_tools.TOOLS))
+    tools_chars = len(json.dumps(catalogue))
     reserve = 2000 if think else 900
     budget = max(1024, num_ctx - reserve)
     per_result = int(max(1200, min(8000, (budget - tools_chars / CHARS_PER_TOKEN - 600)
@@ -207,7 +213,7 @@ def run(ollama, question: str, history: list[dict], settings: dict, user: dict,
     past = [{"role": m["role"], "content": _clip(m["content"] or "", 1500)}
             for m in (history or [])[-turns * 2:]]
 
-    tool_ctx = {"user": user, "body_chars": int(per_result * 0.6), "semantic": semantic, "drafts": []}
+    tool_ctx = {"user": user, "body_chars": int(per_result * 0.6), "semantic": semantic, "drafts": [], "web": web}
     steps, thinking, pool, opened, seen, notes = [], [], {}, [], {}, []
     lookups = 0
 
@@ -241,6 +247,8 @@ def run(ollama, question: str, history: list[dict], settings: dict, user: dict,
                 "seconds": round(time.monotonic() - started, 1), "lookups": lookups,
                 "mode": mode, "thought": bool(thinking), "notes": notes,
                 "drafts": list(tool_ctx["drafts"]),
+                "web": ({"queued": list(web["queued"]), "searches": web["searches"], "pages": web["pages"]}
+                        if web else None),
                 # Every record any lookup returned — what the model read on
                 # the analyst's behalf, which is what the audit entry lists.
                 "seen": list(pool) or [c["id"] for c in citations]}
@@ -269,8 +277,19 @@ def run(ollama, question: str, history: list[dict], settings: dict, user: dict,
         return
 
     # ------------------------------------------------------------ lookup loop
-    messages = [{"role": "system", "content": SYSTEM_PROMPT.format(today=today)}, *past,
-                {"role": "user", "content": question}]
+    system = SYSTEM_PROMPT.format(today=today)
+    if web:
+        system += assistant_web.PROMPT + ("" if web["live"] else assistant_web.QUEUE_PROMPT)
+    messages = [{"role": "system", "content": system}, *past, {"role": "user", "content": question}]
+    if preloaded:
+        messages.append({"role": "assistant", "content": "", "tool_calls": [
+            {"function": {"name": p["name"], "arguments": p["args"]}} for p in preloaded]})
+        for p in preloaded:
+            messages.append({"role": "tool", "tool_name": p["name"], "content": _clip(p["result"], per_result)})
+            steps.append(p["step"])
+            for ref in p["refs"]:
+                pool.setdefault(ref["id"], ref)
+            seen[p["name"] + json.dumps(p["args"], sort_keys=True, default=str)] = True
     nudged = empty_retries = 0
     while True:
         offer = lookups < max_lookups
@@ -281,7 +300,7 @@ def run(ollama, question: str, history: list[dict], settings: dict, user: dict,
                "text": ("Thinking…" if think_flag else "Deciding what to look up…") if not steps
                else ("Thinking about what it found…" if think_flag else "Reading what it found…")}
         try:
-            resp = converse(messages, assistant_tools.TOOLS if offer else None)
+            resp = converse(messages, catalogue if offer else None)
         except OllamaUnsupported as exc:
             if exc.feature == "tools" and not steps:
                 yield note("This model can't look things up, so it answered from one search "
@@ -320,6 +339,8 @@ def run(ollama, question: str, history: list[dict], settings: dict, user: dict,
                     if name == "open_record" and refs:
                         opened.append(refs[0]["id"])
                         label = assistant_tools.describe(name, {"_label": refs[0]["label"].split(": ", 1)[-1]})
+                    elif name == "read_page" and refs:
+                        opened.append(refs[0]["id"])
                     elif name == "network" and refs:
                         label = assistant_tools.describe(name, {**args, "_label": refs[0]["label"].split(": ", 1)[-1]})
                     step = {"tool": name, "label": label,

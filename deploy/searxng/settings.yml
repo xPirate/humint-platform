@@ -1,0 +1,17 @@
+# SearXNG for the platform's web research (docker compose --profile websearch).
+# The defaults, plus: JSON answers on (the platform reads them), no rate
+# limiter (only the api, on the compose network, talks to it), and no
+# image proxy or public-instance extras.
+use_default_settings: true
+general:
+  instance_name: "humint-search"
+  enable_metrics: false
+server:
+  limiter: false
+  image_proxy: false
+  public_instance: false
+search:
+  safe_search: 0
+  formats:
+    - html
+    - json

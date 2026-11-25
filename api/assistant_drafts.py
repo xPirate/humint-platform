@@ -37,7 +37,7 @@ from db import db_cursor
 router = APIRouter(prefix="/api/assistant/drafts", tags=["assistant"])
 
 MAX_DRAFTS = 5
-KINDS = ("report", "priority", "outside_to_document", "link")
+KINDS = ("report", "priority", "outside_to_document", "link", "web_to_document")
 PRECEDENCE = {"flash": "Flash", "immediate": "Immediate", "priority": "Priority", "routine": "Routine"}
 
 
@@ -339,6 +339,9 @@ def apply(draft_id: int, payload: ApplyRequest = ApplyRequest(), user: dict = De
         created = outside_events.send_to_documents(
             int(p["event_id"]), outside_events.SendRequest(fetch_article=True, source_note=p.get("source_note")), user)
         result = {"document_id": created["document_id"], "title": created.get("title")}
+    elif d["kind"] == "web_to_document":
+        import assistant_web  # noqa: PLC0415
+        result = assistant_web.apply_web_to_document(d, user)
     else:
         raise HTTPException(status_code=409, detail="That draft is not something to apply.")
     with db_cursor(commit=True) as cur:

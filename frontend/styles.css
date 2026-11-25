@@ -2749,3 +2749,16 @@ body.role-viewer #doc-drop-zone{display:none !important;}
 .assistant-draft-body ul { margin: 4px 0 4px 18px; padding: 0; }
 .assistant-draft-text summary { cursor: pointer; font-size: 0.85rem; color: var(--muted); margin-top: 4px; }
 .assistant-draft-actions { display: flex; gap: 10px; align-items: center; margin-top: 8px; font-size: 0.88rem; }
+
+/* Web research in the assistant panel */
+.assistant-web-toggle { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; padding: 6px 12px 0;
+  font-size: 0.85rem; }
+.assistant-web-toggle .field-hint { margin: 0; }
+.assistant-web-queue { margin-top: 10px; padding: 10px 12px; border: 1px dashed var(--amber);
+  border-radius: var(--radius); font-size: 0.9rem; }
+.assistant-web-queue p { margin: 0 0 8px; }
+.assistant-web-item { display: flex; gap: 6px; align-items: center; margin: 4px 0; }
+.assistant-web-item input[type=text] { flex: 1; min-width: 0; }
+.assistant-web-kind { font-size: 0.75rem; font-weight: 600; text-transform: uppercase; color: var(--muted); width: 48px; }
+.assistant-web-decided { font-size: 0.82rem; color: var(--muted); margin: 8px 0 0; }
+.assistant-citation[data-kind="web"]::after { content: " ↗"; }

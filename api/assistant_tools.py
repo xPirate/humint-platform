@@ -1291,6 +1291,8 @@ def describe(name: str, args: dict) -> str:
         return f"Looked around {a.get('place', '')} ({a.get('radius_km') or 2} km)"
     if name in assistant_drafts.TOOL_FUNCS:
         return assistant_drafts.describe(name, a)
+    if name in assistant_web.TOOL_FUNCS:
+        return assistant_web.describe(name, a)
     return name
 
 
@@ -1323,6 +1325,9 @@ def summarize(name: str, text: str, refs: list) -> str:
     if name in ("list_reports", "field_reports", "outside_events", "documents"):
         n = sum(1 for l in lines if l.startswith("- "))
         return first.rstrip(":") if "found" in first or not n else f"{n} found"
+    if name == "web_search":
+        n = sum(1 for l in lines if l.startswith("- "))
+        return f"{n} results" if n else first[:160]
     if name == "nearby":
         n = sum(1 for l in lines if l.startswith("- "))
         return f"{n} things nearby" if n else first.rstrip(":")
@@ -1350,4 +1355,10 @@ import assistant_drafts  # noqa: E402 - it imports this module's helpers lazily
 
 TOOLS = TOOLS + assistant_drafts.TOOLS
 TOOL_FUNCS.update(assistant_drafts.TOOL_FUNCS)
-TOOL_SCHEMA_KEYS = {t["function"]["name"]: set(t["function"]["parameters"]["properties"]) for t in TOOLS}
+# The web lookups (v1.19) run like the others but are offered only for a
+# question the person allowed the web on (assistant_agent adds them then).
+import assistant_web  # noqa: E402
+
+TOOL_FUNCS.update(assistant_web.TOOL_FUNCS)
+TOOL_SCHEMA_KEYS = {t["function"]["name"]: set(t["function"]["parameters"]["properties"])
+                    for t in TOOLS + assistant_web.TOOLS}

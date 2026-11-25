@@ -109,6 +109,35 @@ and never pruned.
   straight to the Review queue, where links are always accepted or dismissed.
   At most five drafts per question.
 
+### Web research (off until an admin turns it on)
+
+**Admin → Model → Web research.** With it on, a question can let the
+assistant search the web and read pages: tick **May use the web for this
+question** under the panel (it unticks itself after each question), or press
+**Search the web** on a record.
+
+- **Searches leave this machine — names and all.** So by default each one is
+  shown to you before it is sent: the assistant queues the searches it wants,
+  answers from the case file, and the card under its answer lists them. Edit
+  or untick any, then **Run these and continue** (the question carries on
+  with the results, and may read the pages they found), or **Skip** (nothing
+  is sent). An admin can turn the approval step off.
+- **Every search and page read is in the audit log** (`web.search`,
+  `web.read`) with who asked and the exact query or address.
+- **What it finds is open-source and unverified,** cited as web sources
+  (↗). A page becomes a document only when you press **Keep as a document**
+  on its draft; facts reach records only through you or Review.
+- **Search with:** a SearXNG instance (self-hosted, no key or account —
+  `docker compose --profile websearch up -d` starts one at
+  `http://searxng:8080` on the Docker server; a field box can point at one on
+  your network), Brave's Search API (a key), or DuckDuckGo (nothing to set
+  up; for light use, and it may refuse automated searches).
+- **Through a proxy (optional):** a VPN's proxy, or Tor
+  (`socks5h://127.0.0.1:9050`, so names are resolved by Tor, not your
+  network's DNS). Pages are read with an ordinary browser's identity.
+- **Limits** per question (searches, pages) and **who may use it** (analysts
+  and admins, or admins only) are set there too.
+
 It's a reader and a proposer, not a source. Check anything it says against
 the record before it goes in a report. How well it chooses its lookups
 depends on the model: a 14B-class model that can call tools (Qwen3, gpt-oss)

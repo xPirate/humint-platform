@@ -81,6 +81,19 @@ services:
     #           count: 1
     #           capabilities: [gpu]
 
+  # Optional: web research for the assistant (Admin → Model → Web research,
+  # address http://searxng:8080). Starts only with
+  # `docker compose --profile websearch up -d`. Not published on a host port:
+  # only the api reaches it. Set SEARXNG_SECRET in .env.
+  searxng:
+    image: searxng/searxng:latest
+    restart: unless-stopped
+    profiles: ["websearch"]
+    environment:
+      SEARXNG_SECRET: ${SEARXNG_SECRET:-change-me-in-env}
+    volumes:
+      - ./deploy/searxng/settings.yml:/etc/searxng/settings.yml:ro
+
 volumes:
   pgdata:
   uploads:

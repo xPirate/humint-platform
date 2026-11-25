@@ -5352,6 +5352,8 @@ function renderEntityDetail(entity) {
           <button class="btn-secondary btn-sm" id="entity-actions-btn"
                   title="Also on right-click, anywhere this record appears">Actions &#9662;</button>
           <button class="btn-secondary btn-sm" id="edit-entity-btn">Edit</button>
+          <button class="btn-secondary btn-sm" id="web-entity-btn" hidden
+                  title="Ask the assistant to look for public information on this record — you approve each search">Search the web</button>
           <button class="btn-secondary btn-sm" id="export-entity-btn" aria-expanded="false"
                   aria-controls="export-shape-menu">Export &#9662;</button>
           <button class="btn-secondary btn-sm" id="toggle-active-btn">${entity.is_active ? "Archive" : "Reactivate"}</button>
@@ -5400,6 +5402,11 @@ function renderEntityDetail(entity) {
   renderEntityGraph(entity);
 
   document.getElementById("edit-entity-btn").addEventListener("click", () => openEntityForm(entity));
+  const webBtn = document.getElementById("web-entity-btn");
+  if (webBtn) {
+    api("/api/assistant/web").then((w) => { webBtn.hidden = !w.available; }).catch(() => {});
+    webBtn.addEventListener("click", () => askWebAbout(entity));
+  }
   if (entity.entity_type === "location") loadZonesForEntity(entity.id);
   if (entity.entity_type === "source") loadSourceProtection(entity);
   if (GEOMETRY_TYPES.includes(entity.entity_type)) wireGeometryDetail(el, entity);
@@ -12115,13 +12122,86 @@ version, or is put back as it was if it does not come up.`)) return;
   });
 }
 
+/* Admin → Model → Web research (api/web_research.py). */
+async function loadWebResearch() {
+  const el = document.getElementById("web-research-panel");
+  if (!el) return;
+  let w;
+  try { w = await api("/api/admin/web-research"); } catch (e) {
+    el.innerHTML = `<p class="form-error">${escapeHtml(e.message)}</p>`; return;
+  }
+  el.innerHTML = `<form id="web-research-form" class="card">
+    <label class="inline-check"><input type="checkbox" id="wr-on" ${w.enabled ? "checked" : ""}>
+      Allow web research (each question still has to allow it)</label>
+    <div class="form-row"><label for="wr-provider">Search with</label>
+      <select id="wr-provider">
+        <option value="searxng" ${w.provider === "searxng" ? "selected" : ""}>SearXNG — self-hosted, no key or account</option>
+        <option value="brave" ${w.provider === "brave" ? "selected" : ""}>Brave Search API — needs a key</option>
+        <option value="duckduckgo" ${w.provider === "duckduckgo" ? "selected" : ""}>DuckDuckGo — nothing to set up; light use, may refuse</option>
+      </select></div>
+    <div class="form-row" data-wr-for="searxng"><label for="wr-searx">SearXNG address</label>
+      <input type="text" id="wr-searx" value="${escapeHtml(w.searxng_url || "")}" placeholder="http://searxng:8080">
+      <p class="field-hint">Its settings.yml must allow the json format (search → formats). With Docker:
+        <code>docker compose --profile websearch up -d</code> starts one at http://searxng:8080.</p></div>
+    <div class="form-row" data-wr-for="brave"><label for="wr-brave">Brave API key</label>
+      <input type="password" id="wr-brave" autocomplete="off" placeholder="${w.has_brave_key ? "set — leave empty to keep" : "from api-dashboard.search.brave.com"}"></div>
+    <div class="form-row"><label for="wr-proxy">Through a proxy (optional)</label>
+      <input type="text" id="wr-proxy" value="${escapeHtml(w.proxy_url || "")}" placeholder="socks5h://127.0.0.1:9050">
+      <p class="field-hint">Every search and page read goes through it: a VPN's proxy, or Tor
+        (<code>socks5h://</code> so names are resolved there, not by this network). Empty: straight out.</p></div>
+    <label class="inline-check"><input type="checkbox" id="wr-approve" ${w.require_approval ? "checked" : ""}>
+      Show each search to the person before it is sent (recommended)</label>
+    <div class="form-row"><label for="wr-who">Who may use it</label>
+      <select id="wr-who"><option value="analysts" ${w.allowed === "analysts" ? "selected" : ""}>Analysts and admins</option>
+        <option value="admins" ${w.allowed === "admins" ? "selected" : ""}>Admins only</option></select></div>
+    <div class="form-row"><label for="wr-ns">Searches per question</label>
+      <input type="number" id="wr-ns" min="1" max="20" value="${w.max_searches}"></div>
+    <div class="form-row"><label for="wr-np">Pages read per question</label>
+      <input type="number" id="wr-np" min="0" max="20" value="${w.max_pages}"></div>
+    <p class="field-hint">Every search and page read is in the audit log (web.search, web.read), with who asked and
+      the exact query or address. Pages are read with an ordinary browser's identity, not this platform's.</p>
+    <div class="form-actions">
+      <button type="submit" class="btn-primary">Save</button>
+      <button type="button" class="btn-secondary" id="wr-test">Test with a harmless search</button>
+    </div>
+    <div id="wr-test-out"></div>
+  </form>`;
+  const sync = () => el.querySelectorAll("[data-wr-for]").forEach((r) => {
+    r.hidden = r.dataset.wrFor !== document.getElementById("wr-provider").value;
+  });
+  sync();
+  document.getElementById("wr-provider").addEventListener("change", sync);
+  document.getElementById("web-research-form").addEventListener("submit", async (ev) => {
+    ev.preventDefault();
+    const body = {
+      enabled: document.getElementById("wr-on").checked, provider: document.getElementById("wr-provider").value,
+      searxng_url: document.getElementById("wr-searx").value.trim(), proxy_url: document.getElementById("wr-proxy").value.trim(),
+      require_approval: document.getElementById("wr-approve").checked, allowed: document.getElementById("wr-who").value,
+      max_searches: parseInt(document.getElementById("wr-ns").value, 10), max_pages: parseInt(document.getElementById("wr-np").value, 10),
+    };
+    const key = document.getElementById("wr-brave").value.trim();
+    if (key) body.brave_key = key;
+    try { await api("/api/admin/web-research", { method: "PUT", body }); showToast("Saved"); loadWebResearch(); }
+    catch (e) { showToast(e.message, true); }
+  });
+  document.getElementById("wr-test").addEventListener("click", async () => {
+    const out = document.getElementById("wr-test-out");
+    out.innerHTML = '<p class="field-hint">Searching for “OpenStreetMap”…</p>';
+    try {
+      const r = await api("/api/admin/web-research/test", { method: "POST", body: {} });
+      out.innerHTML = `<p class="field-hint">${r.results.length} result(s):</p><ul>${r.results.map((x) =>
+        `<li>${escapeHtml(x.title)} — <span class="field-hint">${escapeHtml(x.url)}</span></li>`).join("")}</ul>`;
+    } catch (e) { out.innerHTML = `<p class="form-error">${escapeHtml(e.message)}</p>`; }
+  });
+}
+
 const ADMIN_LOADERS = {
   users: () => loadAdminUsers(),
   feeds: () => loadRssFeeds(),
   outside: () => loadOutsideSettings(),
   maps: () => loadMapAdmin(),
   brand: () => loadBrandingForm(),
-  model: () => { loadOllamaSettings(); loadOllamaUsage(); },
+  model: () => { loadOllamaSettings(); loadOllamaUsage(); loadWebResearch(); },
   boards: () => loadBoardsAdmin(),
   devices: () => { loadFieldDevices(); loadRelays(); loadPanelSettings(); },
   signals: () => loadSignals(),
@@ -13602,8 +13682,22 @@ function toggleAssistantPanel(open) {
   tab.classList.toggle("panel-open", shouldOpen);
   if (shouldOpen) {
     if (!state.assistantLoaded) loadAssistantMessages();
+    refreshAssistantWebToggle();
     document.getElementById("assistant-input").focus();
   }
+}
+
+/* "Search the web for this": the assistant, asked about a record with the
+ * web allowed for that one question. */
+function askWebAbout(entity) {
+  toggleAssistantPanel(true);
+  const input = document.getElementById("assistant-input");
+  input.value = `Find public information on the web about ${entity.name} [${entity.id}]: who or what it is, and anything that adds to or contradicts what the record says. Look in the case file first.`;
+  refreshAssistantWebToggle().then(() => {
+    const web = document.getElementById("assistant-web");
+    if (web && !document.getElementById("assistant-web-toggle").hidden) web.checked = true;
+  });
+  input.focus();
 }
 document.getElementById("assistant-tab-btn").addEventListener("click", () => toggleAssistantPanel(true));
 document.getElementById("assistant-close-btn").addEventListener("click", () => toggleAssistantPanel(false));
@@ -13665,6 +13759,11 @@ function assistantDraftHtml(d) {
     kind = "Outside event → Documents";
     body = `<b>${escapeHtml(p.title || "")}</b>`;
     applyText = "Send to Documents";
+    if (d.result && d.result.document_id) doneHtml = `<a href="#" data-draft-open-doc="${d.result.document_id}">Open the document</a>`;
+  } else if (d.kind === "web_to_document") {
+    kind = "Web page → Documents";
+    body = `<b>${escapeHtml(p.title || "")}</b><p class="field-hint">${escapeHtml(p.url || "")}${p.note ? ` — ${escapeHtml(p.note)}` : ""}</p>`;
+    applyText = "Keep as a document";
     if (d.result && d.result.document_id) doneHtml = `<a href="#" data-draft-open-doc="${d.result.document_id}">Open the document</a>`;
   } else if (d.kind === "link") {
     kind = "Proposed link";
@@ -13729,6 +13828,7 @@ function assistantMessageHtml(msg) {
       ${bodyHtml}
       ${citationsHtml ? `<div class="assistant-msg-citations">${citationsHtml}</div>` : ""}
       ${(msg.drafts || []).length ? `<div class="assistant-drafts">${msg.drafts.map(assistantDraftHtml).join("")}</div>` : ""}
+      ${isUser ? "" : assistantWebHtml(msg)}
       ${isUser ? "" : assistantTrailHtml(msg.trail)}
     </div>
   `;
@@ -13788,10 +13888,10 @@ function assistantWorkingBubble() {
 /* POST the question and read the reply as it streams: one JSON object per
  * line (see api/assistant.py's /ask). Falls back to reading the whole body
  * at once on a browser without streaming fetch. */
-async function streamAssistant(question, onEvent) {
+async function streamAssistant(question, onEvent, extra) {
   const res = await fetch("/api/assistant/ask", {
     method: "POST", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ question }),
+    body: JSON.stringify({ question, ...(extra || {}) }),
   });
   if (res.status === 401 && state.user) handleSessionExpired();
   if (!res.ok) {
@@ -13824,8 +13924,9 @@ function wireAssistantCitations(container) {
   container.querySelectorAll(".assistant-citation:not([data-wired])").forEach((el) => {
     el.dataset.wired = "1";
     el.addEventListener("click", () => {
-      toggleAssistantPanel(false);
+      if (el.dataset.kind !== "web") toggleAssistantPanel(false);
       const num = (el.dataset.id.match(/(\d+)$/) || [])[1];
+      if (el.dataset.kind === "web") { window.open(el.dataset.id, "_blank", "noopener,noreferrer"); return; }
       if (el.dataset.kind === "entity") openEntityDetail(el.dataset.id);
       else if (el.dataset.kind === "document") openDocument(Number(num));
       else if (el.dataset.kind === "outside_event") { switchView("outside"); openOutsideReader(Number(num), null); }
@@ -13833,6 +13934,69 @@ function wireAssistantCitations(container) {
     });
   });
   wireAssistantDrafts(container);
+  wireAssistantWeb(container);
+}
+
+/* Web research (api/assistant_web.py): when searches need approval, an
+ * answer carries the ones the assistant queued. The person edits or strikes
+ * them out and runs them (the question continues with the results), or
+ * skips them; nothing goes out before that. */
+function assistantWebHtml(msg) {
+  const w = (msg.trail || {}).web;
+  if (!w || !(w.queued || []).length) return "";
+  if (w.status !== "pending") {
+    const done = w.status === "approved" ? `Approved: ${(w.approved || []).length} web lookup(s)` : "Web lookups skipped — nothing was sent";
+    return `<p class="assistant-web-decided">${escapeHtml(done)}</p>`;
+  }
+  return `<form class="assistant-web-queue" data-web-msg="${msg.id}">
+    <p><b>The assistant would like to look on the web.</b> Nothing has been sent. These leave this machine as
+      written — edit or untick any, then run them.</p>
+    ${w.queued.map((q, i) => `<label class="assistant-web-item">
+      <input type="checkbox" checked data-web-i="${i}">
+      <span class="assistant-web-kind">${q.kind === "search" ? "Search" : "Read"}</span>
+      <input type="text" value="${escapeHtml(q.text)}" data-web-text="${i}" data-web-kind="${escapeHtml(q.kind)}" maxlength="1000">
+    </label>`).join("")}
+    <div class="assistant-draft-actions">
+      <button type="submit" class="btn-primary btn-sm">Run these and continue</button>
+      <button type="button" class="btn-link btn-sm" data-web-skip>Skip</button>
+    </div>
+  </form>`;
+}
+
+function wireAssistantWeb(container) {
+  container.querySelectorAll(".assistant-web-queue:not([data-wired])").forEach((form) => {
+    form.dataset.wired = "1";
+    const mid = Number(form.dataset.webMsg);
+    form.querySelector("[data-web-skip]").addEventListener("click", async () => {
+      try {
+        await api(`/api/assistant/messages/${mid}/web-skip`, { method: "POST" });
+        form.outerHTML = '<p class="assistant-web-decided">Web lookups skipped — nothing was sent</p>';
+      } catch (e) { showToast(e.message, true); }
+    });
+    form.addEventListener("submit", (ev) => {
+      ev.preventDefault();
+      const items = [...form.querySelectorAll("[data-web-text]")]
+        .filter((inp) => form.querySelector(`[data-web-i="${inp.dataset.webText}"]`).checked && inp.value.trim())
+        .map((inp) => ({ kind: inp.dataset.webKind, text: inp.value.trim() }));
+      if (!items.length) { showToast("Nothing ticked — use Skip to send nothing.", true); return; }
+      form.outerHTML = `<p class="assistant-web-decided">Approved: ${items.length} web lookup(s)</p>`;
+      runAssistant(`Go ahead on the web: ${items.map((i) => (i.kind === "search" ? `search “${i.text}”` : `read ${i.text}`)).join("; ")}`,
+                   { approve: { message_id: mid, items } }, "");
+    });
+  });
+}
+
+async function refreshAssistantWebToggle() {
+  const box = document.getElementById("assistant-web-toggle");
+  if (!box) return;
+  try {
+    const w = await api("/api/assistant/web");
+    box.hidden = !w.available;
+    document.getElementById("assistant-web-hint").textContent = w.available
+      ? (w.require_approval ? "— you approve each search before it is sent" : "— searches go out without asking")
+        + (w.via_proxy ? ", through the proxy" : "")
+      : "";
+  } catch (e) { box.hidden = true; }
 }
 
 function appendAssistantMessage(msg) {
@@ -13883,10 +14047,18 @@ document.getElementById("assistant-form").addEventListener("submit", async (e) =
   const input = document.getElementById("assistant-input");
   const question = input.value.trim();
   if (!question) return;
-  const statusEl = document.getElementById("assistant-status");
-  const submitBtn = e.target.querySelector("button[type=submit]");
+  const web = document.getElementById("assistant-web");
+  const useWeb = Boolean(web && web.checked && !document.getElementById("assistant-web-toggle").hidden);
+  if (web) web.checked = false;          // per question: never left on by accident
+  runAssistant(question, useWeb ? { web: true } : {}, question);
+});
 
-  appendAssistantMessage({ role: "user", content: question });
+async function runAssistant(shown, extra, question) {
+  const input = document.getElementById("assistant-input");
+  const statusEl = document.getElementById("assistant-status");
+  const submitBtn = document.querySelector("#assistant-form button[type=submit]");
+
+  appendAssistantMessage({ role: "user", content: shown });
   input.value = "";
   input.disabled = true;
   submitBtn.disabled = true;
@@ -13908,7 +14080,7 @@ document.getElementById("assistant-form").addEventListener("submit", async (e) =
       } else if (ev.type === "error") {
         throw new Error(ev.detail);
       }
-    });
+    }, extra);
     if (!answered) throw new Error("The assistant stopped before answering. Try again.");
   } catch (err) {
     // The question itself is never persisted server-side when the call
@@ -13924,7 +14096,7 @@ document.getElementById("assistant-form").addEventListener("submit", async (e) =
     submitBtn.disabled = false;
     input.focus();
   }
-});
+}
 
 /* ============================================================================ */
 

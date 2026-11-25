@@ -259,8 +259,36 @@ def _public(host: str) -> bool:
     return True
 
 
-def fetch(url: str, session=None) -> tuple:
-    """(article dict, None) or (None, why). Never raises."""
+def _plainly_private(host: str) -> bool:
+    """Without resolving it: a literal private address, localhost, or a name
+    with no dot (an intranet name). Used when a proxy does the resolving."""
+    h = host.strip("[]").lower()
+    if h == "localhost" or h.endswith(".localhost") or h.endswith(".local") or h.endswith(".internal") or "." not in h:
+        return not _is_ip(h) or _private_ip(h)
+    return _is_ip(h) and _private_ip(h)
+
+
+def _is_ip(h: str) -> bool:
+    try:
+        ipaddress.ip_address(h)
+        return True
+    except ValueError:
+        return False
+
+
+def _private_ip(h: str) -> bool:
+    ip = ipaddress.ip_address(h)
+    return (ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved
+            or ip.is_multicast or ip.is_unspecified)
+
+
+def fetch(url: str, session=None, user_agent: str | None = None, resolve: bool = True) -> tuple:
+    """(article dict, None) or (None, why). Never raises.
+
+    `resolve=False` is for a session that goes through a proxy (Tor, say):
+    the name is then not looked up here, which would tell this network's DNS
+    what is being read; only literal private addresses and local names are
+    refused, and the proxy cannot reach this machine's own network anyway."""
     s = session or requests
     for _ in range(MAX_REDIRECTS + 1):
         try:
@@ -269,11 +297,11 @@ def fetch(url: str, session=None) -> tuple:
             return None, "That link could not be read."
         if p.scheme not in ("http", "https") or not p.hostname:
             return None, "Only web links (http, https) can be read."
-        if not _public(p.hostname):
+        if (_plainly_private(p.hostname) and not ALLOW_PRIVATE) if not resolve else not _public(p.hostname):
             return None, "That link points at a private or unreachable address, so it was not opened."
         try:
             r = s.get(url, timeout=TIMEOUT, stream=True, allow_redirects=False,
-                      headers={"User-Agent": USER_AGENT, "Accept": "text/html,application/xhtml+xml"})
+                      headers={"User-Agent": user_agent or USER_AGENT, "Accept": "text/html,application/xhtml+xml"})
         except requests.RequestException as exc:
             return None, f"The page could not be fetched ({type(exc).__name__})."
         if r.status_code in (301, 302, 303, 307, 308) and r.headers.get("Location"):
